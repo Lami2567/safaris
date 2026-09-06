@@ -18,13 +18,16 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 COPY src/database/schema.sql ./dist/database/schema.sql
+COPY src/database/schema.sql ./src/database/schema.sql
 
 EXPOSE 3000
 
 USER node
 
-CMD ["node", "dist/index.js"]
+# Enforce max old space size of 128MB to preserve RAM on 512MB VPS
+CMD ["node", "--max-old-space-size=128", "dist/index.js"]
+

@@ -1,5 +1,7 @@
 # ==============================================================================
-# SAFARIS API Gateway - NGINX Reverse Proxy Configuration (HTTP & IP Testing)
+# SAFARIS API Gateway - Production SSL / HTTPS Configuration Template
+# Activate this configuration after obtaining Let's Encrypt certificates:
+# cp ssl.conf.template default.conf && docker compose -f docker-compose.prod.yml restart nginx
 # ==============================================================================
 
 upstream safaris_api {
@@ -7,12 +9,36 @@ upstream safaris_api {
     keepalive 32;
 }
 
-# Rate limiting zone (60 requests/minute per client IP)
 limit_req_zone $binary_remote_addr zone=api_limit:10m rate=60r/m;
 
+# HTTP Server: Redirect all traffic to HTTPS, while serving ACME challenge
 server {
-    listen 80 default_server;
-    server_name _;
+    listen 80;
+    server_name YOUR_DOMAIN; # e.g. api.safaris.ug
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS Server: SSL Termination and Secure API Gateway
+server {
+    listen 443 ssl http2;
+    server_name YOUR_DOMAIN; # e.g. api.safaris.ug
+
+    ssl_certificate /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
 
     client_max_body_size 15M;
 
@@ -21,22 +47,16 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
-    # ACME-challenge for Let's Encrypt certificates
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-        try_files $uri =404;
-    }
-
-    # Health Check (Direct proxy for VPS monitoring & Docker health checks)
+    # Health Check
     location /health {
         proxy_pass http://safaris_api/health;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_connect_timeout 5s;
-        proxy_read_timeout 10s;
+        proxy_set_header X-Forwarded-Proto https;
     }
 
     # API Gateway Reverse Proxy
@@ -47,7 +67,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto https;
         proxy_connect_timeout 10s;
         proxy_read_timeout 90s;
         proxy_send_timeout 90s;
@@ -62,13 +82,13 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
     }
 
-    # Root informational endpoint
     location / {
         default_type application/json;
-        return 200 '{"status":"active","platform":"SAFARIS Uganda API Gateway","documentation":"/api/v1/health"}';
+        return 200 '{"status":"active","platform":"SAFARIS Uganda API Gateway (HTTPS)","documentation":"/api/v1/health"}';
     }
 }

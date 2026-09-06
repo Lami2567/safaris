@@ -12,6 +12,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
     depends_on:
       - backend
     networks:
@@ -39,9 +40,12 @@ services:
     image: postgres:16-alpine
     container_name: safaris_postgres_prod
     restart: always
+    env_file:
+      - .env.production
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=30", "-c", "work_mem=2MB"]
     environment:
       POSTGRES_USER: ${DB_USER:-safaris_prod_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-prod_super_secure_pass_9921}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME:-safaris_production}
     volumes:
       - prod_pgdata:/var/lib/postgresql/data
@@ -59,7 +63,7 @@ services:
     image: redis:7-alpine
     container_name: safaris_redis_prod
     restart: always
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--maxmemory", "32mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
     volumes:
       - prod_redisdata:/data
     healthcheck:
@@ -74,7 +78,9 @@ volumes:
   prod_pgdata:
   prod_redisdata:
   certs:
+  certbot_www:
 
 networks:
   safaris_prod_net:
     driver: bridge
+
