@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: safaris_nginx_prod
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certs:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+    networks:
+      - safaris_prod_net
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: safaris_backend_prod
+    restart: always
+    expose:
+      - "3000"
+    env_file:
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - safaris_prod_net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: safaris_postgres_prod
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-safaris_prod_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-prod_super_secure_pass_9921}
+      POSTGRES_DB: ${DB_NAME:-safaris_production}
+    volumes:
+      - prod_pgdata:/var/lib/postgresql/data
+      - ./src/database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - safaris_prod_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: safaris_redis_prod
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - prod_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - safaris_prod_net
+
+volumes:
+  prod_pgdata:
+  prod_redisdata:
+  certs:
+
+networks:
+  safaris_prod_net:
+    driver: bridge

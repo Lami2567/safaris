@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: safaris_backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=development
+      - DATABASE_URL=postgres://safaris_user:safaris_password@postgres:5432/safaris_db
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=safaris_local_dev_secret_key_2026
+      - PAYMENT_MOCK_MODE=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - safaris_net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: safaris_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: safaris_user
+      POSTGRES_PASSWORD: safaris_password
+      POSTGRES_DB: safaris_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./src/database/schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U safaris_user -d safaris_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - safaris_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: safaris_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - safaris_net
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  safaris_net:
+    driver: bridge
