@@ -82,7 +82,7 @@ echo "✅ PostgreSQL is ready."
 
 # 7. Execute Safe Idempotent Database Migrations
 echo "🔄 Executing database migrations..."
-docker compose -f docker-compose.prod.yml exec -T backend node dist/database/migrate.js
+docker compose -f docker-compose.prod.yml --env-file .env.production exec -T backend node dist/database/migrate.js
 
 # 8. Verify API Health Endpoint
 echo "🩺 Verifying API Gateway health check..."
@@ -94,7 +94,7 @@ echo "   Health Check Response: ${HEALTH_RESPONSE}"
 echo ""
 echo "========================================================"
 echo "📊 Current Container Status:"
-docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml --env-file .env.production ps
 echo ""
 echo "💾 VPS Memory Usage:"
 free -m

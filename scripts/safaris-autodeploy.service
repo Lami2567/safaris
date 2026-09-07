@@ -1,0 +1,17 @@
+[Unit]
+Description=SAFARIS Continuous Auto-Deployment Daemon (GitHub Webhook & Poller)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/safaris
+ExecStart=/usr/bin/python3 /home/ubuntu/safaris/scripts/autodeploy.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
