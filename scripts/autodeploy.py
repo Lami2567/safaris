@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 PORT = 9000
 REPO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -38,7 +38,7 @@ state = {
 }
 
 def log(msg: str):
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     line = f"[{timestamp}] [AutoDeploy] {msg}"
     print(line, flush=True)
     try:
@@ -121,7 +121,7 @@ def run_deployment(trigger: str = "webhook") -> bool:
             if process.returncode == 0:
                 current = get_current_commit()
                 state["last_deployed_commit"] = current
-                state["last_deploy_time"] = datetime.utcnow().isoformat() + "Z"
+                state["last_deploy_time"] = datetime.now(timezone.utc).isoformat() + "Z"
                 state["last_deploy_status"] = "success"
                 state["total_deploys"] += 1
                 state["status"] = "ready"
@@ -151,7 +151,7 @@ def poll_github_worker():
             if state["is_deploying"]:
                 continue
 
-            state["last_poll_time"] = datetime.utcnow().isoformat() + "Z"
+            state["last_poll_time"] = datetime.now(timezone.utc).isoformat() + "Z"
             local_sha = get_current_commit()
             remote_sha = get_remote_commit()
 
@@ -175,7 +175,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             "last_poll_time": state["last_poll_time"],
             "total_deploys": state["total_deploys"],
             "poll_interval_seconds": POLL_INTERVAL_SECONDS,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         }
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -211,7 +211,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                 "success": True,
                 "message": "Deployment triggered successfully" if triggered else "Deployment already running",
                 "branch": branch,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
         else:

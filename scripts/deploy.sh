@@ -52,9 +52,11 @@ if grep -q "CHANGE_THIS_TO_A_STRONG_RANDOM_SECRET" .env.production; then
   exit 1
 fi
 
-# 3. Pull latest code from GitHub
-echo "📥 Pulling latest codebase from GitHub (origin/main)..."
-git pull origin main
+# 3. Pull latest code from GitHub (Clean tracking just like Vercel / Render)
+echo "📥 Syncing latest codebase from GitHub (origin/main)..."
+git fetch origin main
+git reset --hard origin/main
+git clean -fd -e .env.production -e backups -e autodeploy.log
 
 # 4. Build Docker Production Images
 echo "🔨 Building Docker production containers..."
