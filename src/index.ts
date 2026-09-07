@@ -48,7 +48,7 @@ app.get('/health', (req, res) => {
     platform: 'SAFARIS Uganda API Gateway',
     environment: ENV.NODE_ENV,
     timestamp: new Date().toISOString(),
-    version: '1.0.0',
+    version: '1.0.1',
   });
 });
 

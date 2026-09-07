@@ -1,6 +1,6 @@
 {
   "name": "safaris-backend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Production Backend & Real-Time Gateway for SAFARIS Uganda (Tours, Travels, Rides, Delivery)",
   "main": "dist/index.js",
   "scripts": {
