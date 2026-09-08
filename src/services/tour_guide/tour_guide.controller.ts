@@ -32,4 +32,31 @@ export class TourGuideController {
       return sendError(res, 'TOGGLE_AVAILABILITY_FAILED', err.message, 400);
     }
   }
+
+  public static createGuide(req: Request, res: Response) {
+    try {
+      const guide = TourGuideService.createGuide(req.body);
+      return sendSuccess(res, guide, 201);
+    } catch (err: any) {
+      return sendError(res, 'CREATE_GUIDE_FAILED', err.message, 400);
+    }
+  }
+
+  public static updateGuide(req: Request, res: Response) {
+    try {
+      const guide = TourGuideService.updateGuide(req.params.id, req.body);
+      return sendSuccess(res, guide);
+    } catch (err: any) {
+      return sendError(res, 'UPDATE_GUIDE_FAILED', err.message, 400);
+    }
+  }
+
+  public static deleteGuide(req: Request, res: Response) {
+    try {
+      const result = TourGuideService.deleteGuide(req.params.id);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'DELETE_GUIDE_FAILED', err.message, 400);
+    }
+  }
 }

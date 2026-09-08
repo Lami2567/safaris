@@ -69,14 +69,14 @@ initSocketServer(server);
 
 // Start Server with safe seeding lifecycle
 async function startServer() {
-  if (!ENV.isProduction && ENV.AUTO_SEED) {
+  if (ENV.AUTO_SEED) {
     try {
       await seedUgandaData();
     } catch (err) {
       console.warn('⚠️ Seeding skipped or encountered non-fatal error:', err);
     }
-  } else if (ENV.isProduction) {
-    console.log('🔒 [Production] Automatic seeding disabled. Production seeding must be an explicit operation.');
+  } else {
+    console.log('🔒 Automatic seeding disabled by configuration.');
   }
 
   server.listen(ENV.PORT, '0.0.0.0', () => {

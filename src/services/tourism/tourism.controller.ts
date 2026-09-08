@@ -73,4 +73,80 @@ export class TourismController {
       return sendError(res, 'BOOKING_NOT_FOUND', err.message, 404);
     }
   }
+
+  // -----------------------------------------------------------
+  // Admin Endpoints
+  // -----------------------------------------------------------
+  public static createDestination(req: Request, res: Response) {
+    try {
+      const destination = TourismService.createDestination(req.body);
+      return sendSuccess(res, destination, 201);
+    } catch (err: any) {
+      return sendError(res, 'CREATE_DESTINATION_FAILED', err.message, 400);
+    }
+  }
+
+  public static updateDestination(req: Request, res: Response) {
+    try {
+      const destination = TourismService.updateDestination(req.params.id, req.body);
+      return sendSuccess(res, destination);
+    } catch (err: any) {
+      return sendError(res, 'UPDATE_DESTINATION_FAILED', err.message, 400);
+    }
+  }
+
+  public static deleteDestination(req: Request, res: Response) {
+    try {
+      const result = TourismService.deleteDestination(req.params.id);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'DELETE_DESTINATION_FAILED', err.message, 400);
+    }
+  }
+
+  public static createPackage(req: Request, res: Response) {
+    try {
+      const pkg = TourismService.createPackage(req.body);
+      return sendSuccess(res, pkg, 201);
+    } catch (err: any) {
+      return sendError(res, 'CREATE_PACKAGE_FAILED', err.message, 400);
+    }
+  }
+
+  public static updatePackage(req: Request, res: Response) {
+    try {
+      const pkg = TourismService.updatePackage(req.params.id, req.body);
+      return sendSuccess(res, pkg);
+    } catch (err: any) {
+      return sendError(res, 'UPDATE_PACKAGE_FAILED', err.message, 400);
+    }
+  }
+
+  public static deletePackage(req: Request, res: Response) {
+    try {
+      const result = TourismService.deletePackage(req.params.id);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'DELETE_PACKAGE_FAILED', err.message, 400);
+    }
+  }
+
+  public static getAllBookings(req: Request, res: Response) {
+    try {
+      const bookings = TourismService.getAllBookings();
+      return sendSuccess(res, bookings);
+    } catch (err: any) {
+      return sendError(res, 'FETCH_ALL_BOOKINGS_FAILED', err.message, 500);
+    }
+  }
+
+  public static updateBookingStatus(req: Request, res: Response) {
+    try {
+      const { status } = req.body;
+      const booking = TourismService.updateBookingStatus(req.params.id, status);
+      return sendSuccess(res, booking);
+    } catch (err: any) {
+      return sendError(res, 'UPDATE_BOOKING_STATUS_FAILED', err.message, 400);
+    }
+  }
 }
