@@ -8,6 +8,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "3001:3001"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
@@ -15,6 +16,22 @@ services:
       - certbot_www:/var/www/certbot:ro
     depends_on:
       - backend
+      - admin
+    networks:
+      - safaris_prod_net
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+
+    container_name: safaris_admin_prod
+    restart: always
+    expose:
+      - "3001"
+    environment:
+      - PORT=3001
+      - NEXT_PUBLIC_API_URL=http://18.222.41.199/api/v1
     networks:
       - safaris_prod_net
 
@@ -22,6 +39,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+
     container_name: safaris_backend_prod
     restart: always
     expose:
