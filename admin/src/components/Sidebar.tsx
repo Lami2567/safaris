@@ -77,7 +77,7 @@ export const Sidebar: React.FC = () => {
         <div className="px-3 py-2 rounded border border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2 text-[11px] text-white/80">
             <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-            <span>Target Domain:</span>
+            <span>Live Domain:</span>
           </div>
           <div className="text-[10px] text-white/50 font-mono truncate mt-0.5">
             admin.mumwesafarisuganda.com
