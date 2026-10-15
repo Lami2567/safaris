@@ -17,9 +17,10 @@ import { api } from '@/lib/api';
 
 const VEHICLE_CONFIGS = [
   { key: 'boda', label: 'Boda Motorcycle', icon: Bike, desc: 'Quick 2-wheeler commute across Kampala' },
-  { key: 'economy', label: 'Economy Hatchback', icon: Car, desc: 'Affordable everyday urban rides' },
+  { key: 'economy', label: 'Economy Hatchback (Safaris Go)', icon: Car, desc: 'Affordable everyday urban rides' },
   { key: 'comfort', label: 'Comfort Sedan', icon: Car, desc: 'AC executive transport' },
   { key: 'safari_4x4', label: 'Safari 4x4 Land Cruiser', icon: Compass, desc: 'Off-road pop-up safari vehicle' },
+  { key: 'tour_van', label: 'Safaris Tour Van', icon: Car, desc: 'Pop-up roof van for group expeditions' },
   { key: 'delivery', label: 'Express Parcel Courier', icon: Package, desc: 'Motorcycle / van door delivery' },
 ];
 
@@ -118,12 +119,13 @@ export default function PricingPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {VEHICLE_CONFIGS.map((veh) => {
           const IconComponent = veh.icon;
-          const current = pricing[veh.key] || {
-            baseFare: 2000,
-            perKmRate: 1000,
-            perMinuteRate: 150,
-            minimumFare: 3000,
-            cancellationFee: 1500,
+          const rawVeh = pricing[veh.key] || (veh.key === 'economy' ? pricing.go : (veh.key === 'safari_4x4' ? (pricing.safari4x4 || pricing.safari) : null)) || {};
+          const current = {
+            baseFare: rawVeh.baseFare ?? 2000,
+            perKmRate: rawVeh.perKmRate ?? rawVeh.perKm ?? 1000,
+            perMinuteRate: rawVeh.perMinuteRate ?? rawVeh.perMin ?? 150,
+            minimumFare: rawVeh.minimumFare ?? rawVeh.minFare ?? 3000,
+            cancellationFee: rawVeh.cancellationFee ?? 1500,
           };
 
           return (

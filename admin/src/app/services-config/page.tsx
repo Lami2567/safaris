@@ -16,9 +16,9 @@ import {
   Compass,
   Plane,
   Truck,
-  Bus
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { ImagePlaceholder } from '@/components/ImagePlaceholder';
 
 const SERVICE_ICONS: Record<string, any> = {
   ride_boda: Bike,
@@ -43,7 +43,18 @@ export default function ServicesConfigPage() {
     try {
       const config = await api.getConfig();
       if (config) {
-        setServices(config.services || []);
+        const rawServices = config.services || [];
+        const normalized = rawServices.map((s: any) => {
+          const isServiceOn = s.enabled !== undefined 
+            ? Boolean(s.enabled) 
+            : (s.isEnabled !== undefined ? Boolean(s.isEnabled) : false);
+          return {
+            ...s,
+            enabled: isServiceOn,
+            isEnabled: isServiceOn,
+          };
+        });
+        setServices(normalized);
         setFeatures(config.features || {});
       }
     } catch (err: any) {
@@ -59,7 +70,13 @@ export default function ServicesConfigPage() {
 
   const handleToggleService = (serviceId: string) => {
     setServices(prev =>
-      prev.map(s => s.id === serviceId ? { ...s, enabled: !s.enabled } : s)
+      prev.map(s => {
+        if (s.id === serviceId) {
+          const nextVal = !s.enabled;
+          return { ...s, enabled: nextVal, isEnabled: nextVal };
+        }
+        return s;
+      })
     );
   };
 
@@ -77,8 +94,13 @@ export default function ServicesConfigPage() {
     setSaving(true);
     setMessage(null);
     try {
+      const payload = services.map(s => ({
+        ...s,
+        enabled: Boolean(s.enabled),
+        isEnabled: Boolean(s.enabled),
+      }));
       await Promise.all([
-        api.updateServices(services),
+        api.updateServices(payload),
         api.updateFeatures(features),
       ]);
       setMessage({ text: 'Service configuration and feature flags successfully published!', type: 'success' });
@@ -97,7 +119,7 @@ export default function ServicesConfigPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-3">
             <Sliders className="w-7 h-7 text-white" />
-            App Services & Feature Toggles
+            App Services &amp; Feature Toggles
           </h1>
           <p className="text-sm text-white/50 mt-1">
             Activate or suspend mobile services and toggle real-time system capabilities on the fly.
@@ -146,80 +168,94 @@ export default function ServicesConfigPage() {
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {services.map((srv) => {
             const IconComponent = SERVICE_ICONS[srv.id] || Layers;
             return (
               <div
                 key={srv.id}
-                className={`border rounded-xl p-5 transition-all flex flex-col justify-between ${
+                className={`border rounded-2xl overflow-hidden transition-all flex flex-col justify-between shadow-xl ${
                   srv.enabled 
                     ? 'border-white/20 bg-white/[0.02] hover:border-white/40' 
-                    : 'border-white/10 opacity-50 bg-black'
+                    : 'border-white/10 opacity-60 bg-black/60'
                 }`}
               >
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="w-10 h-10 rounded-lg border border-white/20 flex items-center justify-center bg-white/[0.04]">
-                      <IconComponent className="w-5 h-5 text-white" />
-                    </div>
-                    <button
-                      onClick={() => handleToggleService(srv.id)}
-                      className="text-white hover:text-white/80 transition-colors"
-                    >
-                      {srv.enabled ? (
-                        <ToggleRight className="w-8 h-8 text-white" />
-                      ) : (
-                        <ToggleLeft className="w-8 h-8 text-white/30" />
-                      )}
-                    </button>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-[10px] uppercase font-mono tracking-wider text-white/40">Display Title</label>
-                      <input
-                        type="text"
-                        value={srv.title || ''}
-                        onChange={e => handleServiceChange(srv.id, 'title', e.target.value)}
-                        className="w-full mt-1 bg-black border border-white/15 rounded-md px-3 py-1.5 text-xs text-white focus:outline-none focus:border-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] uppercase font-mono tracking-wider text-white/40">Subtitle / Tagline</label>
-                      <input
-                        type="text"
-                        value={srv.subtitle || ''}
-                        onChange={e => handleServiceChange(srv.id, 'subtitle', e.target.value)}
-                        className="w-full mt-1 bg-black border border-white/15 rounded-md px-3 py-1.5 text-xs text-white focus:outline-none focus:border-white"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] uppercase font-mono tracking-wider text-white/40">Service ID</label>
-                        <p className="font-mono text-xs text-white/60 mt-1">{srv.id}</p>
-                      </div>
-                      <div>
-                        <label className="text-[10px] uppercase font-mono tracking-wider text-white/40">Sort Order</label>
-                        <input
-                          type="number"
-                          value={srv.order ?? 0}
-                          onChange={e => handleServiceChange(srv.id, 'order', parseInt(e.target.value) || 0)}
-                          className="w-full mt-1 bg-black border border-white/15 rounded-md px-3 py-1 text-xs text-white focus:outline-none focus:border-white"
-                        />
-                      </div>
-                    </div>
-                  </div>
+                {/* Service image slot at top (optional) */}
+                <div className="w-full bg-white/[0.02]">
+                  <ImagePlaceholder
+                    aspectRatio="16:9"
+                    value={srv.imageUrl || ''}
+                    folder="general"
+                    hint="Click to attach graphic / photo for this service"
+                    onChange={(val) => handleServiceChange(srv.id, 'imageUrl', val)}
+                  />
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-[11px]">
-                  <span className={`px-2 py-0.5 rounded font-mono text-[10px] uppercase ${
-                    srv.enabled ? 'bg-white text-black font-semibold' : 'text-white/40 border border-white/20'
-                  }`}>
-                    {srv.enabled ? 'Available in App' : 'Suspended'}
-                  </span>
+                <div className="p-6 flex flex-col flex-1 justify-between space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="w-11 h-11 rounded-xl border border-white/20 flex items-center justify-center bg-white/[0.05] shadow-sm">
+                        <IconComponent className="w-6 h-6 text-white" />
+                      </div>
+                      <button
+                        onClick={() => handleToggleService(srv.id)}
+                        className="text-white hover:text-white/80 transition-colors"
+                        title={srv.enabled ? 'Disable service' : 'Enable service'}
+                      >
+                        {srv.enabled ? (
+                          <ToggleRight className="w-8 h-8 text-white" />
+                        ) : (
+                          <ToggleLeft className="w-8 h-8 text-white/30" />
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="space-y-3.5">
+                      <div>
+                        <label className="text-[10px] uppercase font-mono tracking-wider text-white/40">Display Title</label>
+                        <input
+                          type="text"
+                          value={srv.title || ''}
+                          onChange={e => handleServiceChange(srv.id, 'title', e.target.value)}
+                          className="w-full mt-1 bg-black border border-white/15 rounded-lg px-3.5 py-2 text-xs text-white focus:outline-none focus:border-white transition-colors"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] uppercase font-mono tracking-wider text-white/40">Subtitle / Tagline</label>
+                        <input
+                          type="text"
+                          value={srv.subtitle || ''}
+                          onChange={e => handleServiceChange(srv.id, 'subtitle', e.target.value)}
+                          className="w-full mt-1 bg-black border border-white/15 rounded-lg px-3.5 py-2 text-xs text-white focus:outline-none focus:border-white transition-colors"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="text-[10px] uppercase font-mono tracking-wider text-white/40">Service ID</label>
+                          <p className="font-mono text-xs text-white/60 mt-1.5">{srv.id}</p>
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase font-mono tracking-wider text-white/40">Sort Order</label>
+                          <input
+                            type="number"
+                            value={srv.order ?? 0}
+                            onChange={e => handleServiceChange(srv.id, 'order', parseInt(e.target.value) || 0)}
+                            className="w-full mt-1 bg-black border border-white/15 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-white font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-white/10 flex items-center justify-between text-xs">
+                    <span className={`px-2.5 py-1 rounded font-mono text-[10px] uppercase font-semibold ${
+                      srv.enabled ? 'bg-white text-black' : 'text-white/40 border border-white/20'
+                    }`}>
+                      {srv.enabled ? 'Available in Mobile App' : 'Suspended'}
+                    </span>
+                  </div>
                 </div>
               </div>
             );

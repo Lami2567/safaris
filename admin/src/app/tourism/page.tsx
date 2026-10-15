@@ -11,14 +11,13 @@ import {
   Trash2, 
   Edit3, 
   RefreshCw, 
-  Search, 
   CheckCircle2, 
-  Clock, 
   X,
   AlertCircle
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ImagePlaceholder } from '@/components/ImagePlaceholder';
+import { ImageUploader } from '@/components/ImageUploader';
 
 type Tab = 'destinations' | 'packages' | 'guides' | 'bookings';
 
@@ -50,6 +49,9 @@ export default function TourismPage() {
     travelDuration: '5 hours',
     rating: 4.8,
     isPopular: true,
+    highlights: '',
+    activities: '',
+    bestTimeToVisit: 'Year-round',
   });
 
   const [pkgForm, setPkgForm] = useState({
@@ -61,6 +63,8 @@ export default function TourismPage() {
     description: '',
     imageUrl: '',
     isFeatured: true,
+    inclusions: '',
+    itinerarySummary: '',
   });
 
   const [guideForm, setGuideForm] = useState({
@@ -107,10 +111,19 @@ export default function TourismPage() {
   const handleSaveDestination = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...destForm,
+        highlights: typeof destForm.highlights === 'string'
+          ? destForm.highlights.split('\n').map(s => s.trim()).filter(Boolean)
+          : destForm.highlights,
+        activities: typeof destForm.activities === 'string'
+          ? destForm.activities.split('\n').map(s => s.trim()).filter(Boolean)
+          : destForm.activities,
+      };
       if (modalMode === 'create') {
-        await api.createDestination(destForm);
+        await api.createDestination(payload);
       } else {
-        await api.updateDestination(selectedItem.id, destForm);
+        await api.updateDestination(selectedItem.id, payload);
       }
       setShowModal(false);
       loadData();
@@ -122,10 +135,19 @@ export default function TourismPage() {
   const handleSavePackage = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...pkgForm,
+        inclusions: typeof pkgForm.inclusions === 'string'
+          ? pkgForm.inclusions.split('\n').map(s => s.trim()).filter(Boolean)
+          : pkgForm.inclusions,
+        itinerarySummary: typeof pkgForm.itinerarySummary === 'string'
+          ? pkgForm.itinerarySummary.split('\n').map(s => s.trim()).filter(Boolean)
+          : pkgForm.itinerarySummary,
+      };
       if (modalMode === 'create') {
-        await api.createPackage(pkgForm);
+        await api.createPackage(payload);
       } else {
-        await api.updatePackage(selectedItem.id, pkgForm);
+        await api.updatePackage(selectedItem.id, payload);
       }
       setShowModal(false);
       loadData();
@@ -182,7 +204,7 @@ export default function TourismPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-3">
             <Compass className="w-7 h-7 text-white" />
-            Tourism & Safari Management
+            Tourism &amp; Safari Management
           </h1>
           <p className="text-sm text-white/50 mt-1">
             Dynamic control for destinations, curated packages, certified tour guides, and customer bookings.
@@ -248,90 +270,106 @@ export default function TourismPage() {
         })}
       </div>
 
-      {/* Tab: Destinations */}
+      {/* ─── Tab: Destinations (70/30 Layout) ─── */}
       {activeTab === 'destinations' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {destinations.map((dest) => (
               <div
                 key={dest.id}
-                className="bg-black border border-white/15 rounded-xl p-5 hover:border-white/40 transition-colors flex flex-col justify-between"
+                className="rounded-2xl border border-white/15 overflow-hidden hover:border-white/35 transition-all bg-white/[0.02] flex flex-col justify-between shadow-xl group"
               >
-                <div>
-                  <div className="mb-4">
-                    <ImagePlaceholder
-                      label="Destination Banner"
-                      aspectRatio="16:9"
-                      value={dest.imageUrl}
-                    />
+                {/* Top 70%: Photo Container */}
+                <div className="relative w-full aspect-[16/10] bg-white/[0.03] overflow-hidden">
+                  <ImagePlaceholder
+                    aspectRatio="16:9"
+                    value={dest.imageUrl}
+                    folder="tourism"
+                    hint="Click to upload destination photo"
+                    onChange={(val) => {
+                      setDestinations(prev => prev.map(d => d.id === dest.id ? { ...d, imageUrl: val } : d));
+                    }}
+                  />
+                  <div className="absolute top-3 left-3 z-10">
+                    <span className="text-[10px] uppercase font-mono font-semibold tracking-wider px-2.5 py-1 rounded-md bg-black/70 backdrop-blur-md border border-white/15 text-white">
+                      {dest.category?.replace(/_/g, ' ') || 'National Park'}
+                    </span>
                   </div>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span className="text-[10px] uppercase font-mono tracking-wider px-2 py-0.5 rounded border border-white/20 text-white/60">
-                        {dest.category?.replace('_', ' ') || 'National Park'}
-                      </span>
-                      <h3 className="text-lg font-bold text-white mt-2">{dest.name}</h3>
-                    </div>
-                    {dest.isPopular && (
-                      <span className="text-[10px] bg-white text-black font-semibold px-2 py-0.5 rounded">
+                  {dest.isPopular && (
+                    <div className="absolute top-3 right-3 z-10">
+                      <span className="text-[10px] bg-white text-black font-bold px-2.5 py-1 rounded-md shadow-md">
                         Popular
                       </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-white/60 line-clamp-3 mt-2 leading-relaxed">
-                    {dest.description || 'No description provided yet.'}
-                  </p>
-                  <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-[11px] text-white/50 font-mono">
-                    <span>{dest.distanceFromKampala || '300 km'}</span>
-                    <span>{dest.travelDuration || '5 hrs'}</span>
-                    <span>★ {dest.rating || 4.8}</span>
-                  </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-end gap-2">
-                  <button
-                    onClick={() => {
-                      setSelectedItem(dest);
-                      setDestForm({
-                        name: dest.name || '',
-                        category: dest.category || 'national_park',
-                        description: dest.description || '',
-                        imageUrl: dest.imageUrl || '',
-                        latitude: dest.latitude || 0.3476,
-                        longitude: dest.longitude || 32.5825,
-                        distanceFromKampala: dest.distanceFromKampala || '300 km',
-                        travelDuration: dest.travelDuration || '5 hours',
-                        rating: dest.rating || 4.8,
-                        isPopular: dest.isPopular ?? true,
-                      });
-                      setModalMode('edit');
-                      setShowModal(true);
-                    }}
-                    className="p-2 border border-white/15 rounded-md hover:bg-white/10 text-white/70 hover:text-white transition-colors"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete('destinations', dest.id)}
-                    className="p-2 border border-white/15 rounded-md hover:border-red-500/50 hover:bg-red-500/10 text-white/70 hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                {/* Bottom 30%: Spacious Card Body */}
+                <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-white tracking-tight leading-snug">{dest.name}</h3>
+                    <p className="text-xs text-white/60 line-clamp-2 mt-1.5 leading-relaxed">
+                      {dest.description || 'Iconic Ugandan safari destination with extraordinary wildlife.'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs text-white/60 font-mono pt-3 border-t border-white/10">
+                    <span className="bg-white/[0.04] px-2.5 py-1 rounded border border-white/10">
+                      📍 {dest.distanceFromKampala || '300 km'}
+                    </span>
+                    <span className="bg-white/[0.04] px-2.5 py-1 rounded border border-white/10">
+                      ⏱️ {dest.travelDuration || '5 hours'}
+                    </span>
+                    <span className="bg-white/[0.04] px-2.5 py-1 rounded border border-white/10 text-amber-300 font-bold">
+                      ★ {dest.rating || 4.8}
+                    </span>
+                  </div>
+
+                  <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-2.5">
+                    <button
+                      onClick={() => {
+                        setSelectedItem(dest);
+                        setDestForm({
+                          name: dest.name || '',
+                          category: dest.category || 'national_park',
+                          description: dest.description || '',
+                          imageUrl: dest.imageUrl || '',
+                          latitude: dest.latitude || 0.3476,
+                          longitude: dest.longitude || 32.5825,
+                          distanceFromKampala: dest.distanceFromKampala || '300 km',
+                          travelDuration: dest.travelDuration || '5 hours',
+                          rating: dest.rating || 4.8,
+                          isPopular: dest.isPopular ?? true,
+                          highlights: Array.isArray(dest.highlights) ? dest.highlights.join('\n') : (dest.highlights || ''),
+                          activities: Array.isArray(dest.activities) ? dest.activities.join('\n') : (dest.activities || ''),
+                          bestTimeToVisit: dest.best_time_to_visit || dest.bestTimeToVisit || 'Year-round',
+                        });
+                        setModalMode('edit');
+                        setShowModal(true);
+                      }}
+                      className="px-3.5 py-2 border border-white/15 rounded-lg hover:bg-white/10 text-xs font-semibold text-white/90 hover:text-white flex items-center gap-1.5 transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" /> Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete('destinations', dest.id)}
+                      className="px-3.5 py-2 border border-red-500/20 rounded-lg hover:bg-red-500/10 text-xs font-semibold text-red-400 flex items-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
 
           {destinations.length === 0 && !loading && (
-            <div className="text-center py-16 border border-dashed border-white/15 rounded-xl">
-              <MapPin className="w-10 h-10 text-white/30 mx-auto mb-3" />
+            <div className="text-center py-20 border border-dashed border-white/15 rounded-2xl bg-white/[0.01]">
+              <MapPin className="w-12 h-12 text-white/30 mx-auto mb-3" />
               <p className="text-sm text-white/60">No destinations configured yet.</p>
               <button
-                onClick={() => {
-                  setModalMode('create');
-                  setShowModal(true);
-                }}
-                className="mt-4 px-4 py-2 bg-white text-black text-xs font-semibold rounded-md hover:bg-white/90"
+                onClick={() => { setModalMode('create'); setShowModal(true); }}
+                className="mt-4 px-5 py-2.5 bg-white text-black text-xs font-semibold rounded-lg hover:bg-white/90 shadow-md"
               >
                 Add First Destination
               </button>
@@ -340,93 +378,111 @@ export default function TourismPage() {
         </div>
       )}
 
-      {/* Tab: Tour Packages */}
+      {/* ─── Tab: Tour Packages (50/50 Layout) ─── */}
       {activeTab === 'packages' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {packages.map((pkg) => (
-              <div
-                key={pkg.id}
-                className="bg-black border border-white/15 rounded-xl p-5 hover:border-white/40 transition-colors flex flex-col justify-between"
-              >
-                <div>
-                  <div className="mb-4">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {packages.map((pkg) => {
+              const destName = destinations.find(d => d.id === pkg.destinationId)?.name || pkg.destination?.name || 'Uganda Safari';
+              return (
+                <div
+                  key={pkg.id}
+                  className="rounded-2xl border border-white/15 overflow-hidden hover:border-white/35 transition-all bg-white/[0.02] flex flex-col md:flex-row shadow-xl group"
+                >
+                  {/* Left 50%: Image Container */}
+                  <div className="md:w-1/2 relative bg-white/[0.03] overflow-hidden flex flex-col justify-center min-h-[220px]">
                     <ImagePlaceholder
-                      label="Package Highlight"
-                      aspectRatio="16:9"
+                      aspectRatio="1:1"
                       value={pkg.imageUrl}
+                      folder="tourism"
+                      hint="Click to upload tour package photo"
+                      onChange={(val) => {
+                        setPackages(prev => prev.map(p => p.id === pkg.id ? { ...p, imageUrl: val } : p));
+                      }}
                     />
-                  </div>
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="text-base font-bold text-white">{pkg.title}</h3>
-                    {pkg.isFeatured && (
-                      <span className="text-[10px] bg-white text-black font-semibold px-2 py-0.5 rounded">
-                        Featured
+                    <div className="absolute top-3 left-3 z-10">
+                      <span className="text-[10px] font-mono font-semibold px-2.5 py-1 rounded-md bg-black/70 backdrop-blur-md border border-white/15 text-white">
+                        {pkg.durationDays} DAYS SAFARI
                       </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-white/40 mt-1">
-                    Destination: {destinations.find(d => d.id === pkg.destinationId)?.name || pkg.destination?.name || 'Uganda Safari'}
-                  </p>
-                  <p className="text-xs text-white/60 line-clamp-3 mt-3 leading-relaxed">
-                    {pkg.description || 'Custom curated wildlife safari itinerary.'}
-                  </p>
-                  <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
-                    <div>
-                      <p className="text-[10px] text-white/40 uppercase tracking-wider font-mono">Duration</p>
-                      <p className="text-xs text-white font-medium">{pkg.durationDays} Days</p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-[10px] text-white/40 uppercase tracking-wider font-mono">Pricing</p>
-                      <p className="text-xs text-white font-semibold font-mono">
-                        UGX {pkg.priceUgx?.toLocaleString()} <span className="text-white/40">(${pkg.priceUsd})</span>
+                  </div>
+
+                  {/* Right 50%: Spacious Package Details */}
+                  <div className="md:w-1/2 p-6 flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-[10px] uppercase font-mono tracking-wider text-white/50">
+                          {destName}
+                        </span>
+                        {pkg.isFeatured && (
+                          <span className="text-[9px] bg-white text-black font-bold px-2 py-0.5 rounded shadow-sm">
+                            Featured
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-base sm:text-lg font-bold text-white leading-snug line-clamp-2">
+                        {pkg.title}
+                      </h3>
+                      <p className="text-xs text-white/60 line-clamp-2 mt-2 leading-relaxed">
+                        {pkg.description || 'Complete guided wildlife expedition with transport, permits and lodging.'}
                       </p>
                     </div>
+
+                    <div className="pt-3 border-t border-white/10 flex items-end justify-between">
+                      <div>
+                        <p className="text-[10px] uppercase font-mono tracking-wider text-white/40">Pricing</p>
+                        <p className="text-base font-mono font-bold text-white mt-0.5">
+                          UGX {pkg.priceUgx?.toLocaleString()}
+                        </p>
+                        <p className="text-xs text-white/50 font-mono">${pkg.priceUsd} USD</p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedItem(pkg);
+                            setPkgForm({
+                              destinationId: pkg.destinationId || pkg.destination_id || '',
+                              title: pkg.title || '',
+                              durationDays: pkg.durationDays || pkg.duration_days || 3,
+                              priceUgx: pkg.priceUgx || pkg.price_per_person_ugx || 1200000,
+                              priceUsd: pkg.priceUsd || Math.round((pkg.price_per_person_ugx || 1200000) / 3700),
+                              description: pkg.description || '',
+                              imageUrl: pkg.imageUrl || '',
+                              isFeatured: pkg.isFeatured ?? true,
+                              inclusions: Array.isArray(pkg.inclusions) ? pkg.inclusions.join('\n') : (pkg.inclusions || ''),
+                              itinerarySummary: Array.isArray(pkg.itinerarySummary || pkg.itinerary_summary)
+                                ? (pkg.itinerarySummary || pkg.itinerary_summary).join('\n')
+                                : (pkg.itinerarySummary || pkg.itinerary_summary || ''),
+                            });
+                            setModalMode('edit');
+                            setShowModal(true);
+                          }}
+                          className="px-3 py-1.5 border border-white/15 rounded-lg hover:bg-white/10 text-xs font-semibold text-white/90 hover:text-white flex items-center gap-1 transition-colors"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" /> Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete('packages', pkg.id)}
+                          className="px-3 py-1.5 border border-red-500/20 rounded-lg hover:bg-red-500/10 text-xs font-semibold text-red-400 flex items-center gap-1 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Delete
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
-
-                <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-end gap-2">
-                  <button
-                    onClick={() => {
-                      setSelectedItem(pkg);
-                      setPkgForm({
-                        destinationId: pkg.destinationId || '',
-                        title: pkg.title || '',
-                        durationDays: pkg.durationDays || 3,
-                        priceUgx: pkg.priceUgx || 1200000,
-                        priceUsd: pkg.priceUsd || 350,
-                        description: pkg.description || '',
-                        imageUrl: pkg.imageUrl || '',
-                        isFeatured: pkg.isFeatured ?? true,
-                      });
-                      setModalMode('edit');
-                      setShowModal(true);
-                    }}
-                    className="p-2 border border-white/15 rounded-md hover:bg-white/10 text-white/70 hover:text-white transition-colors"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete('packages', pkg.id)}
-                    className="p-2 border border-white/15 rounded-md hover:border-red-500/50 hover:bg-red-500/10 text-white/70 hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {packages.length === 0 && !loading && (
-            <div className="text-center py-16 border border-dashed border-white/15 rounded-xl">
-              <PackageIcon className="w-10 h-10 text-white/30 mx-auto mb-3" />
+            <div className="text-center py-20 border border-dashed border-white/15 rounded-2xl bg-white/[0.01]">
+              <PackageIcon className="w-12 h-12 text-white/30 mx-auto mb-3" />
               <p className="text-sm text-white/60">No tour packages created yet.</p>
               <button
-                onClick={() => {
-                  setModalMode('create');
-                  setShowModal(true);
-                }}
-                className="mt-4 px-4 py-2 bg-white text-black text-xs font-semibold rounded-md hover:bg-white/90"
+                onClick={() => { setModalMode('create'); setShowModal(true); }}
+                className="mt-4 px-5 py-2.5 bg-white text-black text-xs font-semibold rounded-lg hover:bg-white/90 shadow-md"
               >
                 Create First Package
               </button>
@@ -435,43 +491,49 @@ export default function TourismPage() {
         </div>
       )}
 
-      {/* Tab: Certified Guides */}
+      {/* ─── Tab: Certified Guides (60/40 Portrait Layout) ─── */}
       {activeTab === 'guides' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {guides.map((g) => (
               <div
                 key={g.id}
-                className="bg-black border border-white/15 rounded-xl p-5 hover:border-white/40 transition-colors flex flex-col justify-between"
+                className="rounded-2xl border border-white/15 overflow-hidden hover:border-white/35 transition-all bg-white/[0.02] flex flex-col justify-between shadow-xl group"
               >
-                <div>
-                  <div className="mb-4">
-                    <ImagePlaceholder
-                      label="Guide Portrait"
-                      aspectRatio="1:1"
-                      value={g.avatarUrl}
-                    />
-                  </div>
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <h3 className="text-base font-bold text-white">{g.name}</h3>
-                      <p className="text-xs text-white/40 font-mono mt-0.5">{g.phone || 'No phone'}</p>
-                    </div>
-                    {g.isCertified && (
-                      <span className="text-[10px] bg-white text-black font-semibold px-2 py-0.5 rounded flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" /> Certified
+                {/* Top 60%: Portrait Photo */}
+                <div className="relative w-full aspect-[4/3] bg-white/[0.03] overflow-hidden">
+                  <ImagePlaceholder
+                    aspectRatio="4:3"
+                    value={g.avatarUrl}
+                    folder="tourism"
+                    hint="Click to upload guide photo"
+                    onChange={(val) => {
+                      setGuides(prev => prev.map(guide => guide.id === g.id ? { ...guide, avatarUrl: val } : guide));
+                    }}
+                  />
+                  {g.isCertified && (
+                    <div className="absolute top-3 right-3 z-10">
+                      <span className="text-[10px] bg-white text-black font-bold px-2.5 py-1 rounded-md shadow-md flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-black" /> Certified
                       </span>
-                    )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Bottom 40%: Spacious Details */}
+                <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-white tracking-tight">{g.name}</h3>
+                    <p className="text-xs text-white/40 font-mono mt-0.5">{g.phone || 'No direct phone'}</p>
+                    <p className="text-xs text-white/60 line-clamp-2 mt-2 leading-relaxed">
+                      {g.bio || 'Licensed Uganda Wildlife Authority (UWA) safari and wilderness guide.'}
+                    </p>
                   </div>
 
-                  <p className="text-xs text-white/60 line-clamp-2 mt-3 leading-relaxed">
-                    {g.bio || 'Experienced UWA registered safari guide with extensive flora and fauna knowledge.'}
-                  </p>
-
-                  <div className="mt-4 space-y-2 text-xs">
+                  <div className="space-y-2 text-xs pt-3 border-t border-white/10">
                     <div className="flex items-center justify-between text-white/50">
                       <span>Languages:</span>
-                      <span className="text-white text-right font-mono">
+                      <span className="text-white font-mono text-right truncate max-w-[65%]">
                         {Array.isArray(g.languages) ? g.languages.join(', ') : g.languages || 'English'}
                       </span>
                     </div>
@@ -481,60 +543,57 @@ export default function TourismPage() {
                     </div>
                     <div className="flex items-center justify-between text-white/50">
                       <span>Daily Fee:</span>
-                      <span className="text-white font-mono font-semibold">
+                      <span className="text-white font-mono font-bold text-sm">
                         UGX {g.pricePerDayUgx?.toLocaleString()} / day
                       </span>
                     </div>
                   </div>
-                </div>
 
-                <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-end gap-2">
-                  <button
-                    onClick={() => {
-                      setSelectedItem(g);
-                      setGuideForm({
-                        name: g.name || '',
-                        phone: g.phone || '',
-                        email: g.email || '',
-                        languages: Array.isArray(g.languages) ? g.languages.join(', ') : (g.languages || ''),
-                        specialties: Array.isArray(g.specialties) ? g.specialties.join(', ') : (g.specialties || ''),
-                        yearsOfExperience: g.yearsOfExperience || 5,
-                        rating: g.rating || 4.9,
-                        pricePerDayUgx: g.pricePerDayUgx || 150000,
-                        pricePerDayUsd: g.pricePerDayUsd || 45,
-                        isCertified: g.isCertified ?? true,
-                        isAvailable: g.isAvailable ?? true,
-                        avatarUrl: g.avatarUrl || '',
-                        bio: g.bio || '',
-                      });
-                      setModalMode('edit');
-                      setShowModal(true);
-                    }}
-                    className="p-2 border border-white/15 rounded-md hover:bg-white/10 text-white/70 hover:text-white transition-colors"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete('guides', g.id)}
-                    className="p-2 border border-white/15 rounded-md hover:border-red-500/50 hover:bg-red-500/10 text-white/70 hover:text-red-400 transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-2.5">
+                    <button
+                      onClick={() => {
+                        setSelectedItem(g);
+                        setGuideForm({
+                          name: g.name || '',
+                          phone: g.phone || '',
+                          email: g.email || '',
+                          languages: Array.isArray(g.languages) ? g.languages.join(', ') : (g.languages || ''),
+                          specialties: Array.isArray(g.specialties) ? g.specialties.join(', ') : (g.specialties || ''),
+                          yearsOfExperience: g.yearsOfExperience || 5,
+                          rating: g.rating || 4.9,
+                          pricePerDayUgx: g.pricePerDayUgx || 150000,
+                          pricePerDayUsd: g.pricePerDayUsd || 45,
+                          isCertified: g.isCertified ?? true,
+                          isAvailable: g.isAvailable ?? true,
+                          avatarUrl: g.avatarUrl || '',
+                          bio: g.bio || '',
+                        });
+                        setModalMode('edit');
+                        setShowModal(true);
+                      }}
+                      className="px-3.5 py-2 border border-white/15 rounded-lg hover:bg-white/10 text-xs font-semibold text-white/90 hover:text-white flex items-center gap-1.5 transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" /> Edit
+                    </button>
+                    <button
+                      onClick={() => handleDelete('guides', g.id)}
+                      className="px-3.5 py-2 border border-red-500/20 rounded-lg hover:bg-red-500/10 text-xs font-semibold text-red-400 flex items-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
 
           {guides.length === 0 && !loading && (
-            <div className="text-center py-16 border border-dashed border-white/15 rounded-xl">
-              <UserCheck className="w-10 h-10 text-white/30 mx-auto mb-3" />
+            <div className="text-center py-20 border border-dashed border-white/15 rounded-2xl bg-white/[0.01]">
+              <UserCheck className="w-12 h-12 text-white/30 mx-auto mb-3" />
               <p className="text-sm text-white/60">No certified guides registered yet.</p>
               <button
-                onClick={() => {
-                  setModalMode('create');
-                  setShowModal(true);
-                }}
-                className="mt-4 px-4 py-2 bg-white text-black text-xs font-semibold rounded-md hover:bg-white/90"
+                onClick={() => { setModalMode('create'); setShowModal(true); }}
+                className="mt-4 px-5 py-2.5 bg-white text-black text-xs font-semibold rounded-lg hover:bg-white/90 shadow-md"
               >
                 Register First Guide
               </button>
@@ -543,7 +602,8 @@ export default function TourismPage() {
         </div>
       )}
 
-      {/* Tab: Bookings */}
+
+      {/* ─── Tab: Bookings ─── */}
       {activeTab === 'bookings' && (
         <div className="border border-white/15 rounded-xl overflow-hidden bg-black">
           <div className="overflow-x-auto">
@@ -613,7 +673,7 @@ export default function TourismPage() {
         </div>
       )}
 
-      {/* Modal for Create / Edit */}
+      {/* ─── Modal for Create / Edit ─── */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
           <div className="bg-black border border-white/20 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-6">
@@ -629,14 +689,15 @@ export default function TourismPage() {
               </button>
             </div>
 
-            {/* Destination Form */}
+            {/* ── Destination Form ── */}
             {activeTab === 'destinations' && (
               <form onSubmit={handleSaveDestination} className="space-y-4">
-                <ImagePlaceholder
-                  label="Destination Banner (User will supply image)"
-                  aspectRatio="16:9"
+                <ImageUploader
+                  label="Destination Banner"
                   value={destForm.imageUrl}
                   onChange={(val) => setDestForm(prev => ({ ...prev, imageUrl: val }))}
+                  folder="tourism"
+                  recommendedSize="1200 x 900 px (4:3)"
                 />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -713,6 +774,64 @@ export default function TourismPage() {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs text-white/60 uppercase font-mono">Latitude</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={destForm.latitude}
+                      onChange={e => setDestForm(prev => ({ ...prev, latitude: parseFloat(e.target.value) || 0 }))}
+                      placeholder="e.g. 2.2742"
+                      className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 uppercase font-mono">Longitude</label>
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={destForm.longitude}
+                      onChange={e => setDestForm(prev => ({ ...prev, longitude: parseFloat(e.target.value) || 0 }))}
+                      placeholder="e.g. 31.7828"
+                      className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 uppercase font-mono">Best Season to Visit</label>
+                    <input
+                      type="text"
+                      value={destForm.bestTimeToVisit}
+                      onChange={e => setDestForm(prev => ({ ...prev, bestTimeToVisit: e.target.value }))}
+                      placeholder="e.g. June to Sept, Dec to Feb"
+                      className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-white/60 uppercase font-mono">Key Highlights (1 per line)</label>
+                    <textarea
+                      rows={3}
+                      value={destForm.highlights}
+                      onChange={e => setDestForm(prev => ({ ...prev, highlights: e.target.value }))}
+                      placeholder="Top of the Falls Hike&#10;Nile River Boat Cruise&#10;Big 4 Game Drives"
+                      className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 uppercase font-mono">Activities (1 per line)</label>
+                    <textarea
+                      rows={3}
+                      value={destForm.activities}
+                      onChange={e => setDestForm(prev => ({ ...prev, activities: e.target.value }))}
+                      placeholder="Game Drives&#10;Bird Watching&#10;Gorilla Trekking"
+                      className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-white"
+                    />
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2 pt-2">
                   <input
                     type="checkbox"
@@ -744,14 +863,15 @@ export default function TourismPage() {
               </form>
             )}
 
-            {/* Package Form */}
+            {/* ── Package Form ── */}
             {activeTab === 'packages' && (
               <form onSubmit={handleSavePackage} className="space-y-4">
-                <ImagePlaceholder
-                  label="Package Image (User will supply image)"
-                  aspectRatio="16:9"
+                <ImageUploader
+                  label="Package Highlight Image"
                   value={pkgForm.imageUrl}
                   onChange={(val) => setPkgForm(prev => ({ ...prev, imageUrl: val }))}
+                  folder="tourism"
+                  recommendedSize="800 x 800 px (Square)"
                 />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -824,6 +944,29 @@ export default function TourismPage() {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-white/60 uppercase font-mono">Inclusions (1 item per line)</label>
+                    <textarea
+                      rows={3}
+                      value={pkgForm.inclusions}
+                      onChange={e => setPkgForm(prev => ({ ...prev, inclusions: e.target.value }))}
+                      placeholder="4x4 Safari Land Cruiser&#10;Certified English Safari Guide&#10;Park Entry &amp; Gorilla Tracking Permits"
+                      className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60 uppercase font-mono">Expedition Itinerary (1 step per line)</label>
+                    <textarea
+                      rows={3}
+                      value={pkgForm.itinerarySummary}
+                      onChange={e => setPkgForm(prev => ({ ...prev, itinerarySummary: e.target.value }))}
+                      placeholder="Day 1: Departure from Kampala&#10;Day 2: Morning Game Drive &amp; Boat Cruise&#10;Day 3: Scenic return journey"
+                      className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-white"
+                    />
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2 pt-2">
                   <input
                     type="checkbox"
@@ -855,14 +998,15 @@ export default function TourismPage() {
               </form>
             )}
 
-            {/* Guide Form */}
+            {/* ── Guide Form ── */}
             {activeTab === 'guides' && (
               <form onSubmit={handleSaveGuide} className="space-y-4">
-                <ImagePlaceholder
-                  label="Guide Profile Photo (User will supply image)"
-                  aspectRatio="1:1"
+                <ImageUploader
+                  label="Guide Portrait / Avatar"
                   value={guideForm.avatarUrl}
                   onChange={(val) => setGuideForm(prev => ({ ...prev, avatarUrl: val }))}
+                  folder="tourism"
+                  recommendedSize="600 x 600 px (Square portrait)"
                 />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -891,7 +1035,7 @@ export default function TourismPage() {
                 </div>
 
                 <div>
-                  <label className="text-xs text-white/60 uppercase font-mono">Bio & Qualifications</label>
+                  <label className="text-xs text-white/60 uppercase font-mono">Bio &amp; Qualifications</label>
                   <textarea
                     rows={2}
                     value={guideForm.bio}

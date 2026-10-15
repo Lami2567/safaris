@@ -11,12 +11,12 @@ import {
   CheckCircle2, 
   AlertCircle,
   X,
-  ExternalLink,
   ToggleLeft,
   ToggleRight
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ImagePlaceholder } from '@/components/ImagePlaceholder';
+import { ImageUploader } from '@/components/ImageUploader';
 
 export default function BannersPage() {
   const [loading, setLoading] = useState(true);
@@ -43,7 +43,20 @@ export default function BannersPage() {
     try {
       const config = await api.getConfig();
       if (config && config.banners) {
-        setBanners(config.banners);
+        const normalized = config.banners.map((b: any, idx: number) => ({
+          id: b.id || `banner_${Date.now()}_${idx}`,
+          title: b.title || b.headline || '',
+          headline: b.title || b.headline || '',
+          subtitle: b.subtitle || b.discountText || '',
+          discountText: b.subtitle || b.discountText || '',
+          imageUrl: b.imageUrl || '',
+          actionType: b.actionType || 'screen',
+          actionValue: b.actionValue || b.destinationId || 'tourism',
+          destinationId: b.actionValue || b.destinationId || 'tourism',
+          active: b.active !== false,
+          tag: b.tag || 'PROMO',
+        }));
+        setBanners(normalized);
       }
     } catch (err: any) {
       setMessage({ text: err.message || 'Failed to load banners', type: 'error' });
@@ -74,34 +87,75 @@ export default function BannersPage() {
   const handleOpenEdit = (banner: any) => {
     setModalMode('edit');
     setSelectedBanner(banner);
-    setBannerForm({ ...banner });
+    setBannerForm({
+      id: banner.id,
+      title: banner.title || banner.headline || '',
+      subtitle: banner.subtitle || banner.discountText || '',
+      imageUrl: banner.imageUrl || '',
+      actionType: banner.actionType || 'screen',
+      actionValue: banner.actionValue || banner.destinationId || 'tourism',
+      active: banner.active !== false,
+    });
     setShowModal(true);
   };
 
-  const handleSaveModal = (e: React.FormEvent) => {
+  const handleSaveModal = async (e: React.FormEvent) => {
     e.preventDefault();
+    const updatedForm = {
+      ...bannerForm,
+      headline: bannerForm.title,
+      discountText: bannerForm.subtitle,
+      destinationId: bannerForm.actionValue,
+    };
+    let newBanners: any[];
     if (modalMode === 'create') {
-      setBanners(prev => [...prev, bannerForm]);
+      newBanners = [...banners, updatedForm];
     } else {
-      setBanners(prev => prev.map(b => b.id === bannerForm.id ? bannerForm : b));
+      newBanners = banners.map(b => b.id === bannerForm.id ? updatedForm : b);
     }
+    setBanners(newBanners);
     setShowModal(false);
+    try {
+      await api.updateBanners(newBanners);
+      setMessage({ text: 'Banner saved and published successfully!', type: 'success' });
+      setTimeout(() => setMessage(null), 3000);
+    } catch (err: any) {
+      setMessage({ text: `Saved locally. Click Publish to sync: ${err.message}`, type: 'error' });
+    }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('Remove this promotional banner from the mobile app?')) return;
-    setBanners(prev => prev.filter(b => b.id !== id));
+    const newBanners = banners.filter(b => b.id !== id);
+    setBanners(newBanners);
+    try {
+      await api.updateBanners(newBanners);
+      setMessage({ text: 'Banner removed successfully.', type: 'success' });
+      setTimeout(() => setMessage(null), 3000);
+    } catch (_) {}
   };
 
-  const handleToggleActive = (id: string) => {
-    setBanners(prev => prev.map(b => b.id === id ? { ...b, active: !b.active } : b));
+  const handleToggleActive = async (id: string) => {
+    const newBanners = banners.map(b => b.id === id ? { ...b, active: !b.active } : b);
+    setBanners(newBanners);
+    try {
+      await api.updateBanners(newBanners);
+      setMessage({ text: 'Banner visibility updated.', type: 'success' });
+      setTimeout(() => setMessage(null), 2500);
+    } catch (_) {}
   };
 
   const handlePublish = async () => {
     setSaving(true);
     setMessage(null);
     try {
-      await api.updateBanners(banners);
+      const normalized = banners.map(b => ({
+        ...b,
+        headline: b.title || b.headline || '',
+        discountText: b.subtitle || b.discountText || '',
+        destinationId: b.actionValue || b.destinationId || 'tourism',
+      }));
+      await api.updateBanners(normalized);
       setMessage({ text: 'Promotional banners published successfully to all mobile clients!', type: 'success' });
       setTimeout(() => setMessage(null), 4000);
     } catch (err: any) {
@@ -118,7 +172,7 @@ export default function BannersPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-3">
             <Megaphone className="w-7 h-7 text-white" />
-            Promotions & Mobile Banners
+            Promotions &amp; Mobile Banners
           </h1>
           <p className="text-sm text-white/50 mt-1">
             Manage top carousel banners, seasonal safari discounts, and click-through deep links.
@@ -162,70 +216,81 @@ export default function BannersPage() {
         </div>
       )}
 
-      {/* Banners List */}
+      {/* Banners Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {banners.map((banner) => (
           <div
             key={banner.id}
-            className={`border rounded-xl p-5 transition-all flex flex-col justify-between ${
+            className={`border rounded-2xl overflow-hidden transition-all shadow-xl flex flex-col justify-between ${
               banner.active 
                 ? 'border-white/20 bg-white/[0.02] hover:border-white/40' 
-                : 'border-white/10 opacity-50 bg-black'
+                : 'border-white/10 opacity-60 bg-black/60'
             }`}
           >
-            <div>
-              <div className="mb-4">
-                <ImagePlaceholder
-                  label="Carousel Banner Asset"
-                  aspectRatio="banner"
-                  value={banner.imageUrl}
-                />
-              </div>
-
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-bold text-white">{banner.title || 'Untitled Banner'}</h3>
-                  <p className="text-xs text-white/60 mt-1">{banner.subtitle || 'No subtitle specified'}</p>
-                </div>
+            {/* Banner preview: full-width 21:9 with direct image upload */}
+            <div className="relative w-full aspect-[21/9] bg-white/[0.03] overflow-hidden">
+              <ImagePlaceholder
+                aspectRatio="banner"
+                value={banner.imageUrl}
+                folder="banners"
+                hint="Click to upload banner graphic"
+                onChange={async (val) => {
+                  const updated = banners.map(b => b.id === banner.id ? { ...b, imageUrl: val } : b);
+                  setBanners(updated);
+                  try {
+                    await api.updateBanners(updated);
+                  } catch (_) {}
+                }}
+              />
+              <div className="absolute top-3 right-3 z-10">
                 <button
                   onClick={() => handleToggleActive(banner.id)}
-                  className="text-white hover:text-white/80"
+                  className="p-1.5 rounded-lg bg-black/70 backdrop-blur-md border border-white/20 hover:border-white/40 transition-colors shadow-md"
+                  title={banner.active ? 'Deactivate banner' : 'Activate banner'}
                 >
                   {banner.active ? (
-                    <ToggleRight className="w-7 h-7 text-white" />
+                    <ToggleRight className="w-6 h-6 text-white" />
                   ) : (
-                    <ToggleLeft className="w-7 h-7 text-white/30" />
+                    <ToggleLeft className="w-6 h-6 text-white/40" />
                   )}
                 </button>
               </div>
-
-              <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-xs font-mono">
-                <span className="text-white/40 uppercase text-[10px]">Deep Link:</span>
-                <span className="text-white/80 flex items-center gap-1.5">
-                  <ExternalLink className="w-3 h-3 text-white/50" />
-                  {banner.actionType || 'screen'}: {banner.actionValue || 'tourism'}
-                </span>
-              </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between">
-              <span className={`text-[10px] font-mono px-2 py-0.5 rounded uppercase ${
-                banner.active ? 'bg-white text-black font-semibold' : 'border border-white/20 text-white/40'
-              }`}>
-                {banner.active ? 'Active on Carousel' : 'Hidden'}
-              </span>
-              <div className="flex items-center gap-2">
+            {/* Spacious Bottom Content */}
+            <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="text-[10px] font-mono text-white/50 uppercase tracking-wider bg-white/[0.04] px-2 py-0.5 rounded border border-white/10">
+                    🔗 {banner.actionType || 'screen'}: {banner.actionValue || 'tourism'}
+                  </span>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded uppercase font-semibold ${
+                    banner.active ? 'bg-white text-black' : 'border border-white/20 text-white/40'
+                  }`}>
+                    {banner.active ? 'Active' : 'Hidden'}
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold text-white tracking-tight leading-snug">
+                  {banner.title || 'Untitled Banner'}
+                </h3>
+                {banner.subtitle && (
+                  <p className="text-xs text-white/60 mt-1 leading-relaxed">{banner.subtitle}</p>
+                )}
+              </div>
+
+              {/* Bottom Actions */}
+              <div className="pt-3 border-t border-white/10 flex items-center justify-end gap-2.5">
                 <button
                   onClick={() => handleOpenEdit(banner)}
-                  className="p-2 border border-white/15 rounded-md hover:bg-white/10 text-white/70 hover:text-white transition-colors"
+                  className="px-3.5 py-2 border border-white/15 rounded-lg hover:bg-white/10 text-xs font-semibold text-white/90 hover:text-white flex items-center gap-1.5 transition-colors"
                 >
-                  <Edit3 className="w-3.5 h-3.5" />
+                  <Edit3 className="w-3.5 h-3.5" /> Edit Banner
                 </button>
                 <button
                   onClick={() => handleDelete(banner.id)}
-                  className="p-2 border border-white/15 rounded-md hover:border-red-500/50 hover:bg-red-500/10 text-white/70 hover:text-red-400 transition-colors"
+                  className="px-3.5 py-2 border border-red-500/20 rounded-lg hover:bg-red-500/10 text-xs font-semibold text-red-400 flex items-center gap-1.5 transition-colors"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
                 </button>
               </div>
             </div>
@@ -249,7 +314,7 @@ export default function BannersPage() {
       {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-black border border-white/20 rounded-xl w-full max-w-lg p-6 space-y-5">
+          <div className="bg-black border border-white/20 rounded-xl w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
               <h3 className="text-lg font-bold text-white">
                 {modalMode === 'create' ? 'Create' : 'Edit'} Promo Banner
@@ -263,12 +328,15 @@ export default function BannersPage() {
             </div>
 
             <form onSubmit={handleSaveModal} className="space-y-4">
-              <ImagePlaceholder
-                label="Banner Visual (Flexible placeholder ready)"
-                aspectRatio="banner"
-                value={bannerForm.imageUrl}
-                onChange={(val) => setBannerForm(prev => ({ ...prev, imageUrl: val }))}
-              />
+              <div>
+                <ImageUploader
+                  value={bannerForm.imageUrl}
+                  onChange={url => setBannerForm(prev => ({ ...prev, imageUrl: url }))}
+                  folder="banners"
+                  label="Banner Promotional Image"
+                  recommendedSize="1200 x 600 px (Landscape)"
+                />
+              </div>
 
               <div>
                 <label className="text-xs text-white/60 uppercase font-mono">Banner Headline</label>
@@ -307,7 +375,7 @@ export default function BannersPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-white/60 uppercase font-mono">Target Target / URI</label>
+                  <label className="text-xs text-white/60 uppercase font-mono">Target / URI</label>
                   <input
                     type="text"
                     value={bannerForm.actionValue}
