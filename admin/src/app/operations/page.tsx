@@ -31,7 +31,8 @@ import {
   Check,
   ShieldCheck,
   UserCheck,
-  ExternalLink
+  ExternalLink,
+  FileText
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import MapboxFleetMap from '@/components/MapboxFleetMap';
