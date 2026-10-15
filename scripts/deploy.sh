@@ -64,7 +64,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.production build
 
 # 5. Start / Update Services Gracefully
 echo "🚀 Starting production service stack..."
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
 
 # 6. Wait for Database Readiness
 echo "⏳ Waiting for PostgreSQL to initialize..."
