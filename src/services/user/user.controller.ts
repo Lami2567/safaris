@@ -14,35 +14,35 @@ export class UserController {
     }
   }
 
-  public static updateProfile(req: AuthenticatedRequest, res: Response) {
+  public static async updateProfile(req: AuthenticatedRequest, res: Response) {
     try {
       const userId = req.user!.userId;
-      const updated = UserService.updateProfile(userId, req.body);
+      const updated = await UserService.updateProfile(userId, req.body);
       return sendSuccess(res, updated);
     } catch (err: any) {
       return sendError(res, 'UPDATE_FAILED', err.message);
     }
   }
 
-  public static topUpWallet(req: AuthenticatedRequest, res: Response) {
+  public static async topUpWallet(req: AuthenticatedRequest, res: Response) {
     try {
       const userId = req.user!.userId;
       const { amountUGX } = req.body;
       if (!amountUGX || amountUGX <= 0) {
         return sendError(res, 'INVALID_AMOUNT', 'Please enter a valid top-up amount.');
       }
-      const result = UserService.topUpWallet(userId, Number(amountUGX));
+      const result = await UserService.topUpWallet(userId, Number(amountUGX));
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'TOPUP_FAILED', err.message);
     }
   }
 
-  public static switchRole(req: AuthenticatedRequest, res: Response) {
+  public static async switchRole(req: AuthenticatedRequest, res: Response) {
     try {
       const userId = req.user!.userId;
       const { role } = req.body;
-      const result = UserService.switchRole(userId, role);
+      const result = await UserService.switchRole(userId, role);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'ROLE_SWITCH_FAILED', err.message);

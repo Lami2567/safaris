@@ -26,12 +26,12 @@ export class DriverController {
     }
   }
 
-  public static getNearby(req: Request, res: Response) {
+  public static async getNearby(req: Request, res: Response) {
     try {
       const lat = req.query.lat ? Number(req.query.lat) : 0.3136;
       const lng = req.query.lng ? Number(req.query.lng) : 32.5811;
       const radiusKm = req.query.radiusKm ? Number(req.query.radiusKm) : 10;
-      const drivers = DriverService.getNearbyDrivers(lat, lng, radiusKm);
+      const drivers = await DriverService.getNearbyDrivers(lat, lng, radiusKm);
       return sendSuccess(res, drivers);
     } catch (err: any) {
       return sendError(res, 'FETCH_NEARBY_FAILED', err.message);

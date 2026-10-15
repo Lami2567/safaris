@@ -1,20 +1,38 @@
+import fs from 'fs';
+import path from 'path';
+import bcrypt from 'bcryptjs';
 import { localStore, db } from '../../config/database';
 import { ENV } from '../../config/env';
 
+const PERSISTENT_CONFIG_FILE = path.resolve(__dirname, '../../database/persistent_config.json');
+
+export interface VehiclePricingItem {
+  baseFare: number;
+  perKm: number;
+  perMin?: number;
+  minFare?: number;
+}
+
 export interface PricingConfig {
-  boda: { baseFare: number; perKm: number; perMin: number; minFare: number };
-  economy: { baseFare: number; perKm: number; perMin: number; minFare: number };
-  comfort: { baseFare: number; perKm: number; perMin: number; minFare: number };
-  safari: { baseFare: number; perKm: number; perMin: number; minFare: number };
-  delivery: { baseFare: number; perKm: number; perKg: number; minFare: number };
+  boda: VehiclePricingItem;
+  go: VehiclePricingItem;
+  economy: VehiclePricingItem;
+  comfort: VehiclePricingItem;
+  safari4x4: VehiclePricingItem;
+  safari: VehiclePricingItem;
+  tour_van: VehiclePricingItem;
+  delivery: VehiclePricingItem;
 }
 
 const DEFAULT_PRICING: PricingConfig = {
-  boda: { baseFare: 2000, perKm: 1000, perMin: 150, minFare: 2500 },
-  economy: { baseFare: 5000, perKm: 2000, perMin: 250, minFare: 7000 },
-  comfort: { baseFare: 8000, perKm: 3000, perMin: 350, minFare: 12000 },
-  safari: { baseFare: 35000, perKm: 6500, perMin: 600, minFare: 60000 },
-  delivery: { baseFare: 3000, perKm: 1200, perKg: 500, minFare: 3500 },
+  boda: { baseFare: 3000, perKm: 1200, minFare: 3000 },
+  go: { baseFare: 6000, perKm: 2200, minFare: 6000 },
+  economy: { baseFare: 6000, perKm: 2200, minFare: 6000 },
+  comfort: { baseFare: 10000, perKm: 3200, minFare: 10000 },
+  safari4x4: { baseFare: 50000, perKm: 6500, minFare: 50000 },
+  safari: { baseFare: 50000, perKm: 6500, minFare: 50000 },
+  tour_van: { baseFare: 65000, perKm: 7500, minFare: 65000 },
+  delivery: { baseFare: 3500, perKm: 1200, minFare: 3500 },
 };
 
 export class AdminService {
@@ -99,17 +117,62 @@ export class AdminService {
   // -----------------------------------------------------------
   public static getPricing(): PricingConfig {
     const saved = localStore.app_config.get('pricing_matrix');
-    return saved?.value || DEFAULT_PRICING;
+    if (saved && saved.value) {
+      return saved.value;
+    }
+
+    // Try reading from persistent config file if available
+    try {
+      if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
+        const raw = fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.pricing_matrix) {
+          localStore.app_config.set('pricing_matrix', {
+            key: 'pricing_matrix',
+            value: parsed.pricing_matrix,
+            updated_at: new Date().toISOString(),
+          });
+          return parsed.pricing_matrix;
+        }
+      }
+    } catch (_) {}
+
+    return DEFAULT_PRICING;
   }
 
-  public static updatePricing(pricing: Partial<PricingConfig>): PricingConfig {
+  public static async updatePricing(pricing: any): Promise<PricingConfig> {
     const current = this.getPricing();
+
+    const normalizeItem = (item: any, fallback: VehiclePricingItem): VehiclePricingItem => {
+      if (!item) return fallback;
+      const baseFare = Number(item.baseFare ?? item.base ?? fallback.baseFare);
+      const perKm = Number(item.perKmRate ?? item.perKm ?? fallback.perKm);
+      const perMin = item.perMinuteRate !== undefined ? Number(item.perMinuteRate) : (item.perMin !== undefined ? Number(item.perMin) : fallback.perMin);
+      const minFare = item.minimumFare !== undefined ? Number(item.minimumFare) : (item.minFare !== undefined ? Number(item.minFare) : fallback.minFare);
+      return {
+        baseFare,
+        perKm,
+        ...(perMin !== undefined ? { perMin } : {}),
+        ...(minFare !== undefined ? { minFare } : {}),
+      };
+    };
+
+    const bodaItem = normalizeItem(pricing.boda, current.boda);
+    const economyChoice = normalizeItem(pricing.economy || pricing.go, current.economy || current.go);
+    const comfortItem = normalizeItem(pricing.comfort, current.comfort);
+    const safariChoice = normalizeItem(pricing.safari_4x4 || pricing.safari4x4 || pricing.safari, current.safari4x4 || current.safari);
+    const tourVanItem = normalizeItem(pricing.tour_van || pricing.tourVan, current.tour_van);
+    const deliveryItem = normalizeItem(pricing.delivery, current.delivery);
+
     const merged: PricingConfig = {
-      boda: { ...current.boda, ...(pricing.boda || {}) },
-      economy: { ...current.economy, ...(pricing.economy || {}) },
-      comfort: { ...current.comfort, ...(pricing.comfort || {}) },
-      safari: { ...current.safari, ...(pricing.safari || {}) },
-      delivery: { ...current.delivery, ...(pricing.delivery || {}) },
+      boda: bodaItem,
+      go: economyChoice,
+      economy: economyChoice,
+      comfort: comfortItem,
+      safari4x4: safariChoice,
+      safari: safariChoice,
+      tour_van: tourVanItem,
+      delivery: deliveryItem,
     };
 
     localStore.app_config.set('pricing_matrix', {
@@ -117,6 +180,39 @@ export class AdminService {
       value: merged,
       updated_at: new Date().toISOString(),
     });
+
+    // 1. Persist directly in PostgreSQL if connected
+    if (db.isPostgresConnected) {
+      try {
+        await db.query(
+          `INSERT INTO app_config (key, value, updated_at) 
+           VALUES ('pricing_matrix', $1, CURRENT_TIMESTAMP) 
+           ON CONFLICT (key) 
+           DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+          [JSON.stringify(merged)]
+        );
+      } catch (err) {
+        console.error('[AdminService] PostgreSQL pricing sync error:', err);
+      }
+    }
+
+    // 2. Persist to disk JSON file for restart durability
+    try {
+      let dump: Record<string, any> = {};
+      if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
+        try {
+          dump = JSON.parse(fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8'));
+        } catch (_) {}
+      }
+      dump.pricing_matrix = merged;
+      const dir = path.dirname(PERSISTENT_CONFIG_FILE);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify(dump, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('[AdminService] Could not write persistent pricing_matrix', e);
+    }
 
     return merged;
   }
@@ -192,5 +288,83 @@ export class AdminService {
       is_verified: u.is_verified,
       created_at: u.created_at,
     }));
+  }
+
+  // -----------------------------------------------------------
+  // Admin Password Management
+  // -----------------------------------------------------------
+  public static async changePassword(adminId: string, currentPassword: string, newPassword: string, ipAddress?: string) {
+    if (!currentPassword) throw new Error('Current password is required.');
+    if (!newPassword || newPassword.length < 8) {
+      throw new Error('New password must be at least 8 characters long.');
+    }
+
+    let user = localStore.users.get(adminId);
+    if (!user && db.isPostgresConnected) {
+      try {
+        const res = await db.query('SELECT * FROM users WHERE id = $1', [adminId]);
+        if (res?.rows?.length > 0) {
+          user = res.rows[0];
+          localStore.users.set(adminId, user);
+        }
+      } catch (_) {}
+    }
+
+    if (!user) {
+      // Find default admin user
+      for (const u of localStore.users.values()) {
+        if (u.role === 'admin') {
+          user = u;
+          break;
+        }
+      }
+    }
+
+    if (!user) throw new Error('Admin user account not found.');
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) {
+      throw new Error('Current password is incorrect.');
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    user.password_hash = newHash;
+    user.password_changed_at = new Date().toISOString();
+    user.updated_at = new Date().toISOString();
+
+    await db.persistUser(user);
+
+    // Record in admin audit logs
+    const auditId = `aud_${Date.now()}_pwd`;
+    const auditRecord = {
+      id: auditId,
+      admin_id: user.id,
+      action: 'ADMIN_CHANGE_PASSWORD',
+      resource_type: 'USER',
+      resource_id: user.id,
+      details: {
+        adminId: user.id,
+        email: user.email,
+        timestamp: new Date().toISOString(),
+      },
+      ip_address: ipAddress || '127.0.0.1',
+      created_at: new Date().toISOString(),
+    };
+    localStore.admin_audit_logs.set(auditId, auditRecord);
+    if (db.isPostgresConnected) {
+      try {
+        await db.query(
+          `INSERT INTO admin_audit_logs (id, admin_id, action, resource_type, resource_id, details, ip_address, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+          [auditRecord.id, auditRecord.admin_id, auditRecord.action, auditRecord.resource_type, auditRecord.resource_id, JSON.stringify(auditRecord.details), auditRecord.ip_address]
+        );
+      } catch (_) {}
+    }
+
+    return {
+      success: true,
+      message: 'Admin password successfully updated.',
+      passwordChangedAt: user.password_changed_at,
+    };
   }
 }

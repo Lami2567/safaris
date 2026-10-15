@@ -22,14 +22,28 @@ export const localStore = {
   location_points: new Map<string, any>(),
   tour_legs: new Map<string, any>(),
   admin_audit_logs: new Map<string, any>(),
+  career_applications: new Map<string, any>(),
+  pricing_audit_logs: new Map<string, any>(),
 };
 
-const PERSISTENT_USERS_FILES = [
-  path.resolve(__dirname, '../database/persistent_users.json'),
-  path.resolve(process.cwd(), 'src/database/persistent_users.json'),
-  path.resolve(process.cwd(), 'backend/src/database/persistent_users.json'),
-  path.resolve(process.cwd(), 'persistent_users.json'),
-];
+function resolveCandidatePaths(fileName: string): string[] {
+  return [
+    path.resolve(__dirname, `../database/${fileName}`),
+    path.resolve(process.cwd(), `src/database/${fileName}`),
+    path.resolve(process.cwd(), `backend/src/database/${fileName}`),
+    path.resolve(process.cwd(), fileName),
+  ];
+}
+
+const PERSISTENT_USERS_FILES = resolveCandidatePaths('persistent_users.json');
+const PERSISTENT_DRIVERS_FILES = resolveCandidatePaths('persistent_drivers.json');
+const PERSISTENT_GUIDES_FILES = resolveCandidatePaths('persistent_tour_guides.json');
+const PERSISTENT_APPLICATIONS_FILES = resolveCandidatePaths('persistent_career_applications.json');
+const PERSISTENT_TRIPS_FILES = resolveCandidatePaths('persistent_trips.json');
+const PERSISTENT_PAYMENTS_FILES = resolveCandidatePaths('persistent_payments.json');
+const PERSISTENT_BOOKINGS_FILES = resolveCandidatePaths('persistent_bookings.json');
+const PERSISTENT_DELIVERIES_FILES = resolveCandidatePaths('persistent_deliveries.json');
+const PERSISTENT_PRICING_AUDIT_FILES = resolveCandidatePaths('persistent_pricing_audit.json');
 
 class DatabaseManager {
   private pool: Pool | null = null;
@@ -48,8 +62,8 @@ class DatabaseManager {
   }
 
   public async init(): Promise<void> {
-    // 1. First load any offline/persistent users from disk so they are never lost
-    this.loadUsersFromDisk();
+    // 1. First load all persistent data from disk so they survive restarts
+    this.loadAllFromDisk();
 
     try {
       this.pool = new Pool({
@@ -66,8 +80,8 @@ class DatabaseManager {
       // 2. Ensure Schema DDL exists in PostgreSQL
       await this.ensureSchema();
 
-      // 3. Load existing users from PostgreSQL into memory
-      await this.loadUsersFromPostgres();
+      // 3. Load all entities from PostgreSQL into memory
+      await this.loadAllFromPostgres();
     } catch (err) {
       this.isPostgresConnected = false;
       console.log('⚡ [Database] PostgreSQL not detected locally. Initialized in-memory data store with disk persistence.');
@@ -96,12 +110,71 @@ class DatabaseManager {
     }
   }
 
-  public async loadUsersFromPostgres(): Promise<void> {
+  private loadTableFromDisk(fileCandidates: string[], targetMap: Map<string, any>, label: string) {
+    for (const f of fileCandidates) {
+      try {
+        if (fs.existsSync(f)) {
+          const raw = fs.readFileSync(f, 'utf-8');
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (item && item.id && !targetMap.has(item.id)) {
+                targetMap.set(item.id, item);
+              }
+            }
+            if (parsed.length > 0) {
+              console.log(`💾 [Database] Loaded ${parsed.length} persistent ${label} from disk storage.`);
+            }
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  private saveTableToDisk(fileCandidates: string[], targetMap: Map<string, any>) {
+    const list = Array.from(targetMap.values());
+    for (const f of fileCandidates) {
+      try {
+        const dir = path.dirname(f);
+        if (fs.existsSync(dir)) {
+          fs.writeFileSync(f, JSON.stringify(list, null, 2), 'utf-8');
+        }
+      } catch (_) {}
+    }
+  }
+
+  public loadAllFromDisk(): void {
+    this.loadTableFromDisk(PERSISTENT_USERS_FILES, localStore.users, 'users');
+    this.loadTableFromDisk(PERSISTENT_DRIVERS_FILES, localStore.drivers, 'drivers');
+    this.loadTableFromDisk(PERSISTENT_GUIDES_FILES, localStore.tour_guides, 'tour_guides');
+    this.loadTableFromDisk(PERSISTENT_APPLICATIONS_FILES, localStore.career_applications, 'career_applications');
+    this.loadTableFromDisk(PERSISTENT_TRIPS_FILES, localStore.trips, 'trips');
+    this.loadTableFromDisk(PERSISTENT_PAYMENTS_FILES, localStore.payments, 'payments');
+    this.loadTableFromDisk(PERSISTENT_BOOKINGS_FILES, localStore.tour_bookings, 'tour_bookings');
+    this.loadTableFromDisk(PERSISTENT_DELIVERIES_FILES, localStore.deliveries, 'deliveries');
+    this.loadTableFromDisk(PERSISTENT_PRICING_AUDIT_FILES, localStore.pricing_audit_logs, 'pricing_audit_logs');
+  }
+
+  public saveAllToDisk(): void {
+    this.saveTableToDisk(PERSISTENT_USERS_FILES, localStore.users);
+    this.saveTableToDisk(PERSISTENT_DRIVERS_FILES, localStore.drivers);
+    this.saveTableToDisk(PERSISTENT_GUIDES_FILES, localStore.tour_guides);
+    this.saveTableToDisk(PERSISTENT_APPLICATIONS_FILES, localStore.career_applications);
+    this.saveTableToDisk(PERSISTENT_TRIPS_FILES, localStore.trips);
+    this.saveTableToDisk(PERSISTENT_PAYMENTS_FILES, localStore.payments);
+    this.saveTableToDisk(PERSISTENT_BOOKINGS_FILES, localStore.tour_bookings);
+    this.saveTableToDisk(PERSISTENT_DELIVERIES_FILES, localStore.deliveries);
+    this.saveTableToDisk(PERSISTENT_PRICING_AUDIT_FILES, localStore.pricing_audit_logs);
+  }
+
+  public async loadAllFromPostgres(): Promise<void> {
     if (!this.isPostgresConnected || !this.pool) return;
     try {
-      const res = await this.pool.query('SELECT * FROM users ORDER BY created_at ASC');
-      if (res && res.rows && res.rows.length > 0) {
-        for (const row of res.rows) {
+      // 1. Users
+      const userRes = await this.pool.query('SELECT * FROM users ORDER BY created_at ASC');
+      if (userRes?.rows?.length > 0) {
+        for (const row of userRes.rows) {
           localStore.users.set(row.id, {
             id: row.id,
             full_name: row.full_name || '',
@@ -114,49 +187,109 @@ class DatabaseManager {
             total_trips: parseInt(row.total_trips || '0', 10),
             wallet_balance_ugx: parseFloat(row.wallet_balance_ugx || '0'),
             is_verified: row.is_verified === true,
+            approval_status: row.approval_status || 'APPROVED',
+            application_id: row.application_id || null,
+            password_changed_at: row.password_changed_at ? new Date(row.password_changed_at).toISOString() : new Date().toISOString(),
             created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
           });
         }
-        console.log(`📦 [Database] Loaded ${res.rows.length} permanent user accounts from PostgreSQL into memory.`);
-        this.saveUsersToDisk();
       }
+
+      // 2. Drivers
+      const drvRes = await this.pool.query('SELECT * FROM drivers');
+      if (drvRes?.rows?.length > 0) {
+        for (const row of drvRes.rows) {
+          localStore.drivers.set(row.id, {
+            id: row.id,
+            vehicle_id: row.vehicle_id,
+            is_online: row.is_online === true,
+            is_available: row.is_available === true,
+            is_approved: row.is_approved === true,
+            approval_status: row.approval_status || 'PENDING_APPROVAL',
+            current_lat: parseFloat(row.current_lat || '0.3136'),
+            current_lng: parseFloat(row.current_lng || '32.5811'),
+            heading: parseFloat(row.heading || '0.0'),
+            speed: parseFloat(row.speed || '0.0'),
+            battery_level: row.battery_level ? parseFloat(row.battery_level) : undefined,
+            license_number: row.license_number,
+            license_expiry: row.license_expiry,
+            national_id: row.national_id,
+            driving_permit_number: row.driving_permit_number,
+            years_of_experience: row.years_of_experience || 0,
+            acceptance_rate: parseFloat(row.acceptance_rate || '98.0'),
+            today_earnings_ugx: parseFloat(row.today_earnings_ugx || '0'),
+            application_date: row.application_date,
+            approved_by: row.approved_by,
+            approved_at: row.approved_at,
+            rejection_reason: row.rejection_reason,
+            updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+          });
+        }
+      }
+
+      // 3. Vehicles
+      const vehRes = await this.pool.query('SELECT * FROM vehicles');
+      if (vehRes?.rows?.length > 0) {
+        for (const row of vehRes.rows) {
+          localStore.vehicles.set(row.id, row);
+        }
+      }
+
+      // 4. Career Applications
+      const appRes = await this.pool.query('SELECT * FROM career_applications ORDER BY created_at DESC');
+      if (appRes?.rows?.length > 0) {
+        for (const row of appRes.rows) {
+          localStore.career_applications.set(row.id, row);
+        }
+      }
+
+      // 5. Trips
+      const tripRes = await this.pool.query('SELECT * FROM trips ORDER BY created_at DESC LIMIT 500');
+      if (tripRes?.rows?.length > 0) {
+        for (const row of tripRes.rows) {
+          localStore.trips.set(row.id, row);
+        }
+      }
+
+      // 6. Payments
+      const payRes = await this.pool.query('SELECT * FROM payments ORDER BY created_at DESC LIMIT 500');
+      if (payRes?.rows?.length > 0) {
+        for (const row of payRes.rows) {
+          localStore.payments.set(row.id, {
+            id: row.id,
+            transaction_id: row.reference,
+            user_id: row.user_id,
+            reference_type: row.trip_id ? 'TRIP' : (row.booking_id ? 'TOUR' : (row.delivery_id ? 'DELIVERY' : 'WALLET')),
+            reference_id: row.trip_id || row.booking_id || row.delivery_id || row.user_id,
+            amount_ugx: parseFloat(row.amount_ugx || '0'),
+            currency: row.currency || 'UGX',
+            payment_method: row.payment_method,
+            phone: '',
+            dpo_trans_token: row.dpo_trans_token || '',
+            dpo_trans_ref: row.dpo_trans_ref || row.reference,
+            payment_url: row.payment_url || '',
+            status: row.status === 'COMPLETED' ? 'SUCCESSFUL' : (row.status === 'FAILED' ? 'FAILED' : 'PENDING'),
+            failure_reason: row.failure_reason,
+            verified_at: row.verified_at,
+            created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+            updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+          });
+        }
+      }
+
+      this.saveAllToDisk();
+      console.log('📦 [Database] All business tables synchronized from PostgreSQL to memory & disk.');
     } catch (err) {
-      console.warn('[Database] Could not load users from PostgreSQL table:', err);
+      console.warn('[Database] Notice: Table load error:', err);
     }
   }
 
   public loadUsersFromDisk(): void {
-    for (const f of PERSISTENT_USERS_FILES) {
-      try {
-        if (fs.existsSync(f)) {
-          const raw = fs.readFileSync(f, 'utf-8');
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            for (const u of parsed) {
-              if (u && u.id && !localStore.users.has(u.id)) {
-                localStore.users.set(u.id, u);
-              }
-            }
-            if (parsed.length > 0) {
-              console.log(`💾 [Database] Loaded ${parsed.length} persistent user records from disk storage.`);
-            }
-            break;
-          }
-        }
-      } catch (_) {}
-    }
+    this.loadTableFromDisk(PERSISTENT_USERS_FILES, localStore.users, 'users');
   }
 
   public saveUsersToDisk(): void {
-    const list = Array.from(localStore.users.values());
-    for (const f of PERSISTENT_USERS_FILES) {
-      try {
-        const dir = path.dirname(f);
-        if (fs.existsSync(dir)) {
-          fs.writeFileSync(f, JSON.stringify(list, null, 2), 'utf-8');
-        }
-      } catch (_) {}
-    }
+    this.saveTableToDisk(PERSISTENT_USERS_FILES, localStore.users);
   }
 
   public async persistUser(user: any): Promise<void> {
@@ -205,6 +338,214 @@ class DatabaseManager {
 
     // 3. Persist to disk for offline resilience
     this.saveUsersToDisk();
+  }
+
+  public async persistDriver(driver: any): Promise<void> {
+    localStore.drivers.set(driver.id, driver);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO drivers (
+             id, vehicle_id, is_online, is_available, is_approved, approval_status,
+             current_lat, current_lng, heading, speed, battery_level, license_number,
+             license_expiry, national_id, driving_permit_number, permit_expiry,
+             years_of_experience, acceptance_rate, today_earnings_ugx, application_date,
+             approved_by, approved_at, rejection_reason, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+             $17, $18, $19, $20, $21, $22, $23, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             vehicle_id = EXCLUDED.vehicle_id,
+             is_online = EXCLUDED.is_online,
+             is_available = EXCLUDED.is_available,
+             is_approved = EXCLUDED.is_approved,
+             approval_status = EXCLUDED.approval_status,
+             current_lat = EXCLUDED.current_lat,
+             current_lng = EXCLUDED.current_lng,
+             heading = EXCLUDED.heading,
+             speed = EXCLUDED.speed,
+             battery_level = EXCLUDED.battery_level,
+             license_number = EXCLUDED.license_number,
+             license_expiry = EXCLUDED.license_expiry,
+             national_id = EXCLUDED.national_id,
+             driving_permit_number = EXCLUDED.driving_permit_number,
+             permit_expiry = EXCLUDED.permit_expiry,
+             years_of_experience = EXCLUDED.years_of_experience,
+             acceptance_rate = EXCLUDED.acceptance_rate,
+             today_earnings_ugx = EXCLUDED.today_earnings_ugx,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = EXCLUDED.approved_at,
+             rejection_reason = EXCLUDED.rejection_reason,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            driver.id,
+            driver.vehicle_id || null,
+            driver.is_online === true,
+            driver.is_available === true,
+            driver.is_approved === true,
+            driver.approval_status || 'PENDING_APPROVAL',
+            driver.current_lat ?? 0.3136,
+            driver.current_lng ?? 32.5811,
+            driver.heading ?? 0.0,
+            driver.speed ?? 0.0,
+            driver.battery_level ?? null,
+            driver.license_number || '',
+            driver.license_expiry || null,
+            driver.national_id || '',
+            driver.driving_permit_number || '',
+            driver.permit_expiry || null,
+            driver.years_of_experience || 0,
+            driver.acceptance_rate ?? 98.0,
+            driver.today_earnings_ugx ?? 0.0,
+            driver.application_date || new Date().toISOString(),
+            driver.approved_by || null,
+            driver.approved_at || null,
+            driver.rejection_reason || null,
+          ]
+        );
+      } catch (err) {
+        console.error('[Database Error] Failed to persist driver to PostgreSQL:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_DRIVERS_FILES, localStore.drivers);
+  }
+
+  public async persistTourGuide(guide: any): Promise<void> {
+    localStore.tour_guides.set(guide.id, guide);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO tour_guides (
+             id, title, bio, languages, specialties, daily_rate_ugx, is_uwa_certified,
+             is_available, is_approved, approval_status, application_id, national_id,
+             uwa_license_number, approved_by, approved_at, rejection_reason,
+             expeditions_count, avatar_url, full_name, rating, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+             $17, $18, $19, $20, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             title = EXCLUDED.title,
+             bio = EXCLUDED.bio,
+             languages = EXCLUDED.languages,
+             specialties = EXCLUDED.specialties,
+             daily_rate_ugx = EXCLUDED.daily_rate_ugx,
+             is_uwa_certified = EXCLUDED.is_uwa_certified,
+             is_available = EXCLUDED.is_available,
+             is_approved = EXCLUDED.is_approved,
+             approval_status = EXCLUDED.approval_status,
+             application_id = EXCLUDED.application_id,
+             national_id = EXCLUDED.national_id,
+             uwa_license_number = EXCLUDED.uwa_license_number,
+             approved_by = EXCLUDED.approved_by,
+             approved_at = EXCLUDED.approved_at,
+             rejection_reason = EXCLUDED.rejection_reason,
+             expeditions_count = EXCLUDED.expeditions_count,
+             avatar_url = EXCLUDED.avatar_url,
+             full_name = EXCLUDED.full_name,
+             rating = EXCLUDED.rating,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            guide.id,
+            guide.title || 'Uganda Wildlife Guide',
+            guide.bio || '',
+            guide.languages || ['English'],
+            guide.specialties || ['Uganda Safaris'],
+            guide.daily_rate_ugx ?? 150000,
+            guide.is_uwa_certified !== false,
+            guide.is_available === true,
+            guide.is_approved === true,
+            guide.approval_status || 'PENDING_APPROVAL',
+            guide.application_id || null,
+            guide.national_id || '',
+            guide.uwa_license_number || '',
+            guide.approved_by || null,
+            guide.approved_at || null,
+            guide.rejection_reason || null,
+            guide.expeditions_count || 0,
+            guide.avatar_url || '',
+            guide.full_name || 'Safari Guide',
+            guide.rating || 4.95,
+          ]
+        );
+      } catch (err) {
+        console.error('[Database Error] Failed to persist tour guide to PostgreSQL:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_GUIDES_FILES, localStore.tour_guides);
+  }
+
+  public async persistCareerApplication(app: any): Promise<void> {
+    localStore.career_applications.set(app.id, app);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO career_applications (
+             id, applicant_type, user_id, full_name, email, phone, national_id,
+             license_number, experience_years, vehicle_make, vehicle_model,
+             vehicle_plate, vehicle_tier, languages, specialties, documents,
+             status, rejection_reason, reviewed_by, reviewed_at, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+             $16, $17, $18, $19, $20, $21, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             status = EXCLUDED.status,
+             rejection_reason = EXCLUDED.rejection_reason,
+             reviewed_by = EXCLUDED.reviewed_by,
+             reviewed_at = EXCLUDED.reviewed_at,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            app.id,
+            app.applicant_type,
+            app.user_id || null,
+            app.full_name,
+            app.email,
+            app.phone,
+            app.national_id || '',
+            app.license_number || '',
+            app.experience_years || 0,
+            app.vehicle_make || '',
+            app.vehicle_model || '',
+            app.vehicle_plate || '',
+            app.vehicle_tier || '',
+            app.languages || ['English'],
+            app.specialties || ['Uganda Safaris'],
+            JSON.stringify(app.documents || {}),
+            app.status || 'PENDING_APPROVAL',
+            app.rejection_reason || null,
+            app.reviewed_by || null,
+            app.reviewed_at || null,
+            app.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.error('[Database Error] Failed to persist career application to PostgreSQL:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_APPLICATIONS_FILES, localStore.career_applications);
+  }
+
+  public async persistPricingAudit(audit: any): Promise<void> {
+    localStore.pricing_audit_logs.set(audit.id, audit);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO pricing_audit_logs (
+             id, admin_id, service_category, old_pricing, new_pricing, ip_address, created_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+          [
+            audit.id,
+            audit.admin_id,
+            audit.service_category,
+            JSON.stringify(audit.old_pricing),
+            JSON.stringify(audit.new_pricing),
+            audit.ip_address || '',
+          ]
+        );
+      } catch (err) {
+        console.error('[Database Error] Failed to persist pricing audit log:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_PRICING_AUDIT_FILES, localStore.pricing_audit_logs);
   }
 
   public async query(text: string, params?: any[]): Promise<QueryResult<any> | any> {

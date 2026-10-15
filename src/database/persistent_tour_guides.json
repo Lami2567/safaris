@@ -1,0 +1,54 @@
+[
+  {
+    "id": "usr_gd_001",
+    "full_name": "Patrick Mukasa",
+    "phone": "+256 782 391029",
+    "avatar_url": "https://pub-e2b1ab49fd8c4f2caad6781a542cd1b2.r2.dev/images/general/1790795831699-713d1d3e-Uganda-Tour-Guides.jpg",
+    "title": "Senior UWA Ranger & Primate Specialist",
+    "bio": "Over 12 years guiding expeditions through Bwindi, Kibale, and Mgahinga. Certified in wilderness medicine and bird identification.",
+    "languages": [
+      "English",
+      "Luganda",
+      "Rukiga",
+      "French"
+    ],
+    "specialties": [
+      "Gorilla Trekking",
+      "Chimpanzee Habituation",
+      "Birding Expeditions"
+    ],
+    "daily_rate_ugx": 180000,
+    "rating": 4.98,
+    "is_uwa_certified": true,
+    "is_available": true,
+    "is_approved": true,
+    "approval_status": "APPROVED",
+    "expeditions_count": 310
+  },
+  {
+    "id": "usr_gd_002",
+    "full_name": "Sarah Namubiru",
+    "phone": "+256 788 664433",
+    "avatar_url": "",
+    "title": "Wildlife & Cultural Heritage Guide",
+    "bio": "Certified guide specializing in avian ecology, savannah game drives, and community cultural tourism in Queen Elizabeth and Murchison Falls.",
+    "languages": [
+      "English",
+      "French",
+      "Luganda"
+    ],
+    "specialties": [
+      "Bird Watching",
+      "Bwindi Gorilla Trekking",
+      "Queen Elizabeth Safari"
+    ],
+    "daily_rate_ugx": 150000,
+    "rating": 5,
+    "is_uwa_certified": true,
+    "is_available": false,
+    "is_approved": false,
+    "approval_status": "PENDING_APPROVAL",
+    "application_id": "app_gd_002",
+    "expeditions_count": 0
+  }
+]

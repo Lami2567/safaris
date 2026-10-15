@@ -34,7 +34,32 @@ export async function runMigrations() {
 
     console.log('⚡ [Migration] Executing schema DDL statements...');
     await client.query(sql);
-    console.log('✅ [Migration] Schema DDL executed successfully.');
+    console.log('✅ [Migration] Base schema DDL verified.');
+
+    // Look for migrations directory
+    const candidateMigrationsDirs = [
+      path.resolve(__dirname, 'migrations'),
+      path.resolve(__dirname, '../database/migrations'),
+      path.resolve(process.cwd(), 'src/database/migrations'),
+      path.resolve(process.cwd(), 'dist/database/migrations'),
+      path.resolve(process.cwd(), 'backend/src/database/migrations'),
+    ];
+
+    const migrationsDir = candidateMigrationsDirs.find(d => fs.existsSync(d));
+    if (migrationsDir) {
+      const migrationFiles = fs.readdirSync(migrationsDir)
+        .filter(f => f.endsWith('.sql'))
+        .sort();
+      
+      console.log(`📁 [Migration] Discovered ${migrationFiles.length} incremental migration files in ${migrationsDir}`);
+      for (const mFile of migrationFiles) {
+        const mPath = path.join(migrationsDir, mFile);
+        console.log(`   Applying migration: ${mFile}...`);
+        const mSql = fs.readFileSync(mPath, 'utf8');
+        await client.query(mSql);
+        console.log(`   ✅ Migration ${mFile} applied successfully.`);
+      }
+    }
 
     // Verify critical tables exist
     const res = await client.query(`

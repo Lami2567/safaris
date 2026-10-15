@@ -31,25 +31,29 @@ export class AuthController {
     }
   }
 
-  public static async sendOtp(req: Request, res: Response) {
+  public static async verifyEmailOtp(req: Request, res: Response) {
     try {
-      const { phone } = req.body;
-      if (!phone) {
-        return sendError(res, 'VALIDATION_ERROR', 'Phone number is required.');
+      const { email, otpCode } = req.body;
+      if (!email || !otpCode) {
+        return sendError(res, 'VALIDATION_ERROR', 'Email and 6-digit OTP code are required.');
       }
-      return sendSuccess(res, { phone, message: 'OTP sent successfully (Use 1234 for testing)' });
-    } catch (err: any) {
-      return sendError(res, 'OTP_SEND_FAILED', err.message);
-    }
-  }
-
-  public static async verifyOtp(req: Request, res: Response) {
-    try {
-      const { phone, otpCode } = req.body;
-      const result = await AuthService.verifyOtp(phone, otpCode);
+      const result = await AuthService.verifyEmailOtp(email, otpCode);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'OTP_FAILED', err.message, 400);
+    }
+  }
+
+  public static async resendEmailOtp(req: Request, res: Response) {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return sendError(res, 'VALIDATION_ERROR', 'Email is required.');
+      }
+      const result = await AuthService.resendEmailOtp(email);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'OTP_RESEND_FAILED', err.message, 400);
     }
   }
 

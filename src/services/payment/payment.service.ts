@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { localStore, db } from '../../config/database';
 import { NotificationService } from '../notification/notification.service';
 import { DpoPayGateway, DpoCreateTokenParams, DpoVerifyTokenResult } from './dpo_gateway';
+import { ENV } from '../../config/env';
 
 export type PaymentStatus =
   | 'PENDING'
@@ -19,7 +20,7 @@ export interface PaymentInitiationRequest {
   userId: string;
   referenceType: PaymentReferenceType;
   referenceId: string;
-  amountUgx: number;
+  amountUgx?: number; // Optional on input: backend authoritatively computes or validates this
   paymentMethod: PaymentMethodType;
   phone?: string;
   customerEmail?: string;
@@ -43,7 +44,10 @@ export interface PaymentRecord {
   dpo_trans_ref: string;
   payment_url: string;
   status: PaymentStatus;
+  environment: 'sandbox' | 'production';
   failure_reason?: string;
+  dpo_result_code?: string;
+  dpo_result_explanation?: string;
   verified_at?: string;
   created_at: string;
   updated_at: string;
@@ -51,21 +55,125 @@ export interface PaymentRecord {
 
 export class PaymentService {
   /**
-   * Initializes a new payment attempt via DPO Pay for Cards or Mobile Money.
-   * Creates a persistent payment transaction record.
-   *
-   * Note: Sensitive card numbers, CVVs, or PINs are NEVER captured or stored on SAFARIS servers.
+   * Resolves and authoritatively validates the payable amount directly from the database/trusted records.
+   * Prevents client-side manipulation of amounts.
+   */
+  public static async resolveAuthoritativeAmount(referenceType: PaymentReferenceType, referenceId: string, clientAmount?: number): Promise<{ authoritativeAmount: number; serviceDetails: string }> {
+    let authoritativeAmount = 0;
+    let serviceDetails = '';
+
+    if (referenceType === 'TOUR') {
+      let booking = localStore.tour_bookings.get(referenceId);
+      if (!booking && db.isPostgresConnected) {
+        try {
+          const res = await db.query('SELECT * FROM tour_bookings WHERE id = $1', [referenceId]);
+          if (res?.rows?.length > 0) {
+            booking = res.rows[0];
+            localStore.tour_bookings.set(referenceId, booking);
+          }
+        } catch (_) {}
+      }
+
+      if (!booking) {
+        throw new Error(`Tour booking #${referenceId} not found.`);
+      }
+
+      if (booking.payment_status === 'PAID' || booking.payment_status === 'COMPLETED') {
+        throw new Error(`Tour booking #${referenceId} has already been paid.`);
+      }
+
+      authoritativeAmount = Math.round(Number(booking.total_ugx || booking.totalUgx || 0));
+      serviceDetails = `Tour Booking #${referenceId} (${booking.travel_date || 'Safari'})`;
+    } else if (referenceType === 'TRIP') {
+      let trip = localStore.trips.get(referenceId);
+      if (!trip && db.isPostgresConnected) {
+        try {
+          const res = await db.query('SELECT * FROM trips WHERE id = $1', [referenceId]);
+          if (res?.rows?.length > 0) {
+            trip = res.rows[0];
+            localStore.trips.set(referenceId, trip);
+          }
+        } catch (_) {}
+      }
+
+      if (!trip) {
+        throw new Error(`Trip #${referenceId} not found.`);
+      }
+
+      if (trip.payment_status === 'PAID') {
+        throw new Error(`Trip #${referenceId} has already been paid.`);
+      }
+
+      authoritativeAmount = Math.round(Number(trip.fare_ugx || trip.fare || 0));
+      serviceDetails = `Ride Trip #${referenceId} (${trip.pickup_title || 'Pickup'} to ${trip.dest_title || 'Destination'})`;
+    } else if (referenceType === 'DELIVERY') {
+      let delivery = localStore.deliveries.get(referenceId);
+      if (!delivery && db.isPostgresConnected) {
+        try {
+          const res = await db.query('SELECT * FROM deliveries WHERE id = $1', [referenceId]);
+          if (res?.rows?.length > 0) {
+            delivery = res.rows[0];
+            localStore.deliveries.set(referenceId, delivery);
+          }
+        } catch (_) {}
+      }
+
+      if (!delivery) {
+        throw new Error(`Delivery #${referenceId} not found.`);
+      }
+
+      authoritativeAmount = Math.round(Number(delivery.price_ugx || delivery.fare_ugx || 0));
+      serviceDetails = `Package Delivery #${referenceId} (${delivery.tracking_number || ''})`;
+    } else if (referenceType === 'WALLET') {
+      if (!clientAmount || clientAmount < 1000) {
+        throw new Error('Minimum wallet top-up amount is UGX 1,000.');
+      }
+      authoritativeAmount = Math.round(clientAmount);
+      serviceDetails = `Wallet Top-Up: UGX ${authoritativeAmount.toLocaleString()}`;
+    }
+
+    if (authoritativeAmount <= 0) {
+      throw new Error(`Invalid payable amount for ${referenceType} #${referenceId}.`);
+    }
+
+    return { authoritativeAmount, serviceDetails };
+  }
+
+  /**
+   * Initializes a payment transaction via DPO Pay for Cards or Mobile Money.
+   * Idempotent: reuses an active transaction if one is already pending.
    */
   public static async processPayment(req: PaymentInitiationRequest): Promise<PaymentRecord> {
+    const env = DpoPayGateway.environment;
+
+    // 1. Authoritative Amount Resolution (Server-side validation)
+    const { authoritativeAmount, serviceDetails } = await this.resolveAuthoritativeAmount(
+      req.referenceType,
+      req.referenceId,
+      req.amountUgx
+    );
+
+    // 2. Idempotency Check: check if already paid or active session exists
+    for (const p of localStore.payments.values()) {
+      if (p.reference_type === req.referenceType && p.reference_id === req.referenceId) {
+        if (p.status === 'SUCCESSFUL') {
+          return p;
+        }
+        // If an initiated payment exists and is less than 15 minutes old, reuse token
+        const ageMs = Date.now() - new Date(p.created_at).getTime();
+        if (p.status === 'INITIATED' && p.payment_url && ageMs < 15 * 60 * 1000 && p.environment === env) {
+          return p;
+        }
+      }
+    }
+
     const paymentId = `pay_${uuidv4().substring(0, 8)}`;
     const txRef = `SAFARIS_${req.referenceType}_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+    const description = req.description || `SAFARIS Uganda: ${serviceDetails}`;
 
-    const description = req.description ||
-      `SAFARIS Uganda: ${req.referenceType} Booking #${req.referenceId}`;
-
-    // 1. Call official DPO Pay XML Gateway
+    // 3. Initiate with official DPO Pay API v6
     const dpoParams: DpoCreateTokenParams = {
-      amountUgx: req.amountUgx,
+      amountUgx: authoritativeAmount,
       currency: 'UGX',
       referenceId: txRef,
       description,
@@ -85,7 +193,7 @@ export class PaymentService {
       user_id: req.userId,
       reference_type: req.referenceType,
       reference_id: req.referenceId,
-      amount_ugx: req.amountUgx,
+      amount_ugx: authoritativeAmount,
       currency: 'UGX',
       payment_method: req.paymentMethod,
       phone: req.phone || '',
@@ -93,12 +201,15 @@ export class PaymentService {
       dpo_trans_ref: dpoResult.transRef || txRef,
       payment_url: dpoResult.paymentUrl,
       status: dpoResult.success ? 'INITIATED' : 'FAILED',
+      environment: env,
       failure_reason: dpoResult.success ? undefined : dpoResult.resultExplanation,
+      dpo_result_code: dpoResult.resultCode,
+      dpo_result_explanation: dpoResult.resultExplanation,
       created_at: now,
       updated_at: now,
     };
 
-    // Store in-memory store
+    // Store in memory
     localStore.payments.set(paymentId, record);
 
     // Persist to PostgreSQL if connected
@@ -107,19 +218,30 @@ export class PaymentService {
         await db.query(`
           INSERT INTO payments (
             id, user_id, trip_id, delivery_id, booking_id, amount_ugx,
-            currency, payment_method, reference, status, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
-          ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
+            currency, payment_method, reference, dpo_trans_token, dpo_trans_ref,
+            dpo_result_code, dpo_result_explanation, payment_url, failure_reason,
+            environment, status, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT (id) DO UPDATE SET
+            status = EXCLUDED.status,
+            updated_at = CURRENT_TIMESTAMP
         `, [
           paymentId,
           req.userId,
           req.referenceType === 'TRIP' ? req.referenceId : null,
           req.referenceType === 'DELIVERY' ? req.referenceId : null,
           req.referenceType === 'TOUR' ? req.referenceId : null,
-          req.amountUgx,
+          authoritativeAmount,
           'UGX',
           req.paymentMethod,
           txRef,
+          dpoResult.transToken,
+          dpoResult.transRef || txRef,
+          dpoResult.resultCode,
+          dpoResult.resultExplanation,
+          dpoResult.paymentUrl,
+          record.failure_reason || null,
+          env,
           record.status === 'SUCCESSFUL' ? 'COMPLETED' : (record.status === 'FAILED' ? 'FAILED' : 'PENDING'),
         ]);
       } catch (err) {
@@ -127,12 +249,13 @@ export class PaymentService {
       }
     }
 
+    db.saveAllToDisk();
     return record;
   }
 
   /**
    * Server-side payment verification via DPO Pay verifyToken API.
-   * Does NOT trust client-side claims alone.
+   * A frontend redirect or claim is NOT proof of payment.
    */
   public static async verifyPayment(paymentId: string): Promise<PaymentRecord> {
     const payment = localStore.payments.get(paymentId);
@@ -145,11 +268,17 @@ export class PaymentService {
       return payment;
     }
 
+    if (!payment.dpo_trans_token) {
+      throw new Error('Payment record does not have a DPO TransactionToken.');
+    }
+
     // Call DPO Pay verification endpoint
     const verifyResult: DpoVerifyTokenResult = await DpoPayGateway.verifyToken(payment.dpo_trans_token);
 
     const now = new Date().toISOString();
     payment.updated_at = now;
+    payment.dpo_result_code = verifyResult.resultCode;
+    payment.dpo_result_explanation = verifyResult.resultExplanation;
 
     if (verifyResult.transactionApproved) {
       payment.status = 'SUCCESSFUL';
@@ -178,12 +307,29 @@ export class PaymentService {
     if (db.isPostgresConnected) {
       try {
         const sqlStatus = payment.status === 'SUCCESSFUL' ? 'COMPLETED' : (payment.status === 'FAILED' ? 'FAILED' : 'PENDING');
-        await db.query('UPDATE payments SET status = $1 WHERE id = $2', [sqlStatus, paymentId]);
+        await db.query(`
+          UPDATE payments 
+          SET status = $1, 
+              dpo_result_code = $2, 
+              dpo_result_explanation = $3, 
+              failure_reason = $4,
+              verified_at = $5, 
+              updated_at = CURRENT_TIMESTAMP 
+          WHERE id = $6
+        `, [
+          sqlStatus,
+          payment.dpo_result_code,
+          payment.dpo_result_explanation,
+          payment.failure_reason || null,
+          payment.verified_at || null,
+          paymentId,
+        ]);
       } catch (err) {
         console.warn('[PaymentService] PostgreSQL update error:', err);
       }
     }
 
+    db.saveAllToDisk();
     return payment;
   }
 
@@ -200,8 +346,17 @@ export class PaymentService {
       }
     }
 
+    if (!targetPayment && db.isPostgresConnected) {
+      try {
+        const res = await db.query('SELECT id FROM payments WHERE dpo_trans_token = $1', [transToken]);
+        if (res?.rows?.length > 0) {
+          targetPayment = localStore.payments.get(res.rows[0].id) || null;
+        }
+      } catch (_) {}
+    }
+
     if (!targetPayment) {
-      console.warn(`[PaymentService] DPO callback token ${transToken} does not match any local payment.`);
+      console.warn(`[PaymentService] DPO callback token ${transToken} does not match any known payment.`);
       return null;
     }
 
@@ -242,10 +397,40 @@ export class PaymentService {
         trip.payment_status = 'PAID';
         trip.updated_at = new Date().toISOString();
         localStore.trips.set(reference_id, trip);
+
+        if (db.isPostgresConnected) {
+          try {
+            await db.query(`
+              UPDATE trips
+              SET payment_method = $1, updated_at = CURRENT_TIMESTAMP
+              WHERE id = $2
+            `, [payment_method, reference_id]);
+          } catch (_) {}
+        }
       }
     }
 
-    // 3. WALLET TOP-UP: Credit user wallet balance
+    // 3. DELIVERY: Mark delivery paid
+    if (reference_type === 'DELIVERY') {
+      const delivery = localStore.deliveries.get(reference_id);
+      if (delivery) {
+        delivery.payment_status = 'PAID';
+        delivery.updated_at = new Date().toISOString();
+        localStore.deliveries.set(reference_id, delivery);
+
+        if (db.isPostgresConnected) {
+          try {
+            await db.query(`
+              UPDATE deliveries
+              SET status = 'COURIER_ASSIGNED', updated_at = CURRENT_TIMESTAMP
+              WHERE id = $1
+            `, [reference_id]);
+          } catch (_) {}
+        }
+      }
+    }
+
+    // 4. WALLET TOP-UP: Credit user wallet balance
     if (reference_type === 'WALLET') {
       const user = localStore.users.get(user_id);
       if (user) {
@@ -260,7 +445,7 @@ export class PaymentService {
       }
     }
 
-    // 4. Send persistent push/in-app notification to the customer
+    // 5. Send persistent push/in-app notification to the customer
     const methodLabel = payment_method === 'CARD'
       ? 'Credit/Debit Card via DPO Pay'
       : payment_method === 'MTN_MOMO'
@@ -271,8 +456,8 @@ export class PaymentService {
 
     NotificationService.createNotification({
       userId: user_id,
-      title: 'Payment Successful',
-      message: `Payment of UGX ${amount_ugx.toLocaleString()} confirmed via ${methodLabel} for ${(reference_type || 'service').toLowerCase()} #${reference_id}.`,
+      title: 'Payment Confirmed',
+      message: `Payment of UGX ${amount_ugx.toLocaleString()} verified via ${methodLabel} for ${(reference_type || 'service').toLowerCase()} #${reference_id}.`,
       type: 'PAYMENT',
       metadata: {
         paymentId: payment.id,
@@ -281,6 +466,7 @@ export class PaymentService {
         referenceId: reference_id,
         amountUgx: amount_ugx,
         status: 'SUCCESSFUL',
+        environment: payment.environment,
       },
     }).catch((err) => console.error('[Payment Notification Error]', err));
   }
@@ -303,6 +489,7 @@ export class PaymentService {
         referenceId: reference_id,
         status: payment.status,
         failureReason: failure_reason,
+        environment: payment.environment,
       },
     }).catch((err) => console.error('[Payment Failure Notification Error]', err));
   }

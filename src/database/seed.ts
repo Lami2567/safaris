@@ -1,10 +1,11 @@
 import bcrypt from 'bcryptjs';
-import { localStore } from '../config/database';
+import { localStore, db } from '../config/database';
+import { ENV } from '../config/env';
 
 export async function seedUgandaData() {
   const defaultPasswordHash = await bcrypt.hash('password123', 10);
 
-  // 1. SEED USERS
+  // 1. SEED USERS (Only if not already created, protecting registered accounts)
   const customerUser = {
     id: 'usr_ug_001',
     full_name: 'David Kato',
@@ -13,9 +14,9 @@ export async function seedUgandaData() {
     password_hash: defaultPasswordHash,
     role: 'customer',
     avatar_url: '',
-    rating: 4.95,
-    total_trips: 38,
-    wallet_balance_ugx: 250000.0,
+    rating: 5.0,
+    total_trips: 0,
+    wallet_balance_ugx: 0.0,
     is_verified: true,
     created_at: new Date().toISOString(),
   };
@@ -28,9 +29,9 @@ export async function seedUgandaData() {
     password_hash: defaultPasswordHash,
     role: 'driver',
     avatar_url: '',
-    rating: 4.96,
-    total_trips: 1420,
-    wallet_balance_ugx: 1420000.0,
+    rating: 5.0,
+    total_trips: 0,
+    wallet_balance_ugx: 0.0,
     is_verified: true,
     created_at: new Date().toISOString(),
   };
@@ -43,9 +44,9 @@ export async function seedUgandaData() {
     password_hash: defaultPasswordHash,
     role: 'driver',
     avatar_url: '',
-    rating: 4.92,
-    total_trips: 890,
-    wallet_balance_ugx: 320000.0,
+    rating: 5.0,
+    total_trips: 0,
+    wallet_balance_ugx: 0.0,
     is_verified: true,
     created_at: new Date().toISOString(),
   };
@@ -58,9 +59,9 @@ export async function seedUgandaData() {
     password_hash: defaultPasswordHash,
     role: 'tour_guide',
     avatar_url: '',
-    rating: 4.98,
-    total_trips: 310,
-    wallet_balance_ugx: 540000.0,
+    rating: 5.0,
+    total_trips: 0,
+    wallet_balance_ugx: 0.0,
     is_verified: true,
     created_at: new Date().toISOString(),
   };
@@ -75,16 +76,17 @@ export async function seedUgandaData() {
     avatar_url: '',
     rating: 5.0,
     total_trips: 0,
-    wallet_balance_ugx: 10000000.0,
+    wallet_balance_ugx: 0.0,
     is_verified: true,
     created_at: new Date().toISOString(),
   };
 
-  localStore.users.set(customerUser.id, customerUser);
-  localStore.users.set(driverUser.id, driverUser);
-  localStore.users.set(driverBodaUser.id, driverBodaUser);
-  localStore.users.set(guideUser.id, guideUser);
-  localStore.users.set(adminUser.id, adminUser);
+  const seedUsers = [customerUser, driverUser, driverBodaUser, guideUser, adminUser];
+  for (const u of seedUsers) {
+    if (!localStore.users.has(u.id)) {
+      await db.persistUser(u);
+    }
+  }
 
   // 2. SEED VEHICLES
   const vehiclePremio = {
@@ -146,20 +148,21 @@ export async function seedUgandaData() {
   localStore.drivers.set(driverProfile.id, driverProfile);
   localStore.drivers.set(driverBodaProfile.id, driverBodaProfile);
 
-  // 4. SEED TOUR GUIDES
-  const guideProfile = {
-    id: guideUser.id,
-    title: 'Senior Primate & Gorilla Specialist',
-    bio: 'Patrick has 12 years of experience guiding visitors through Bwindi and Mgahinga. Certified by the Uganda Wildlife Authority with unmatched tracking insights.',
-    languages: ['English', 'Luganda', 'Rukiga', 'French'],
-    specialties: ['Bwindi Gorillas', 'Birding', 'Nature Photography'],
-    daily_rate_ugx: 180000.0,
-    is_uwa_certified: true,
-    is_available: true,
-    expeditions_count: 310,
-  };
-
-  localStore.tour_guides.set(guideProfile.id, guideProfile);
+  // 4. SEED TOUR GUIDES (Only if empty)
+  if (localStore.tour_guides.size === 0) {
+    const guideProfile = {
+      id: guideUser.id,
+      title: 'Senior Primate & Gorilla Specialist',
+      bio: 'Patrick has 12 years of experience guiding visitors through Bwindi and Mgahinga. Certified by the Uganda Wildlife Authority with unmatched tracking insights.',
+      languages: ['English', 'Luganda', 'Rukiga', 'French'],
+      specialties: ['Bwindi Gorillas', 'Birding', 'Nature Photography'],
+      daily_rate_ugx: 180000.0,
+      is_uwa_certified: true,
+      is_available: true,
+      expeditions_count: 310,
+    };
+    localStore.tour_guides.set(guideProfile.id, guideProfile);
+  }
 
   // 5. SEED DESTINATIONS
   const destinations = [
@@ -168,6 +171,8 @@ export async function seedUgandaData() {
       title: 'Bwindi Impenetrable Forest',
       subtitle: 'Home to nearly half of the world\'s mountain gorillas',
       region: 'Southwestern Uganda',
+      lat: -0.9880,
+      lng: 29.6150,
       description: 'A UNESCO World Heritage site featuring ancient, dense tropical rainforest. Renowned globally for mountain gorilla trekking expeditions and extraordinary bird biodiversity.',
       highlights: ['Mountain Gorilla Trekking', 'Batwa Pygmy Culture', 'Bird Watching (350+ species)', 'Buhoma Waterfalls'],
       best_time_to_visit: 'June to August, December to February',
@@ -179,6 +184,8 @@ export async function seedUgandaData() {
       title: 'Murchison Falls National Park',
       subtitle: 'Uganda’s oldest and largest conservation area',
       region: 'Northwestern Uganda',
+      lat: 2.2833,
+      lng: 31.6833,
       description: 'Where the River Nile explodes through an 8-meter gorge before flowing into Lake Albert. World-class big game safaris featuring lions, elephants, giraffes, and hippos.',
       highlights: ['Top of the Falls Hike', 'Nile Delta Boat Cruise', 'Big Five Game Drives', 'Shoebill Stork Tracking'],
       best_time_to_visit: 'December to February, June to September',
@@ -190,6 +197,8 @@ export async function seedUgandaData() {
       title: 'Queen Elizabeth National Park',
       subtitle: 'Tree-climbing lions and the Kazinga Channel',
       region: 'Western Uganda',
+      lat: -0.2000,
+      lng: 30.0000,
       description: 'Set against the backdrop of the Rwenzori Mountains, boasting diverse ecosystems of savannah, humid forests, and crater lakes teeming with wildlife.',
       highlights: ['Ishasha Tree-Climbing Lions', 'Kazinga Channel Boat Safari', 'Kyambura Chimp Trekking', 'Crater Lake Drives'],
       best_time_to_visit: 'January to February, June to July',
@@ -201,16 +210,46 @@ export async function seedUgandaData() {
       title: 'Jinja & Source of the Nile',
       subtitle: 'The adventure capital of East Africa',
       region: 'Eastern Uganda',
+      lat: 0.4244,
+      lng: 33.1995,
       description: 'The historical origin of the River Nile offering adrenaline adventures including Grade 5 white-water rafting, bungee jumping, quad biking, and sunset river cruises.',
       highlights: ['White Water Rafting Grade 5', 'Source of the Nile Boat Trip', 'Kayaking & Tubing', 'Horseback Safaris'],
       best_time_to_visit: 'Year-round',
       distance_hours_from_kampala: 2,
       hero_tag: 'ADVENTURE CAPITAL',
     },
+    {
+      id: 'dest_entebbe',
+      title: 'Entebbe International Airport (EBB)',
+      subtitle: 'Uganda primary international flight gateway',
+      region: 'Central Uganda',
+      lat: 0.0424,
+      lng: 32.4435,
+      description: 'Located on the scenic Lake Victoria peninsula, offering fast express shuttles and VIP transfers directly connecting to Kampala CBD.',
+      highlights: ['Airport Shuttle Express', 'Lake Victoria Beaches', 'Uganda Wildlife Education Centre'],
+      best_time_to_visit: 'Year-round',
+      distance_hours_from_kampala: 1,
+      hero_tag: 'AIRPORT HUB',
+    },
+    {
+      id: 'dest_munyonyo',
+      title: 'Speke Resort Munyonyo',
+      subtitle: 'Lakeside 5-Star Resort & Conference Centre',
+      region: 'Kampala',
+      lat: 0.2378,
+      lng: 32.6167,
+      description: 'World-class hospitality on the shores of Lake Victoria. Equestrian center, marina, olympic swimming pool and international summit facilities.',
+      highlights: ['Lake Victoria Marina', 'Infinity Pool & Spa', 'Fine Dining by the Lake'],
+      best_time_to_visit: 'Year-round',
+      distance_hours_from_kampala: 1,
+      hero_tag: 'LUXURY RETREAT',
+    },
   ];
 
-  for (const d of destinations) {
-    localStore.destinations.set(d.id, d);
+  if (localStore.destinations.size === 0) {
+    for (const d of destinations) {
+      localStore.destinations.set(d.id, d);
+    }
   }
 
   // 6. SEED TOUR PACKAGES
@@ -275,8 +314,10 @@ export async function seedUgandaData() {
     },
   ];
 
-  for (const p of packages) {
-    localStore.tour_packages.set(p.id, p);
+  if (localStore.tour_packages.size === 0) {
+    for (const p of packages) {
+      localStore.tour_packages.set(p.id, p);
+    }
   }
 
   // 7. SEED APP CONFIG
@@ -313,7 +354,28 @@ export async function seedUgandaData() {
     supportedCities: ['Kampala', 'Entebbe', 'Jinja', 'Mbarara', 'Fort Portal', 'Gulu'],
   };
 
-  localStore.app_config.set('master_config', appConfig);
+  // Preserve any existing Mapbox access token, services, and banners so seeding never wipes user-configured data
+  const existingMaster = localStore.app_config.get('master_config') || {};
+  const existingServices = existingMaster.services || localStore.app_config.get('services')?.value;
+  const existingBanners = existingMaster.banners || localStore.app_config.get('banners')?.value;
+  const existingToken = existingMaster.mapboxAccessToken ||
+    localStore.app_config.get('mapboxAccessToken')?.value ||
+    ENV.MAPBOX_ACCESS_TOKEN ||
+    '';
+
+  const mergedConfig = {
+    ...appConfig,
+    ...existingMaster,
+    services: existingServices || appConfig.services,
+    banners: existingBanners || appConfig.banners,
+  };
+
+  if (existingToken) {
+    (mergedConfig as any).mapboxAccessToken = existingToken;
+  }
+  localStore.app_config.set('master_config', mergedConfig);
 
   console.log('🌱 [Seed] Uganda mobility & tourism database seeded successfully.');
 }
+
+

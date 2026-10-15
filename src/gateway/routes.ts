@@ -11,7 +11,11 @@ import { MessagingController } from '../services/messaging/messaging.controller'
 import { NotificationController } from '../services/notification/notification.controller';
 import { AppConfigController } from '../services/app_config/app_config.controller';
 import { AdminController } from '../services/admin/admin.controller';
-import { authenticate } from './auth_middleware';
+import { TelemetryController } from '../services/telemetry/telemetry.controller';
+import { AdminAuditController } from '../services/admin/audit.controller';
+import { StorageController } from '../services/storage/storage.controller';
+import { CareerController } from '../services/career/career.controller';
+import { authenticate, requireRole } from './auth_middleware';
 
 export const apiRouter = Router();
 
@@ -28,33 +32,61 @@ apiRouter.get('/health', (req, res) => {
 });
 
 // -------------------------------------------------------------
+// Cloudflare R2 Object Storage & Direct Client Uploads
+// -------------------------------------------------------------
+apiRouter.post('/storage/upload-url', StorageController.getPresignedUploadUrl);
+apiRouter.get('/storage/status', StorageController.getStatus);
+
+// -------------------------------------------------------------
+// Careers Portal Integration (careers.mumwesafarisuganda.com)
+// -------------------------------------------------------------
+apiRouter.post('/careers/apply', CareerController.apply);
+
+// -------------------------------------------------------------
 // App Master Remote Config & Dynamic Controls
 // -------------------------------------------------------------
 apiRouter.get('/app-config', AppConfigController.getConfig);
-apiRouter.put('/app-config', AppConfigController.updateConfig);
-apiRouter.put('/app-config/services', AppConfigController.updateServices);
-apiRouter.put('/app-config/banners', AppConfigController.updateBanners);
-apiRouter.put('/app-config/features', AppConfigController.updateFeatures);
-apiRouter.put('/app-config/version', AppConfigController.updateVersionConfig);
+apiRouter.put('/app-config', authenticate, requireRole('admin'), AppConfigController.updateConfig);
+apiRouter.put('/app-config/services', authenticate, requireRole('admin'), AppConfigController.updateServices);
+apiRouter.put('/app-config/banners', authenticate, requireRole('admin'), AppConfigController.updateBanners);
+apiRouter.put('/app-config/features', authenticate, requireRole('admin'), AppConfigController.updateFeatures);
+apiRouter.put('/app-config/version', authenticate, requireRole('admin'), AppConfigController.updateVersionConfig);
 
 // -------------------------------------------------------------
-// Admin Hub & Controls (Dashboard, Pricing, Monitors)
+// Admin Hub & Controls (Protected with persistent Admin Auth)
 // -------------------------------------------------------------
-apiRouter.get('/admin/stats', AdminController.getStats);
-apiRouter.get('/admin/pricing', AdminController.getPricing);
-apiRouter.put('/admin/pricing', AdminController.updatePricing);
-apiRouter.get('/admin/trips', AdminController.getAllTrips);
-apiRouter.get('/admin/deliveries', AdminController.getAllDeliveries);
-apiRouter.get('/admin/fleet', AdminController.getDriversFleet);
-apiRouter.get('/admin/users', AdminController.getAllUsers);
+apiRouter.get('/admin/stats', authenticate, requireRole('admin'), AdminController.getStats);
+apiRouter.get('/admin/pricing', authenticate, requireRole('admin'), AdminController.getPricing);
+apiRouter.put('/admin/pricing', authenticate, requireRole('admin'), AdminController.updatePricing);
+apiRouter.get('/admin/trips', authenticate, requireRole('admin'), AdminController.getAllTrips);
+apiRouter.get('/admin/deliveries', authenticate, requireRole('admin'), AdminController.getAllDeliveries);
+apiRouter.get('/admin/fleet', authenticate, requireRole('admin'), AdminController.getDriversFleet);
+apiRouter.get('/admin/live-fleet', authenticate, requireRole('admin'), AdminAuditController.getLiveFleet);
+apiRouter.post('/admin/audit-log', authenticate, requireRole('admin'), AdminAuditController.recordAudit);
+apiRouter.get('/admin/audit-logs', authenticate, requireRole('admin'), AdminAuditController.getAuditLogs);
+apiRouter.get('/admin/users', authenticate, requireRole('admin'), AdminController.getAllUsers);
+apiRouter.post('/admin/change-password', authenticate, requireRole('admin'), AdminController.changePassword);
+
+// Careers & Recruitment Applicant Review
+apiRouter.get('/admin/applicants', authenticate, requireRole('admin'), CareerController.getApplicants);
+apiRouter.post('/admin/applicants/:id/approve', authenticate, requireRole('admin'), CareerController.approveApplicant);
+apiRouter.post('/admin/applicants/:id/reject', authenticate, requireRole('admin'), CareerController.rejectApplicant);
+apiRouter.post('/admin/applicants/:id/suspend', authenticate, requireRole('admin'), CareerController.suspendApplicant);
+
+// -------------------------------------------------------------
+// Real-time Telemetry & Offline Location Queue Sync
+// -------------------------------------------------------------
+apiRouter.post('/telemetry/batch', TelemetryController.batchUpload);
+apiRouter.get('/telemetry/drivers/:driverId/history', TelemetryController.getDriverHistory);
+apiRouter.get('/telemetry/trips/:tripId/history', TelemetryController.getTripHistory);
 
 // -------------------------------------------------------------
 // Authentication
 // -------------------------------------------------------------
 apiRouter.post('/auth/register', AuthController.register);
 apiRouter.post('/auth/login', AuthController.login);
-apiRouter.post('/auth/send-otp', AuthController.sendOtp);
-apiRouter.post('/auth/verify-otp', AuthController.verifyOtp);
+apiRouter.post('/auth/verify-email-otp', AuthController.verifyEmailOtp);
+apiRouter.post('/auth/resend-email-otp', AuthController.resendEmailOtp);
 apiRouter.get('/auth/me', authenticate, AuthController.me);
 
 // -------------------------------------------------------------
@@ -62,6 +94,8 @@ apiRouter.get('/auth/me', authenticate, AuthController.me);
 // -------------------------------------------------------------
 apiRouter.get('/users/:id', authenticate, UserController.getProfile);
 apiRouter.put('/users/:id', authenticate, UserController.updateProfile);
+apiRouter.post('/users/wallet/topup', authenticate, UserController.topUpWallet);
+apiRouter.post('/users/role', authenticate, UserController.switchRole);
 
 // -------------------------------------------------------------
 // Drivers
@@ -77,7 +111,10 @@ apiRouter.post('/drivers/cashout', authenticate, DriverController.cashOut);
 // -------------------------------------------------------------
 apiRouter.post('/trips/estimate', TripController.estimateFare);
 apiRouter.post('/trips', authenticate, TripController.createTrip);
+apiRouter.get('/trips/active', authenticate, TripController.getActiveTrip);
 apiRouter.get('/trips/:tripId', TripController.getTrip);
+apiRouter.post('/trips/:tripId/accept', authenticate, TripController.acceptTrip);
+apiRouter.post('/trips/:tripId/location', authenticate, TripController.updateLocation);
 apiRouter.put('/trips/:tripId/status', authenticate, TripController.updateStatus);
 apiRouter.post('/trips/:tripId/rate', authenticate, TripController.rateTrip);
 apiRouter.get('/users/trips', authenticate, TripController.getUserTrips);
@@ -124,9 +161,14 @@ apiRouter.put('/delivery/:id/status', DeliveryController.updateStatus);
 apiRouter.get('/delivery/user/history', authenticate, DeliveryController.getUserDeliveries);
 
 // -------------------------------------------------------------
-// Payments (MTN MoMo, Airtel Money, Card)
+// Payments (DPO Pay XML Gateway, MTN MoMo, Airtel Money, Card)
 // -------------------------------------------------------------
 apiRouter.post('/payments/process', authenticate, PaymentController.processPayment);
+apiRouter.post('/payments/:id/verify', authenticate, PaymentController.verifyPayment);
+apiRouter.get('/payments/reference/:type/:id', authenticate, PaymentController.getPaymentByReference);
+apiRouter.get('/payments/dpo/callback', PaymentController.handleDpoCallback);
+apiRouter.post('/payments/dpo/callback', PaymentController.handleDpoCallback);
+apiRouter.post('/payments/topup', authenticate, UserController.topUpWallet);
 apiRouter.get('/payments/history/:userId', authenticate, PaymentController.getPaymentHistory);
 
 // -------------------------------------------------------------
@@ -140,5 +182,13 @@ apiRouter.get('/messages/conversation/:userId', authenticate, MessagingControlle
 // Notifications
 // -------------------------------------------------------------
 apiRouter.get('/notifications/user/:userId', authenticate, NotificationController.getUserNotifications);
+apiRouter.get('/notifications/user/:userId/unread-count', authenticate, NotificationController.getUnreadCount);
 apiRouter.put('/notifications/:id/read', authenticate, NotificationController.markAsRead);
+apiRouter.put('/notifications/user/:userId/read-all', authenticate, NotificationController.markAllAsRead);
+apiRouter.delete('/notifications/:id', authenticate, NotificationController.deleteNotification);
+apiRouter.post('/notifications/:id/delete', authenticate, NotificationController.deleteNotification);
+apiRouter.delete('/notifications/user/:userId/clear', authenticate, NotificationController.clearNotifications);
+apiRouter.post('/notifications/user/:userId/clear', authenticate, NotificationController.clearNotifications);
 apiRouter.post('/notifications', NotificationController.createNotification);
+apiRouter.post('/admin/notifications/broadcast', authenticate, NotificationController.broadcastNotification);
+apiRouter.post('/admin/notifications/send', authenticate, NotificationController.createNotification);

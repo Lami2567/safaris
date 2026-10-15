@@ -9,6 +9,7 @@ import { rateLimiter } from './gateway/rate_limiter';
 import { apiRouter } from './gateway/routes';
 import { initSocketServer } from './realtime/socket_server';
 import { seedUgandaData } from './database/seed';
+import { FleetMovementEngine } from './services/driver/fleet_movement_engine';
 
 const app = express();
 const server = http.createServer(app);
@@ -61,6 +62,10 @@ app.get('/health/ready', async (req, res) => {
   });
 });
 
+import { AppConfigService } from './services/app_config/app_config.service';
+import { TourismService } from './services/tourism/tourism.service';
+import { TourGuideService } from './services/tour_guide/tour_guide.service';
+
 // Mount API Gateway routes under /api/v1
 app.use('/api/v1', apiRouter);
 
@@ -69,6 +74,23 @@ initSocketServer(server);
 
 // Start Server with safe seeding lifecycle
 async function startServer() {
+  // Ensure database connection is established
+  try {
+    await db.waitForReady();
+  } catch (err) {
+    console.warn('⚠️ Non-fatal error waiting for database ready:', err);
+  }
+
+  // Load persistent configurations, destinations, packages, and tour guides
+  try {
+    await AppConfigService.init();
+    await TourismService.init();
+    await TourGuideService.init();
+    console.log('✅ Persistent configurations, tourism records, and tour guides loaded.');
+  } catch (err) {
+    console.warn('⚠️ Non-fatal error during service initialization:', err);
+  }
+
   if (ENV.AUTO_SEED) {
     try {
       await seedUgandaData();
@@ -78,6 +100,9 @@ async function startServer() {
   } else {
     console.log('🔒 Automatic seeding disabled by configuration.');
   }
+
+  // Fleet movement simulation disabled to ensure only real driver updates are tracked.
+  // FleetMovementEngine.getInstance().start();
 
   server.listen(ENV.PORT, '0.0.0.0', () => {
     console.log('====================================================');

@@ -195,6 +195,10 @@ export class TourGuideService {
     const guide = localStore.tour_guides.get(guideId);
     if (!guide) throw new Error('Tour guide not found.');
 
+    if (isAvailable && (!guide.is_approved || guide.approval_status !== 'APPROVED')) {
+      throw new Error('Tour guide account is pending admin approval or has been suspended.');
+    }
+
     guide.is_available = isAvailable;
     if (db.isPostgresConnected) {
       db.query('UPDATE tour_guides SET is_available = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [isAvailable, guideId]).catch(() => {});

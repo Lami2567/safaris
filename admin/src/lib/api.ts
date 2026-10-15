@@ -1,18 +1,29 @@
 const getApiBase = () => {
   if (typeof window !== 'undefined') {
-    return `${window.location.origin}/api/v1`;
+    // In browser, always use relative path '/api/v1' to match current origin and protocol
+    return '/api/v1';
   }
-  return process.env.NEXT_PUBLIC_API_URL || 'http://18.222.41.199/api/v1';
+  return process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
 };
 
 async function fetcher<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const apiBase = getApiBase();
+  const token = typeof window !== 'undefined' ? localStorage.getItem('safaris_admin_token') : null;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options?.headers as any) || {}),
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    // Standard admin access key recognized by gateway auth middleware
+    headers['x-admin-key'] = process.env.NEXT_PUBLIC_ADMIN_KEY || 'mumwe_safaris_secret_jwt_2026';
+  }
+
   const res = await fetch(`${apiBase}${endpoint}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options?.headers || {}),
-    },
+    headers,
     cache: 'no-store',
   });
 
@@ -67,4 +78,31 @@ export const api = {
   getDeliveries: () => fetcher<any[]>('/admin/deliveries'),
   getFleet: () => fetcher<any[]>('/admin/fleet'),
   getUsers: () => fetcher<any[]>('/admin/users'),
+
+  // Real-Time Fleet Telemetry & Audit Logs
+  getLiveFleet: () => fetcher<any[]>('/admin/live-fleet'),
+  getDriverHistory: (driverId: string, date?: string) =>
+    fetcher<any>(`/telemetry/drivers/${driverId}/history${date ? `?date=${date}` : ''}`),
+  getTripHistory: (tripId: string) => fetcher<any>(`/telemetry/trips/${tripId}/history`),
+  logAudit: (data: { action: string; resourceType: string; resourceId: string; details?: any }) =>
+    fetcher<any>('/admin/audit-log', { method: 'POST', body: JSON.stringify(data) }),
+  getAuditLogs: (limit?: number) => fetcher<any[]>(`/admin/audit-logs${limit ? `?limit=${limit}` : ''}`),
+
+  // Careers & Driver/Tour Guide Approvals
+  getApplicants: (status?: string, type?: string) => {
+    const params = new URLSearchParams();
+    if (status && status !== 'all') params.append('status', status);
+    if (type && type !== 'all') params.append('type', type);
+    const qs = params.toString();
+    return fetcher<any[]>(`/admin/applicants${qs ? `?${qs}` : ''}`);
+  },
+  approveApplicant: (id: string) => fetcher<any>(`/admin/applicants/${id}/approve`, { method: 'POST' }),
+  rejectApplicant: (id: string, reason: string) =>
+    fetcher<any>(`/admin/applicants/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  suspendApplicant: (id: string, reason?: string) =>
+    fetcher<any>(`/admin/applicants/${id}/suspend`, { method: 'POST', body: JSON.stringify({ reason }) }),
+
+  // Admin Account & Password Management
+  changeAdminPassword: (data: { currentPassword: string; newPassword: string }) =>
+    fetcher<any>('/admin/change-password', { method: 'POST', body: JSON.stringify(data) }),
 };

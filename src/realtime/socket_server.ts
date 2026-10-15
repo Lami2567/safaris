@@ -27,12 +27,15 @@ export function initSocketServer(httpServer: HttpServer): Server {
       }
       userSockets.get(userId)!.add(socket.id);
       socket.join(`user:${userId}`);
+      if (role === 'admin') {
+        socket.join('admin:fleet');
+      }
       console.log(`[Socket] Connected: user=${userId} (${role || 'customer'}) socket=${socket.id}`);
     } else {
       console.log(`[Socket] Anonymous connection: socket=${socket.id}`);
     }
 
-    // Join room for a trip or delivery
+    // Join room for a trip, delivery, or admin fleet
     socket.on('join_room', (room: string) => {
       socket.join(room);
       console.log(`[Socket] Socket ${socket.id} joined ${room}`);
@@ -44,14 +47,18 @@ export function initSocketServer(httpServer: HttpServer): Server {
     });
 
     // Driver live location ping
-    socket.on('driver:location_update', (data: { driverId: string; lat: number; lng: number; heading?: number; tripId?: string }) => {
-      const { driverId, lat, lng, heading = 0, tripId } = data;
+    socket.on('driver:location_update', (data: { driverId: string; lat: number; lng: number; heading?: number; speed?: number; accuracy?: number; batteryLevel?: number; tripId?: string; safariLegId?: string }) => {
+      const { driverId, lat, lng, heading = 0, speed = 0, accuracy = 5, batteryLevel, tripId, safariLegId } = data;
       
       // Update local driver model
       const driver = localStore.drivers.get(driverId);
       if (driver) {
         driver.current_lat = lat;
         driver.current_lng = lng;
+        driver.heading = heading;
+        driver.speed = speed;
+        driver.battery_level = batteryLevel;
+        driver.updated_at = new Date().toISOString();
       }
 
       // If active trip, broadcast directly to trip room
@@ -61,9 +68,24 @@ export function initSocketServer(httpServer: HttpServer): Server {
           lat,
           lng,
           heading,
+          speed,
           timestamp: Date.now(),
         });
       }
+
+      // Broadcast to Admin Fleet Stream
+      ioInstance?.to('admin:fleet').emit('fleet:telemetry_update', {
+        driverId,
+        lat,
+        lng,
+        heading,
+        speed,
+        accuracy,
+        batteryLevel,
+        tripId,
+        safariLegId,
+        updatedAt: new Date().toISOString(),
+      });
 
       // Broadcast to nearby listeners
       socket.broadcast.emit('driver:nearby_location', {
@@ -113,6 +135,18 @@ export function emitToUser(userId: string, event: string, payload: any) {
   }
 }
 
+export function emitToTrip(tripId: string, event: string, payload: any) {
+  if (ioInstance) {
+    ioInstance.to(`trip:${tripId}`).emit(event, payload);
+  }
+}
+
+export function broadcastToFleet(payload: any) {
+  if (ioInstance) {
+    ioInstance.to('admin:fleet').emit('fleet:telemetry_update', payload);
+  }
+}
+
 export function emitToRoom(room: string, event: string, payload: any) {
   if (ioInstance) {
     ioInstance.to(room).emit(event, payload);
@@ -124,3 +158,4 @@ export function broadcast(event: string, payload: any) {
     ioInstance.emit(event, payload);
   }
 }
+

@@ -91,7 +91,7 @@ export default function ServicesConfigPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="p-6 sm:p-8 lg:p-10 space-y-8 min-w-0 max-w-7xl">
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-6">
         <div>

@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS users (
     total_trips INT DEFAULT 0,
     wallet_balance_ugx NUMERIC(14, 2) DEFAULT 0.00,
     is_verified BOOLEAN DEFAULT FALSE,
+    approval_status VARCHAR(32) DEFAULT 'APPROVED',
+    application_id VARCHAR(64),
+    password_changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -54,6 +57,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_approval_status ON users(approval_status);
 
 -- 3. VEHICLES TABLE
 CREATE TABLE IF NOT EXISTS vehicles (
@@ -75,17 +79,30 @@ CREATE TABLE IF NOT EXISTS drivers (
     vehicle_id VARCHAR(64) REFERENCES vehicles(id) ON DELETE SET NULL,
     is_online BOOLEAN DEFAULT FALSE,
     is_available BOOLEAN DEFAULT TRUE,
+    is_approved BOOLEAN DEFAULT FALSE,
+    approval_status VARCHAR(32) DEFAULT 'PENDING_APPROVAL',
     current_lat NUMERIC(10, 6) DEFAULT 0.3136,
     current_lng NUMERIC(10, 6) DEFAULT 32.5811,
     heading NUMERIC(5, 2) DEFAULT 0.0,
+    speed NUMERIC(6, 2) DEFAULT 0.0,
+    battery_level NUMERIC(5, 2),
     license_number VARCHAR(64),
     license_expiry DATE,
+    national_id VARCHAR(64),
+    driving_permit_number VARCHAR(64),
+    permit_expiry DATE,
+    years_of_experience INT DEFAULT 0,
+    application_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    approved_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+    approved_at TIMESTAMP WITH TIME ZONE,
+    rejection_reason TEXT,
     acceptance_rate NUMERIC(5, 2) DEFAULT 98.0,
     today_earnings_ugx NUMERIC(14, 2) DEFAULT 0.0,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_drivers_online ON drivers(is_online, is_available);
+CREATE INDEX IF NOT EXISTS idx_drivers_approval ON drivers(is_approved, approval_status);
 
 -- 5. TOUR GUIDES TABLE
 CREATE TABLE IF NOT EXISTS tour_guides (
@@ -97,9 +114,19 @@ CREATE TABLE IF NOT EXISTS tour_guides (
     daily_rate_ugx NUMERIC(12, 2) NOT NULL DEFAULT 150000.0,
     is_uwa_certified BOOLEAN DEFAULT TRUE,
     is_available BOOLEAN DEFAULT TRUE,
+    is_approved BOOLEAN DEFAULT FALSE,
+    approval_status VARCHAR(32) DEFAULT 'PENDING_APPROVAL',
+    application_id VARCHAR(64),
+    national_id VARCHAR(64),
+    uwa_license_number VARCHAR(64),
+    approved_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+    approved_at TIMESTAMP WITH TIME ZONE,
+    rejection_reason TEXT,
     expeditions_count INT DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_tour_guides_approval ON tour_guides(is_approved, approval_status);
 
 -- 6. DESTINATIONS TABLE
 CREATE TABLE IF NOT EXISTS destinations (
@@ -201,9 +228,75 @@ CREATE TABLE IF NOT EXISTS payments (
     currency VARCHAR(8) DEFAULT 'UGX',
     payment_method VARCHAR(64) NOT NULL,
     reference VARCHAR(128) UNIQUE NOT NULL,
+    dpo_trans_token VARCHAR(128),
+    dpo_trans_ref VARCHAR(128),
+    dpo_result_code VARCHAR(32),
+    dpo_result_explanation TEXT,
+    payment_url TEXT,
+    failure_reason TEXT,
+    environment VARCHAR(16) DEFAULT 'sandbox',
     status payment_status NOT NULL DEFAULT 'COMPLETED',
+    verified_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_payments_dpo_token ON payments(dpo_trans_token);
+CREATE INDEX IF NOT EXISTS idx_payments_status_env ON payments(status, environment);
+
+-- 11b. CAREER RECRUITMENT APPLICATIONS TABLE
+CREATE TABLE IF NOT EXISTS career_applications (
+    id VARCHAR(64) PRIMARY KEY,
+    applicant_type VARCHAR(32) NOT NULL, -- 'driver' | 'tour_guide'
+    user_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+    full_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    phone VARCHAR(32) NOT NULL,
+    national_id VARCHAR(64),
+    license_number VARCHAR(64),
+    experience_years INT DEFAULT 0,
+    vehicle_make VARCHAR(64),
+    vehicle_model VARCHAR(64),
+    vehicle_plate VARCHAR(32),
+    vehicle_tier VARCHAR(32),
+    languages TEXT[] DEFAULT ARRAY['English'],
+    specialties TEXT[] DEFAULT ARRAY['Uganda Safaris'],
+    documents JSONB DEFAULT '{}',
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING_APPROVAL',
+    rejection_reason TEXT,
+    reviewed_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_career_apps_status ON career_applications(status, applicant_type);
+
+-- 11c. SERVICE PRICING MATRIX TABLE
+CREATE TABLE IF NOT EXISTS service_pricing (
+    id VARCHAR(64) PRIMARY KEY,
+    service_type VARCHAR(64) NOT NULL UNIQUE,
+    base_fare NUMERIC(12, 2) NOT NULL,
+    per_km_rate NUMERIC(12, 2) NOT NULL,
+    per_minute_rate NUMERIC(12, 2) DEFAULT 0.0,
+    minimum_fare NUMERIC(12, 2) NOT NULL,
+    cancellation_fee NUMERIC(12, 2) DEFAULT 0.0,
+    config JSONB DEFAULT '{}',
+    updated_by VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS pricing_audit_logs (
+    id VARCHAR(64) PRIMARY KEY,
+    admin_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+    service_category VARCHAR(64) NOT NULL,
+    old_pricing JSONB NOT NULL,
+    new_pricing JSONB NOT NULL,
+    ip_address VARCHAR(64) DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_pricing_audit_logs_created ON pricing_audit_logs(created_at DESC);
 
 -- 12. MESSAGES TABLE
 CREATE TABLE IF NOT EXISTS messages (
@@ -224,10 +317,14 @@ CREATE TABLE IF NOT EXISTS notifications (
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
     message TEXT NOT NULL,
-    type VARCHAR(32) NOT NULL,
+    type VARCHAR(32) NOT NULL, -- 'DRIVER', 'PAYMENT', 'ADMIN', 'SYSTEM'
     is_read BOOLEAN DEFAULT FALSE,
+    metadata JSONB DEFAULT '{}',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_time ON notifications(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, is_read);
 
 -- 14. APP CONFIGURATION TABLE
 CREATE TABLE IF NOT EXISTS app_config (
@@ -235,3 +332,75 @@ CREATE TABLE IF NOT EXISTS app_config (
     value JSONB NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ==========================================================
+-- 15. LOCATION SESSIONS & REAL-TIME TELEMETRY TABLES
+-- ==========================================================
+CREATE TABLE IF NOT EXISTS location_sessions (
+    id VARCHAR(64) PRIMARY KEY,
+    driver_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
+    trip_id VARCHAR(64) REFERENCES trips(id) ON DELETE SET NULL,
+    safari_leg_id VARCHAR(64),
+    role VARCHAR(32) DEFAULT 'driver',
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(32) DEFAULT 'active'
+);
+
+CREATE INDEX IF NOT EXISTS idx_loc_sessions_driver ON location_sessions(driver_id);
+CREATE INDEX IF NOT EXISTS idx_loc_sessions_trip ON location_sessions(trip_id);
+
+CREATE TABLE IF NOT EXISTS location_points (
+    id VARCHAR(64) PRIMARY KEY,
+    session_id VARCHAR(64),
+    trip_id VARCHAR(64),
+    driver_id VARCHAR(64) NOT NULL,
+    safari_leg_id VARCHAR(64),
+    lat NUMERIC(10, 6) NOT NULL,
+    lng NUMERIC(10, 6) NOT NULL,
+    speed NUMERIC(6, 2) DEFAULT 0.0,
+    heading NUMERIC(5, 2) DEFAULT 0.0,
+    accuracy NUMERIC(6, 2) DEFAULT 5.0,
+    battery_level NUMERIC(5, 2),
+    is_offline_queued BOOLEAN DEFAULT FALSE,
+    recorded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_loc_points_driver_time ON location_points(driver_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_loc_points_trip_time ON location_points(trip_id, recorded_at ASC);
+
+-- 16. MULTI-DAY SAFARI TOUR LEGS
+CREATE TABLE IF NOT EXISTS tour_legs (
+    id VARCHAR(64) PRIMARY KEY,
+    booking_id VARCHAR(64) REFERENCES tour_bookings(id) ON DELETE CASCADE,
+    day_number INT NOT NULL DEFAULT 1,
+    origin_title VARCHAR(255) NOT NULL,
+    origin_lat NUMERIC(10, 6) NOT NULL,
+    origin_lng NUMERIC(10, 6) NOT NULL,
+    dest_title VARCHAR(255) NOT NULL,
+    dest_lat NUMERIC(10, 6) NOT NULL,
+    dest_lng NUMERIC(10, 6) NOT NULL,
+    distance_km NUMERIC(8, 2) DEFAULT 0.0,
+    estimated_hours NUMERIC(4, 1) DEFAULT 4.0,
+    status VARCHAR(32) DEFAULT 'pending', -- 'pending', 'active', 'completed'
+    started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_tour_legs_booking ON tour_legs(booking_id, day_number);
+
+-- 17. SECURE ADMIN AUDIT LOGS
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id VARCHAR(64) PRIMARY KEY,
+    admin_id VARCHAR(64) REFERENCES users(id) ON DELETE SET NULL,
+    action VARCHAR(128) NOT NULL,
+    resource_type VARCHAR(64) NOT NULL,
+    resource_id VARCHAR(64) NOT NULL,
+    details JSONB DEFAULT '{}',
+    ip_address VARCHAR(64) DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created ON admin_audit_logs(created_at DESC);
+

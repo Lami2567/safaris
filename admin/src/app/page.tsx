@@ -93,7 +93,7 @@ export default function OverviewPage() {
             </div>
             <div className="text-[11px] text-white/40 mt-1 flex items-center justify-between">
               <span>Tours + Rides + Deliveries</span>
-              <span className="text-white/70">100% Mock/Live</span>
+              <span className="text-emerald-400 font-mono text-[10px]">● Live Production Ledger</span>
             </div>
           </div>
 

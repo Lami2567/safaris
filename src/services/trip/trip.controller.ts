@@ -60,6 +60,38 @@ export class TripController {
     }
   }
 
+  public static acceptTrip(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { tripId } = req.params;
+      const driverId = req.user!.userId;
+      const result = TripService.acceptTrip(tripId, driverId);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'ACCEPT_FAILED', err.message, 400);
+    }
+  }
+
+  public static updateLocation(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { tripId } = req.params;
+      const { lat, lng, heading } = req.body;
+      const result = TripService.updateDriverLocation(tripId, Number(lat), Number(lng), heading ? Number(heading) : undefined);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'LOCATION_UPDATE_FAILED', err.message, 400);
+    }
+  }
+
+  public static getActiveTrip(req: AuthenticatedRequest, res: Response) {
+    try {
+      const userId = req.user!.userId;
+      const active = TripService.getActiveTrip(userId);
+      return sendSuccess(res, active);
+    } catch (err: any) {
+      return sendError(res, 'FETCH_ACTIVE_TRIP_FAILED', err.message, 500);
+    }
+  }
+
   public static getUserTrips(req: AuthenticatedRequest, res: Response) {
     try {
       const userId = req.user!.userId;
