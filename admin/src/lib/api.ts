@@ -89,6 +89,10 @@ export const api = {
   getAuditLogs: (limit?: number) => fetcher<any[]>(`/admin/audit-logs${limit ? `?limit=${limit}` : ''}`),
 
   // Careers & Driver/Tour Guide Approvals
+  submitCareerApplication: (data: any) =>
+    fetcher<any>('/careers/apply', { method: 'POST', body: JSON.stringify(data) }),
+  checkCareerStatus: (query: string) =>
+    fetcher<any>(`/careers/status?query=${encodeURIComponent(query)}`),
   getApplicants: (status?: string, type?: string) => {
     const params = new URLSearchParams();
     if (status && status !== 'all') params.append('status', status);

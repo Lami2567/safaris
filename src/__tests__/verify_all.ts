@@ -309,7 +309,14 @@ async function runTests() {
   await AdminService.changePassword('usr_adm_001', 'NewSafariSecure2026!#', 'password123', '127.0.0.1');
   console.log(`✅ 15. Admin Password Change & Audit Logging verified (${pwdRes.message}).`);
 
-  console.log('\n🎉 ALL 15 PRODUCTION READINESS INTEGRATION TESTS PASSED CLEANLY!\n');
+  // 16. Test Candidate Status Lookup
+  const candidateStatus = await CareerService.getApplicationStatus(driverAppRes.applicationId);
+  if (!candidateStatus || candidateStatus.status !== 'APPROVED') {
+    throw new Error('Candidate status lookup failed.');
+  }
+  console.log(`✅ 16. Candidate Application Status Inquiry verified (Found: ${candidateStatus.full_name}, Status: ${candidateStatus.status}).`);
+
+  console.log('\n🎉 ALL 16 PRODUCTION READINESS INTEGRATION TESTS PASSED CLEANLY!\n');
 }
 
 

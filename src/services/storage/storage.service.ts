@@ -35,6 +35,7 @@ export class StorageService {
     'image/gif',
     'image/svg+xml',
     'image/avif',
+    'application/pdf',
   ]);
 
   /**

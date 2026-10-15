@@ -86,5 +86,27 @@
     "payment_method": "MTN Mobile Money",
     "created_at": "2026-10-15T18:58:06.382Z",
     "updated_at": "2026-10-15T18:58:06.383Z"
+  },
+  {
+    "id": "trp_9a0298a5",
+    "customer_id": "usr_ug_001",
+    "driver_id": null,
+    "pickup_title": "Kampala Serena Hotel",
+    "pickup_address": "Kintu Rd, Kampala",
+    "pickup_lat": 0.3182,
+    "pickup_lng": 32.5855,
+    "dest_title": "Entebbe International Airport",
+    "dest_address": "Airport Rd, Entebbe",
+    "dest_lat": 0.0447,
+    "dest_lng": 32.4435,
+    "vehicle_tier": "comfort",
+    "status": "SEARCHING",
+    "distance_km": 42,
+    "estimated_duration_mins": 92,
+    "fare_ugx": 144400,
+    "tip_ugx": 0,
+    "payment_method": "MTN Mobile Money",
+    "created_at": "2026-10-15T21:23:42.587Z",
+    "updated_at": "2026-10-15T21:23:42.587Z"
   }
 ]

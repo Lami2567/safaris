@@ -41,6 +41,7 @@ apiRouter.get('/storage/status', StorageController.getStatus);
 // Careers Portal Integration (careers.mumwesafarisuganda.com)
 // -------------------------------------------------------------
 apiRouter.post('/careers/apply', CareerController.apply);
+apiRouter.get('/careers/status', CareerController.checkStatus);
 
 // -------------------------------------------------------------
 // App Master Remote Config & Dynamic Controls

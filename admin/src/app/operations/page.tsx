@@ -90,6 +90,7 @@ export default function OperationsPage() {
   const [applicantSearchTerm, setApplicantSearchTerm] = useState('');
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [rejectModalApp, setRejectModalApp] = useState<any | null>(null);
+  const [viewApplicantModal, setViewApplicantModal] = useState<any | null>(null);
   const [rejectionReasonInput, setRejectionReasonInput] = useState('');
   const [approvalFeedback, setApprovalFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -1127,6 +1128,14 @@ export default function OperationsPage() {
                         {/* Actions */}
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => setViewApplicantModal(app)}
+                              className="px-2.5 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 text-white/80 text-xs flex items-center gap-1 transition-colors"
+                              title="Inspect Application & Documents"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              Review
+                            </button>
                             {isPending && (
                               <>
                                 <button
@@ -1236,6 +1245,138 @@ export default function OperationsPage() {
                     </button>
                   </div>
                 </form>
+              </div>
+            </div>
+          )}
+
+          {/* Review Applicant & Documents Modal */}
+          {viewApplicantModal && (
+            <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+              <div className="bg-[#111114] border border-white/20 rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+                <div className="flex items-center justify-between border-b border-white/10 p-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center font-bold text-amber-400">
+                      {viewApplicantModal.applicant_type === 'driver' ? <Car className="w-5 h-5" /> : <Compass className="w-5 h-5" />}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">{viewApplicantModal.full_name}</h3>
+                      <span className="text-[10px] font-mono text-white/50 uppercase">
+                        {viewApplicantModal.applicant_type} • ID: {viewApplicantModal.id}
+                      </span>
+                    </div>
+                  </div>
+                  <button onClick={() => setViewApplicantModal(null)} className="text-white/40 hover:text-white">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="p-6 overflow-y-auto space-y-5 text-xs">
+                  {/* Personal & Credential Grid */}
+                  <div className="grid grid-cols-2 gap-3 bg-white/5 p-4 rounded-xl font-mono">
+                    <div>
+                      <span className="text-[10px] text-white/40 block">Phone Number</span>
+                      <span className="text-white font-medium">{viewApplicantModal.phone}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-white/40 block">Email Address</span>
+                      <span className="text-white font-medium truncate block">{viewApplicantModal.email}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-white/40 block">National ID (NIN)</span>
+                      <span className="text-white font-medium">{viewApplicantModal.national_id || 'Not provided'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-white/40 block">{viewApplicantModal.applicant_type === 'driver' ? 'Driving Permit' : 'UWA Accreditation'}</span>
+                      <span className="text-amber-400 font-bold">{viewApplicantModal.license_number || 'Under Review'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-white/40 block">Experience</span>
+                      <span className="text-white font-medium">{viewApplicantModal.experience_years || 0} years</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-white/40 block">Current Status</span>
+                      <span className="text-amber-300 font-bold">{viewApplicantModal.status}</span>
+                    </div>
+                  </div>
+
+                  {/* Vehicle or Guiding Specs */}
+                  {viewApplicantModal.applicant_type === 'driver' && viewApplicantModal.vehicle_plate && (
+                    <div className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
+                      <h4 className="text-xs font-bold text-amber-400 uppercase font-mono mb-2">Attached Vehicle Specifications</h4>
+                      <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
+                        <div><span className="text-white/40 block text-[10px]">Make / Model</span>{viewApplicantModal.vehicle_make} {viewApplicantModal.vehicle_model}</div>
+                        <div><span className="text-white/40 block text-[10px]">Plate</span>{viewApplicantModal.vehicle_plate}</div>
+                        <div><span className="text-white/40 block text-[10px]">Tier</span><span className="uppercase">{viewApplicantModal.vehicle_tier || 'go'}</span></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Attached Documents */}
+                  <div>
+                    <h4 className="text-xs font-bold text-white uppercase font-mono mb-2">Submitted Verification Documents</h4>
+                    {viewApplicantModal.documents && Object.keys(viewApplicantModal.documents).length > 0 ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        {Object.entries(viewApplicantModal.documents).map(([key, val]: [string, any]) => (
+                          <div key={key} className="p-3 rounded-xl border border-white/10 bg-white/[0.02] flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-4 h-4 text-amber-400 shrink-0" />
+                              <span className="capitalize font-mono text-[11px] text-white/80">{key.replace(/_/g, ' ')}</span>
+                            </div>
+                            <a
+                              href={typeof val === 'string' ? val : '#'}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white text-[10px] font-mono flex items-center gap-1"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              View
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-white/40 font-mono text-xs italic">No digital document attachments linked to this application.</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Footer Controls */}
+                <div className="border-t border-white/10 p-4 flex items-center justify-between bg-black">
+                  <button
+                    onClick={() => setViewApplicantModal(null)}
+                    className="px-4 py-2 rounded-xl text-xs text-white/60 hover:text-white"
+                  >
+                    Close
+                  </button>
+                  <div className="flex items-center gap-2">
+                    {viewApplicantModal.status === 'PENDING_APPROVAL' && (
+                      <>
+                        <button
+                          onClick={() => {
+                            const id = viewApplicantModal.id;
+                            setViewApplicantModal(null);
+                            handleApproveApplicant(id);
+                          }}
+                          className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs flex items-center gap-1.5"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          Approve Operator
+                        </button>
+                        <button
+                          onClick={() => {
+                            const app = viewApplicantModal;
+                            setViewApplicantModal(null);
+                            setRejectModalApp(app);
+                          }}
+                          className="px-4 py-2 rounded-xl border border-red-500/40 hover:bg-red-500/10 text-red-300 text-xs flex items-center gap-1.5"
+                        >
+                          <X className="w-4 h-4" />
+                          Reject
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}

@@ -85,4 +85,19 @@ export class CareerController {
       return sendError(res, 'SUSPEND_FAILED', err.message || 'Failed to suspend account', 400);
     }
   }
+
+  /**
+   * Candidate: Check application status
+   * GET /api/v1/careers/status?query=...
+   */
+  public static async checkStatus(req: Request, res: Response) {
+    try {
+      const query = (req.query.query || req.query.id || req.query.email || req.query.phone) as string;
+      const result = await CareerService.getApplicationStatus(query);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      console.error('[CareerController.checkStatus error]', err);
+      return sendError(res, 'STATUS_CHECK_FAILED', err.message || 'Application not found', 404);
+    }
+  }
 }

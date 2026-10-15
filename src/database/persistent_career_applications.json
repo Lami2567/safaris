@@ -179,5 +179,33 @@
     "reviewed_at": "2026-10-15T18:58:07.205Z",
     "created_at": "2026-10-15T18:58:07.199Z",
     "updated_at": "2026-10-15T18:58:07.205Z"
+  },
+  {
+    "id": "app_ab1f7e55",
+    "applicant_type": "driver",
+    "user_id": "usr_drv_855048a2",
+    "full_name": "Ronald Mukwaya",
+    "email": "ronald.mukwaya@careers.mumwesafarisuganda.com",
+    "phone": "+256 701 445566",
+    "national_id": "CM9101445566RM",
+    "license_number": "UG-DL-445566",
+    "experience_years": 7,
+    "vehicle_make": "Toyota",
+    "vehicle_model": "Noah",
+    "vehicle_plate": "UBK 902Y",
+    "vehicle_tier": "comfort",
+    "languages": [
+      "English"
+    ],
+    "specialties": [
+      "Uganda Safaris"
+    ],
+    "documents": {},
+    "status": "APPROVED",
+    "rejection_reason": null,
+    "reviewed_by": "usr_adm_001",
+    "reviewed_at": "2026-10-15T21:23:42.924Z",
+    "created_at": "2026-10-15T21:23:42.921Z",
+    "updated_at": "2026-10-15T21:23:42.924Z"
   }
 ]

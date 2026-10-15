@@ -68,5 +68,28 @@
     "approved_by": "usr_adm_001",
     "approved_at": "2026-10-15T18:58:07.215Z",
     "rejection_reason": null
+  },
+  {
+    "id": "usr_drv_855048a2",
+    "vehicle_id": "veh_1d2151",
+    "is_online": false,
+    "is_available": false,
+    "is_approved": true,
+    "approval_status": "APPROVED",
+    "current_lat": 0.3136,
+    "current_lng": 32.5811,
+    "heading": 0,
+    "speed": 0,
+    "license_number": "UG-DL-445566",
+    "national_id": "CM9101445566RM",
+    "driving_permit_number": "UG-DL-445566",
+    "years_of_experience": 7,
+    "acceptance_rate": 100,
+    "today_earnings_ugx": 0,
+    "application_date": "2026-10-15T21:23:42.918Z",
+    "updated_at": "2026-10-15T21:23:42.918Z",
+    "approved_by": "usr_adm_001",
+    "approved_at": "2026-10-15T21:23:42.930Z",
+    "rejection_reason": null
   }
 ]

@@ -28,6 +28,10 @@ const NAV_ITEMS = [
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
 
+  if (pathname?.startsWith('/careers')) {
+    return null;
+  }
+
   return (
     <aside className="w-64 min-h-screen bg-black border-r border-white/10 flex flex-col justify-between shrink-0 select-none">
       <div>

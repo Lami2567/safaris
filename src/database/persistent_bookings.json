@@ -62,5 +62,21 @@
     "payment_status": "PENDING",
     "created_at": "2026-10-15T18:58:06.384Z",
     "updated_at": "2026-10-15T18:58:06.384Z"
+  },
+  {
+    "id": "tb_896a59e5",
+    "customer_id": "usr_ug_001",
+    "destination_id": "dest_bwindi",
+    "package_id": "pkg_bwindi_3d",
+    "tour_guide_id": null,
+    "booking_status": "PENDING_PAYMENT",
+    "travel_date": "2026-10-15",
+    "guests_count": 2,
+    "total_ugx": 5600000,
+    "special_requests": "",
+    "payment_method": "MTN Mobile Money",
+    "payment_status": "PENDING",
+    "created_at": "2026-10-15T21:23:42.587Z",
+    "updated_at": "2026-10-15T21:23:42.587Z"
   }
 ]

@@ -459,4 +459,60 @@ export class CareerService {
       message: `Account ${user.full_name} has been suspended from platform operations.`,
     };
   }
+
+  /**
+   * Check status of an application by ID, email, or phone
+   */
+  public static async getApplicationStatus(query: string): Promise<any> {
+    if (!query || !query.trim()) {
+      throw new Error('Please provide an Application ID, email, or phone number to check status.');
+    }
+    const cleanQuery = query.trim().toLowerCase();
+    const cleanPhone = normalizeUgandaPhone(query.trim());
+
+    for (const app of localStore.career_applications.values()) {
+      if (
+        app.id.toLowerCase() === cleanQuery ||
+        app.email.toLowerCase() === cleanQuery ||
+        (app.phone && (app.phone === cleanPhone || app.phone === query.trim()))
+      ) {
+        return {
+          application_id: app.id,
+          applicant_type: app.applicant_type,
+          full_name: app.full_name,
+          status: app.status,
+          rejection_reason: app.status === 'REJECTED' ? app.rejection_reason : null,
+          created_at: app.created_at,
+          reviewed_at: app.reviewed_at,
+        };
+      }
+    }
+
+    // Fallback: check database if connected
+    if (db.isPostgresConnected) {
+      try {
+        const res = await db.query(
+          `SELECT id, applicant_type, full_name, status, rejection_reason, created_at, reviewed_at
+           FROM career_applications
+           WHERE LOWER(id) = $1 OR LOWER(email) = $1 OR phone = $2 OR phone = $3
+           LIMIT 1`,
+          [cleanQuery, cleanPhone, query.trim()]
+        );
+        if (res.rows && res.rows.length > 0) {
+          const row = res.rows[0];
+          return {
+            application_id: row.id,
+            applicant_type: row.applicant_type,
+            full_name: row.full_name,
+            status: row.status,
+            rejection_reason: row.status === 'REJECTED' ? row.rejection_reason : null,
+            created_at: row.created_at,
+            reviewed_at: row.reviewed_at,
+          };
+        }
+      } catch (_) {}
+    }
+
+    throw new Error('No application found with the provided reference ID, email, or phone number.');
+  }
 }
