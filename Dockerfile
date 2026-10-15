@@ -4,7 +4,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package*.json tsconfig.json ./
-RUN npm ci
+RUN npm ci || npm install --no-audit --no-fund
 
 COPY src ./src
 RUN npm run build
@@ -18,7 +18,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN (npm ci --omit=dev && npm cache clean --force) || (npm install --omit=dev --no-audit --no-fund && npm cache clean --force)
 
 COPY --from=builder /app/dist ./dist
 COPY src/database/schema.sql ./dist/database/schema.sql
