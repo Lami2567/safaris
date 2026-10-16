@@ -99,8 +99,8 @@ export default function OperationsPage() {
     setActionLoadingId(id);
     setApprovalFeedback(null);
     try {
-      await api.approveApplicant(id);
-      setApprovalFeedback({ text: 'Applicant credentials successfully approved and activated for operations.', type: 'success' });
+      const res = await api.approveApplicant(id);
+      setApprovalFeedback({ text: res.message || 'Applicant credentials approved. Activation email with OTP sent to candidate.', type: 'success' });
       await loadOperations();
     } catch (err: any) {
       setApprovalFeedback({ text: err.message || 'Approval failed', type: 'error' });

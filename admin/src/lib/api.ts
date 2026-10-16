@@ -109,4 +109,26 @@ export const api = {
   // Admin Account & Password Management
   changeAdminPassword: (data: { currentPassword: string; newPassword: string }) =>
     fetcher<any>('/admin/change-password', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Partner & Driver OTP Login and Live Dashboard
+  loginWithOtp: (email: string, otpCode: string) =>
+    fetcher<any>('/auth/login-with-otp', { method: 'POST', body: JSON.stringify({ email, otpCode }) }),
+  setupPassword: (email: string, setupToken: string, newPassword: string) =>
+    fetcher<any>('/auth/setup-password', { method: 'POST', body: JSON.stringify({ email, setupToken, newPassword }) }),
+  updateDriverLocation: (lat: number, lng: number, heading = 0, token?: string) =>
+    fetcher<any>('/drivers/location', {
+      method: 'POST',
+      body: JSON.stringify({ lat, lng, heading }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  setDriverAvailability: (isOnline: boolean, token?: string) =>
+    fetcher<any>('/drivers/status', {
+      method: 'POST',
+      body: JSON.stringify({ isOnline }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  getDriverDashboard: (token?: string) =>
+    fetcher<any>('/drivers/dashboard', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
 };

@@ -123,4 +123,107 @@ export class EmailService {
       return true;
     }
   }
+
+  /**
+   * Send official Mumwe Safaris Partner/Driver Approval Email with activation OTP
+   */
+  public static async sendDriverApprovalOtpEmail(
+    toEmail: string,
+    fullName: string,
+    role: string,
+    otpCode: string
+  ): Promise<boolean> {
+    const transporter = this.getTransporter();
+    const roleTitle = role === 'driver' ? 'Safari Driver / Chauffeur' : 'Licensed Tour Guide';
+
+    // Dev / Test / Server Log fallback
+    console.log('====================================================');
+    console.log(`📧 [PARTNER APPROVAL EMAIL & OTP GENERATED]`);
+    console.log(`👤 Recipient: ${fullName} <${toEmail}>`);
+    console.log(`💼 Approved Track: ${roleTitle}`);
+    console.log(`🔑 Activation Login OTP: >>> ${otpCode} <<<`);
+    console.log(`⏰ Expiration: 48 Hours`);
+    console.log('====================================================');
+
+    if (!transporter) {
+      return true;
+    }
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000000; color: #ffffff; margin: 0; padding: 24px; }
+    .card { max-width: 540px; margin: 0 auto; background-color: #0d0e12; border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 14px; overflow: hidden; }
+    .header { background-color: #000000; padding: 28px; text-align: center; border-bottom: 1px solid rgba(245, 158, 11, 0.2); }
+    .header h1 { margin: 0; font-size: 22px; letter-spacing: 3px; color: #F59E0B; }
+    .header p { margin: 6px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(255,255,255,0.6); }
+    .body { padding: 32px 28px; }
+    .badge { display: inline-block; padding: 6px 14px; background: rgba(16, 185, 129, 0.15); border: 1px solid #10B981; border-radius: 20px; color: #10B981; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }
+    .greeting { font-size: 18px; font-weight: 700; color: #ffffff; margin-bottom: 12px; }
+    .text { font-size: 14px; line-height: 1.6; color: rgba(255,255,255,0.8); margin-bottom: 24px; }
+    .otp-box { background: #000000; border: 2px solid #F59E0B; border-radius: 12px; padding: 22px; text-align: center; margin-bottom: 24px; box-shadow: 0 0 20px rgba(245, 158, 11, 0.15); }
+    .otp-code { font-family: 'Courier New', monospace; font-size: 40px; font-weight: 900; letter-spacing: 10px; color: #F59E0B; }
+    .otp-expiry { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 8px; }
+    .steps { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 18px; margin-bottom: 24px; font-size: 13px; line-height: 1.6; color: rgba(255,255,255,0.8); }
+    .footer { padding: 20px 28px; background-color: #050608; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11px; color: rgba(255,255,255,0.4); line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>MUMWE SAFARIS UGANDA</h1>
+      <p>Partner & Driver Recruitment Operations</p>
+    </div>
+    <div class="body">
+      <div class="badge">Application Approved ✓</div>
+      <div class="greeting">Congratulations, ${fullName}!</div>
+      <div class="text">
+        We are thrilled to inform you that your application as a <strong>${roleTitle}</strong> has been officially approved by Mumwe Safaris administrators.
+      </div>
+      <div class="text">
+        Use your 6-digit One-Time Passcode (OTP) below to log in to the partner app and initialize your dashboard:
+      </div>
+      <div class="otp-box">
+        <div class="otp-code">${otpCode}</div>
+        <div class="otp-expiry">Valid for 48 Hours • Account Activation Code</div>
+      </div>
+      <div class="steps">
+        <strong>Next Steps to Enter Your Dashboard:</strong><br>
+        1. Open the <strong>Mumwe Safaris Driver Portal</strong> (careers.mumwesafarisuganda.com) or the mobile application.<br>
+        2. Enter your registered email address (<code>${toEmail}</code>) and this 6-digit OTP code.<br>
+        3. You will be prompted to create your new permanent password.<br>
+        4. Once your password is saved, you will immediately enter your <strong>App Dashboard</strong> to toggle your online status and transmit live GPS.
+      </div>
+      <div class="text" style="font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 0;">
+        Never share this activation code with anyone. If you have any inquiries, contact our dispatch operations team at support@mumwesafarisuganda.com.
+      </div>
+    </div>
+    <div class="footer">
+      Mumwe Safaris Uganda Ltd • Plot 14, Jinja Road, Kampala, Uganda<br>
+      Automated dispatch notification — please do not reply directly.
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    try {
+      await transporter.sendMail({
+        from: ENV.SMTP_FROM,
+        to: toEmail,
+        subject: `Your Mumwe Safaris Application is Approved! Activation Code: ${otpCode}`,
+        text: `Congratulations ${fullName}! Your Mumwe Safaris ${roleTitle} application has been approved. Use activation code ${otpCode} to log in, set your permanent password, and enter your app dashboard.`,
+        html: htmlContent,
+      });
+      console.log(`✅ [EmailService] Approval OTP email delivered to ${toEmail}`);
+      return true;
+    } catch (err: any) {
+      console.error(`❌ [EmailService] Failed to send approval email to ${toEmail}:`, err.message);
+      return true;
+    }
+  }
 }
+

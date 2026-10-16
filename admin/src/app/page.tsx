@@ -17,13 +17,28 @@ import {
   ArrowUpRight,
   RefreshCw,
 } from 'lucide-react';
+import CareersPage from './careers/page';
 
 export default function OverviewPage() {
+  const [isCareersHost, setIsCareersHost] = useState(false);
   const [data, setData] = useState<any>(null);
   const [config, setConfig] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [updatingFlag, setUpdatingFlag] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname.toLowerCase();
+      if (host.includes('careers.mumwesafarisuganda.com') || host.startsWith('careers.')) {
+        setIsCareersHost(true);
+      }
+    }
+  }, []);
+
+  if (isCareersHost) {
+    return <CareersPage />;
+  }
 
   const loadData = async () => {
     try {

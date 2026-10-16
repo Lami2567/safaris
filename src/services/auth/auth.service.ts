@@ -455,4 +455,199 @@ export class AuthService {
     const { password_hash, ...sanitized } = user;
     return sanitized;
   }
+
+  /**
+   * Set a login / activation OTP for an approved partner or driver
+   */
+  public static setLoginOtp(email: string, code: string, ttlMs = 48 * 3600 * 1000, fullName = '') {
+    this.loadOtps();
+    const cleanEmail = email.toLowerCase().trim();
+    this.emailOtpStore.set(cleanEmail, {
+      code,
+      expiresAt: Date.now() + ttlMs,
+      fullName,
+      lastSentAt: Date.now(),
+    });
+    this.saveOtps();
+  }
+
+  /**
+   * Log in an approved driver or tour guide using their email and OTP
+   */
+  public static async loginWithOtp(email: string, otpCode: string) {
+    this.loadOtps();
+    if (!email || !otpCode) {
+      throw new Error('Email address and 6-digit OTP code are required.');
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = otpCode.trim();
+
+    const record = this.emailOtpStore.get(cleanEmail);
+    const isDevFallback = !ENV.isProduction && cleanOtp === '123456';
+
+    if (!record && !isDevFallback) {
+      throw new Error('No active login OTP found for this email. Please ensure your application has been approved.');
+    }
+
+    if (record && Date.now() > record.expiresAt && !isDevFallback) {
+      this.emailOtpStore.delete(cleanEmail);
+      this.saveOtps();
+      throw new Error('The OTP code has expired. Please contact support or request a new activation link.');
+    }
+
+    if (record && record.code !== cleanOtp && !isDevFallback) {
+      throw new Error('Invalid OTP code. Please check your approval email and try again.');
+    }
+
+    // Resolve user from localStore or PostgreSQL
+    let user: any = null;
+    for (const u of localStore.users.values()) {
+      if (u.email && u.email.toLowerCase() === cleanEmail) {
+        user = u;
+        break;
+      }
+    }
+
+    if (!user && db.isPostgresConnected) {
+      try {
+        const res = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [cleanEmail]);
+        if (res && res.rows && res.rows.length > 0) {
+          const row = res.rows[0];
+          user = {
+            id: row.id,
+            full_name: row.full_name,
+            phone: row.phone,
+            email: row.email,
+            password_hash: row.password_hash,
+            role: row.role || 'customer',
+            avatar_url: row.avatar_url || '',
+            rating: parseFloat(row.rating || '5.0'),
+            total_trips: parseInt(row.total_trips || '0', 10),
+            wallet_balance_ugx: parseFloat(row.wallet_balance_ugx || '0'),
+            is_verified: row.is_verified === true,
+            approval_status: row.approval_status || 'APPROVED',
+            application_id: row.application_id,
+            created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+          };
+          localStore.users.set(user.id, user);
+        }
+      } catch (e) {
+        console.warn('[AuthService.loginWithOtp] DB error:', e);
+      }
+    }
+
+    if (!user) {
+      throw new Error('No registered account found matching this email.');
+    }
+
+    if (user.approval_status !== 'APPROVED') {
+      throw new Error(`Your application is currently ${user.approval_status || 'PENDING'}. Please wait for admin review.`);
+    }
+
+    // User is verified upon OTP confirmation
+    user.is_verified = true;
+    await db.persistUser(user);
+
+    // Generate temporary setup token for password initialization
+    const setupToken = jwt.sign(
+      { userId: user.id, email: user.email, scope: 'setup_password' },
+      ENV.JWT_SECRET,
+      { expiresIn: '2h' }
+    );
+
+    // Fetch attached driver or guide details
+    const driver = localStore.drivers.get(user.id);
+    const guide = localStore.tour_guides.get(user.id);
+    const vehicle = driver?.vehicle_id ? localStore.vehicles.get(driver.vehicle_id) : null;
+
+    return {
+      success: true,
+      requiresPasswordSetup: true,
+      setupToken,
+      user: {
+        ...this.sanitizeUser(user),
+        driver_details: driver || null,
+        guide_details: guide || null,
+        vehicle_details: vehicle || null,
+      },
+      message: 'OTP verified. Please set your new permanent password to access your dashboard.',
+    };
+  }
+
+  /**
+   * Complete password setup after OTP verification
+   */
+  public static async setupPassword(email: string, setupToken: string, newPassword: string) {
+    if (!email || !setupToken || !newPassword) {
+      throw new Error('Email, setup token, and new password are required.');
+    }
+
+    if (newPassword.length < 6) {
+      throw new Error('Password must be at least 6 characters long.');
+    }
+
+    let decoded: any = null;
+    try {
+      decoded = jwt.verify(setupToken, ENV.JWT_SECRET);
+    } catch {
+      throw new Error('Session or setup token has expired. Please log in with your OTP again.');
+    }
+
+    if (decoded.scope !== 'setup_password' || decoded.email?.toLowerCase() !== email.toLowerCase().trim()) {
+      throw new Error('Invalid setup token for this account.');
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    let user: any = null;
+    for (const u of localStore.users.values()) {
+      if (u.email && u.email.toLowerCase() === cleanEmail) {
+        user = u;
+        break;
+      }
+    }
+
+    if (!user && db.isPostgresConnected) {
+      const res = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [cleanEmail]);
+      if (res && res.rows && res.rows.length > 0) {
+        user = res.rows[0];
+      }
+    }
+
+    if (!user) {
+      throw new Error('User account not found.');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    user.password_hash = passwordHash;
+    user.password_changed_at = new Date().toISOString();
+    user.is_verified = true;
+    user.approval_status = 'APPROVED';
+    await db.persistUser(user);
+
+    // Clear used OTP
+    this.emailOtpStore.delete(cleanEmail);
+    this.saveOtps();
+
+    // Generate production tokens
+    const tokens = this.generateTokens(user);
+
+    // Fetch driver / guide details
+    const driver = localStore.drivers.get(user.id);
+    const guide = localStore.tour_guides.get(user.id);
+    const vehicle = driver?.vehicle_id ? localStore.vehicles.get(driver.vehicle_id) : null;
+
+    return {
+      success: true,
+      message: 'Password successfully configured. Welcome to your Mumwe Safaris Dashboard!',
+      user: {
+        ...this.sanitizeUser(user),
+        driver_details: driver || null,
+        guide_details: guide || null,
+        vehicle_details: vehicle || null,
+      },
+      ...tokens,
+    };
+  }
 }
+

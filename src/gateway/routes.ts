@@ -86,6 +86,8 @@ apiRouter.get('/telemetry/trips/:tripId/history', TelemetryController.getTripHis
 // -------------------------------------------------------------
 apiRouter.post('/auth/register', AuthController.register);
 apiRouter.post('/auth/login', AuthController.login);
+apiRouter.post('/auth/login-with-otp', AuthController.loginWithOtp);
+apiRouter.post('/auth/setup-password', AuthController.setupPassword);
 apiRouter.post('/auth/verify-email-otp', AuthController.verifyEmailOtp);
 apiRouter.post('/auth/resend-email-otp', AuthController.resendEmailOtp);
 apiRouter.get('/auth/me', authenticate, AuthController.me);

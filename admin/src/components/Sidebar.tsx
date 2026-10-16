@@ -28,6 +28,13 @@ const NAV_ITEMS = [
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
 
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname.toLowerCase();
+    if (host.includes('careers') || window.location.pathname.startsWith('/careers')) {
+      return null;
+    }
+  }
+
   if (pathname?.startsWith('/careers')) {
     return null;
   }

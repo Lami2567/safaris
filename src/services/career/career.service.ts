@@ -2,6 +2,8 @@ import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 import { localStore, db } from '../../config/database';
 import { NotificationService } from '../notification/notification.service';
+import { AuthService } from '../auth/auth.service';
+import { EmailService } from '../email/email.service';
 import { normalizeUgandaPhone } from '../../shared/phone';
 
 export interface CareerApplicationData {
@@ -266,6 +268,7 @@ export class CareerService {
     await db.persistCareerApplication(app);
 
     const userId = app.user_id;
+    let generatedOtp: string | null = null;
     if (userId) {
       // 1. Update user
       const user = localStore.users.get(userId);
@@ -301,17 +304,29 @@ export class CareerService {
         }
       }
 
-      // 4. Send official in-app / push notification to candidate
+      // 4. Generate 6-digit One-Time Passcode (OTP) and register in AuthService
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      generatedOtp = otpCode;
+      AuthService.setLoginOtp(app.email, otpCode, 48 * 3600 * 1000, app.full_name);
+
+      // 5. Send official approval email with OTP to the applicant
+      try {
+        await EmailService.sendDriverApprovalOtpEmail(app.email, app.full_name, app.applicant_type, otpCode);
+      } catch (emailErr) {
+        console.error('[CareerService.approveApplication Email Error]', emailErr);
+      }
+
+      // 6. Send official in-app / push notification to candidate
       NotificationService.createNotification({
         userId,
         title: 'Mumwe Safaris Application Approved! 🎉',
-        message: `Congratulations ${app.full_name}, your credentials have been verified by Mumwe Safaris administrators. You are now authorized to go online and accept bookings.`,
+        message: `Congratulations ${app.full_name}, your credentials have been verified by Mumwe Safaris administrators. Use your activation code to log in and access your dashboard.`,
         type: 'ACCOUNT',
-        metadata: { applicationId, applicantType: app.applicant_type, status: 'APPROVED' },
+        metadata: { applicationId, applicantType: app.applicant_type, status: 'APPROVED', otpCode },
       }).catch((err) => console.error('[Notification Error]', err));
     }
 
-    // 5. Record Admin Audit Log
+    // 7. Record Admin Audit Log
     const auditId = `aud_${uuidv4().substring(0, 8)}`;
     const auditRecord = {
       id: auditId,
@@ -325,6 +340,7 @@ export class CareerService {
         applicantType: app.applicant_type,
         email: app.email,
         phone: app.phone,
+        otpSent: Boolean(generatedOtp),
       },
       ip_address: adminIp || '127.0.0.1',
       created_at: new Date().toISOString(),
@@ -344,7 +360,8 @@ export class CareerService {
       success: true,
       applicationId,
       status: 'APPROVED',
-      message: `${app.full_name} (${app.applicant_type}) has been approved and activated for operations.`,
+      otpCode: generatedOtp,
+      message: `${app.full_name} (${app.applicant_type}) has been approved and activated for operations. An activation email with one-time login OTP has been dispatched to ${app.email}.`,
     };
   }
 

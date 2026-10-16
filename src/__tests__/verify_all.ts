@@ -7,6 +7,8 @@ import { TourGuideService } from '../services/tour_guide/tour_guide.service';
 import { DeliveryService } from '../services/delivery/delivery.service';
 import { PaymentService } from '../services/payment/payment.service';
 import { AppConfigService } from '../services/app_config/app_config.service';
+import { DriverService } from '../services/driver/driver.service';
+import { localStore } from '../config/database';
 import { seedUgandaData } from '../database/seed';
 
 async function runTests() {
@@ -316,10 +318,40 @@ async function runTests() {
   }
   console.log(`✅ 16. Candidate Application Status Inquiry verified (Found: ${candidateStatus.full_name}, Status: ${candidateStatus.status}).`);
 
-  console.log('\n🎉 ALL 16 PRODUCTION READINESS INTEGRATION TESTS PASSED CLEANLY!\n');
+  // 17. Test Approved Driver Login with OTP, Password Setup, and Live GPS Telemetry
+  if (!approveRes.otpCode) {
+    throw new Error('Approval did not generate an OTP code.');
+  }
+  const otpLoginRes = await AuthService.loginWithOtp('ronald.mukwaya@careers.mumwesafarisuganda.com', approveRes.otpCode);
+  if (!otpLoginRes.success || !otpLoginRes.requiresPasswordSetup || !otpLoginRes.setupToken) {
+    throw new Error('Driver OTP login failed or did not prompt for password setup.');
+  }
+  console.log(`✅ 17a. Approved Driver OTP Login verified (Prompted to create password).`);
+
+  const setPwdRes = await AuthService.setupPassword(
+    'ronald.mukwaya@careers.mumwesafarisuganda.com',
+    otpLoginRes.setupToken,
+    'SafariDriver2026!#'
+  );
+  if (!setPwdRes.success || !setPwdRes.accessToken) {
+    throw new Error('Driver password setup failed.');
+  }
+  console.log(`✅ 17b. Permanent Password Setup verified (Auth token issued for Dashboard).`);
+
+  // Driver transmits live GPS coordinates
+  const driverId = setPwdRes.user.id;
+  DriverService.setAvailability(driverId, true);
+  DriverService.updateLocation(driverId, 0.3312, 32.5714, 45);
+
+  // Admin checks live fleet map
+  const liveFleet = Array.from(localStore.drivers.values()).find(d => d.id === driverId);
+  if (!liveFleet || liveFleet.current_lat !== 0.3312 || liveFleet.current_lng !== 32.5714 || !liveFleet.is_online) {
+    throw new Error('Live driver location did not synchronize to fleet registry.');
+  }
+  console.log(`✅ 17c. Live Driver GPS Location Transmission verified on Admin Fleet Map (${liveFleet.current_lat}, ${liveFleet.current_lng}, Online: ${liveFleet.is_online}).`);
+
+  console.log('\n🎉 ALL 17 PRODUCTION READINESS INTEGRATION TESTS PASSED CLEANLY!\n');
 }
-
-
 
 runTests().catch((err) => {
   console.error('\n❌ Verification Suite Failed:', err);

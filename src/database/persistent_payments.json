@@ -103,5 +103,26 @@
     "dpo_result_explanation": "DPO Pay credentials not configured for sandbox environment. Please configure DPO_COMPANY_TOKEN in backend environment.",
     "created_at": "2026-10-15T21:23:42.640Z",
     "updated_at": "2026-10-15T21:23:42.640Z"
+  },
+  {
+    "id": "pay_00ab3032",
+    "transaction_id": "SAFARIS_DELIVERY_1792143735753_4004",
+    "user_id": "usr_ug_001",
+    "reference_type": "DELIVERY",
+    "reference_id": "del_c06d9b1f",
+    "amount_ugx": 10700,
+    "currency": "UGX",
+    "payment_method": "MTN_MOMO",
+    "phone": "+256 772 123456",
+    "dpo_trans_token": "",
+    "dpo_trans_ref": "SAFARIS_DELIVERY_1792143735753_4004",
+    "payment_url": "",
+    "status": "FAILED",
+    "environment": "sandbox",
+    "failure_reason": "DPO Pay credentials not configured for sandbox environment. Please configure DPO_COMPANY_TOKEN in backend environment.",
+    "dpo_result_code": "900",
+    "dpo_result_explanation": "DPO Pay credentials not configured for sandbox environment. Please configure DPO_COMPANY_TOKEN in backend environment.",
+    "created_at": "2026-10-16T09:42:15.754Z",
+    "updated_at": "2026-10-16T09:42:15.754Z"
   }
 ]

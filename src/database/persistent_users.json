@@ -60,7 +60,7 @@
     "full_name": "Safaris Admin Director",
     "phone": "+256 700 000001",
     "email": "admin@safaris.ug",
-    "password_hash": "$2a$10$PcU/GWQOwR/JRnB96ogMSuDdY/pqJbvBm3vLHChoi4O5Xb8rvh/yq",
+    "password_hash": "$2a$10$OGoCCayi3xJ8KVs.uAu3meiEkgqPHguLvvPIUqKwnzXu5J41Bq0Na",
     "role": "admin",
     "avatar_url": "",
     "rating": 5,
@@ -68,8 +68,8 @@
     "wallet_balance_ugx": 10000000,
     "is_verified": true,
     "created_at": "2026-09-29T14:19:40.130Z",
-    "password_changed_at": "2026-10-15T21:23:43.562Z",
-    "updated_at": "2026-10-15T21:23:43.562Z"
+    "password_changed_at": "2026-10-16T09:42:16.374Z",
+    "updated_at": "2026-10-16T09:42:16.374Z"
   },
   {
     "id": "usr_05ba45ca",
@@ -90,7 +90,7 @@
     "full_name": "Ronald Mukwaya",
     "phone": "+256 701 445566",
     "email": "ronald.mukwaya@careers.mumwesafarisuganda.com",
-    "password_hash": "$2a$10$0cn9cIbYpEl5FMOwLMwfGe1RpRs9nn1qjyyd2jURnFlLip7i0Gt7W",
+    "password_hash": "$2a$10$xS1Zcc8rlPk2ObFfrLU/B.QytkYU9uSdATr5L3QjHMALWqYH0XZpy",
     "role": "driver",
     "avatar_url": "",
     "rating": 5,
@@ -98,8 +98,8 @@
     "wallet_balance_ugx": 0,
     "is_verified": true,
     "approval_status": "APPROVED",
-    "application_id": "app_ab1f7e55",
-    "password_changed_at": "2026-10-15T21:23:42.913Z",
-    "created_at": "2026-10-15T21:23:42.913Z"
+    "application_id": "app_b538dda0",
+    "password_changed_at": "2026-10-16T09:42:16.463Z",
+    "created_at": "2026-10-16T09:42:16.018Z"
   }
 ]

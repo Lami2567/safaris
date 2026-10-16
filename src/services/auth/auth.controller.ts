@@ -57,6 +57,32 @@ export class AuthController {
     }
   }
 
+  public static async loginWithOtp(req: Request, res: Response) {
+    try {
+      const { email, otpCode } = req.body;
+      if (!email || !otpCode) {
+        return sendError(res, 'VALIDATION_ERROR', 'Email and 6-digit OTP code are required.');
+      }
+      const result = await AuthService.loginWithOtp(email, otpCode);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'OTP_LOGIN_FAILED', err.message, 400);
+    }
+  }
+
+  public static async setupPassword(req: Request, res: Response) {
+    try {
+      const { email, setupToken, newPassword } = req.body;
+      if (!email || !setupToken || !newPassword) {
+        return sendError(res, 'VALIDATION_ERROR', 'Email, setup token, and new password are required.');
+      }
+      const result = await AuthService.setupPassword(email, setupToken, newPassword);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'PASSWORD_SETUP_FAILED', err.message, 400);
+    }
+  }
+
   public static me(req: any, res: Response) {
     try {
       const user = req.user;

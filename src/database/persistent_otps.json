@@ -1,8 +1,1 @@
-{
-  "validation_test_user@example.com": {
-    "code": "488482",
-    "expiresAt": 1791027698449,
-    "fullName": "Test Validation User",
-    "lastSentAt": 1791026798449
-  }
-}
+{}
