@@ -29,12 +29,30 @@ async function fetcher<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
   const json = await res.json();
   if (!res.ok || !json.success) {
+    if (res.status === 401 && typeof window !== 'undefined' && endpoint !== '/admin/login') {
+      localStorage.removeItem('safaris_admin_token');
+      window.dispatchEvent(new Event('safaris-admin-auth-change'));
+    }
     throw new Error(json.error?.message || json.message || `API request failed with status ${res.status}`);
   }
   return json.data;
 }
 
 export const api = {
+  // Admin Login & Credentials Setup
+  getAdminAuthStatus: () =>
+    fetcher<{ configured: boolean; authenticated: boolean; username?: string }>('/admin/auth-status'),
+  setupAdminCredentials: (data: { username: string; password: string; currentPassword?: string }) =>
+    fetcher<{ configured: boolean; username: string; updatedAt: string; message: string }>('/admin/setup-credentials', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  adminLogin: (data: { username: string; password: string }) =>
+    fetcher<{ token: string; username: string }>('/admin/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   // System & KPIs
   getStats: () => fetcher<any>('/admin/stats'),
   getHealth: () => fetcher<any>('/health'),

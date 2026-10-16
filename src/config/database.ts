@@ -319,6 +319,18 @@ class DatabaseManager {
         }
       }
 
+      // 10. App Config (admin_auth_config, pricing_matrix, master_config)
+      const cfgRes = await this.pool.query('SELECT key, value, updated_at FROM app_config');
+      if (cfgRes?.rows?.length > 0) {
+        for (const row of cfgRes.rows) {
+          localStore.app_config.set(row.key, {
+            key: row.key,
+            value: row.value,
+            updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+          });
+        }
+      }
+
       this.saveAllToDisk();
       console.log('📦 [Database] All business tables synchronized from PostgreSQL to memory & disk.');
     } catch (err) {

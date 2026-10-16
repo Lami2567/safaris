@@ -79,4 +79,34 @@ export class AdminController {
       return sendError(res, 'PASSWORD_CHANGE_FAILED', err.message || 'Failed to update password', 400);
     }
   }
+
+  public static async getAuthStatus(req: Request, res: Response) {
+    try {
+      const status = await AdminService.getAdminAuthStatus(req.headers.authorization);
+      return sendSuccess(res, status);
+    } catch (err: any) {
+      return sendError(res, 'AUTH_STATUS_FAILED', err.message || 'Failed to fetch auth status', 500);
+    }
+  }
+
+  public static async setupCredentials(req: AuthenticatedRequest, res: Response) {
+    try {
+      const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+      const { username, password, currentPassword } = req.body;
+      const result = await AdminService.setupAdminCredentials({ username, password, currentPassword }, ip);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'SETUP_CREDENTIALS_FAILED', err.message || 'Failed to configure admin credentials', 400);
+    }
+  }
+
+  public static async login(req: Request, res: Response) {
+    try {
+      const { username, password } = req.body;
+      const result = await AdminService.loginAdmin(username, password);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'ADMIN_LOGIN_FAILED', err.message || 'Invalid username or password', 401);
+    }
+  }
 }

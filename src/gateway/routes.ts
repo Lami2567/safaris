@@ -56,6 +56,9 @@ apiRouter.put('/app-config/version', authenticate, requireRole('admin'), AppConf
 // -------------------------------------------------------------
 // Admin Hub & Controls (Protected with persistent Admin Auth)
 // -------------------------------------------------------------
+apiRouter.get('/admin/auth-status', AdminController.getAuthStatus);
+apiRouter.post('/admin/login', AdminController.login);
+apiRouter.post('/admin/setup-credentials', authenticate, requireRole('admin'), AdminController.setupCredentials);
 apiRouter.get('/admin/stats', authenticate, requireRole('admin'), AdminController.getStats);
 apiRouter.get('/admin/pricing', authenticate, requireRole('admin'), AdminController.getPricing);
 apiRouter.put('/admin/pricing', authenticate, requireRole('admin'), AdminController.updatePricing);

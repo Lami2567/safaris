@@ -1,10 +1,18 @@
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { localStore, db } from '../../config/database';
 import { ENV } from '../../config/env';
 
 const PERSISTENT_CONFIG_FILE = path.resolve(__dirname, '../../database/persistent_config.json');
+
+export interface AdminAuthConfig {
+  configured: boolean;
+  username: string;
+  passwordHash: string;
+  updatedAt: string;
+}
 
 export interface VehiclePricingItem {
   baseFare: number;
@@ -400,6 +408,266 @@ export class AdminService {
         approval_status: u.approval_status || 'APPROVED',
         created_at: u.created_at,
       }));
+  }
+
+  // -----------------------------------------------------------
+  // Admin Login Credentials & Optional Enforcement
+  // -----------------------------------------------------------
+  public static isAdminAuthConfiguredSync(): boolean {
+    const saved = localStore.app_config.get('admin_auth_config');
+    return Boolean(saved?.value?.configured && saved?.value?.username && saved?.value?.passwordHash);
+  }
+
+  public static async getAdminAuthConfig(): Promise<AdminAuthConfig> {
+    if (db.isPostgresConnected) {
+      try {
+        const res = await db.query(`SELECT value FROM app_config WHERE key = 'admin_auth_config'`);
+        if (res && res.rows && res.rows.length > 0 && res.rows[0].value) {
+          const val = res.rows[0].value;
+          if (val && typeof val === 'object' && val.configured === true && val.username && val.passwordHash) {
+            localStore.app_config.set('admin_auth_config', {
+              key: 'admin_auth_config',
+              value: val,
+              updated_at: val.updatedAt || new Date().toISOString(),
+            });
+            return {
+              configured: true,
+              username: String(val.username),
+              passwordHash: String(val.passwordHash),
+              updatedAt: String(val.updatedAt || ''),
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('[AdminService.getAdminAuthConfig] PostgreSQL query error:', err);
+      }
+    }
+
+    const saved = localStore.app_config.get('admin_auth_config');
+    if (saved?.value && saved.value.configured === true && saved.value.username && saved.value.passwordHash) {
+      return {
+        configured: true,
+        username: String(saved.value.username),
+        passwordHash: String(saved.value.passwordHash),
+        updatedAt: String(saved.value.updatedAt || ''),
+      };
+    }
+
+    try {
+      if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
+        const raw = fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed?.admin_auth_config?.configured === true && parsed.admin_auth_config.username && parsed.admin_auth_config.passwordHash) {
+          localStore.app_config.set('admin_auth_config', {
+            key: 'admin_auth_config',
+            value: parsed.admin_auth_config,
+            updated_at: parsed.admin_auth_config.updatedAt || new Date().toISOString(),
+          });
+          return {
+            configured: true,
+            username: String(parsed.admin_auth_config.username),
+            passwordHash: String(parsed.admin_auth_config.passwordHash),
+            updatedAt: String(parsed.admin_auth_config.updatedAt || ''),
+          };
+        }
+      }
+    } catch (_) {}
+
+    return {
+      configured: false,
+      username: '',
+      passwordHash: '',
+      updatedAt: '',
+    };
+  }
+
+  public static async getAdminAuthStatus(authHeader?: string) {
+    const config = await this.getAdminAuthConfig();
+    if (!config.configured) {
+      return {
+        configured: false,
+        authenticated: true,
+        username: '',
+      };
+    }
+
+    let authenticated = false;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const payload = jwt.verify(token, ENV.JWT_SECRET) as any;
+        if (payload && payload.role === 'admin' && (!config.updatedAt || !payload.authVersion || payload.authVersion === config.updatedAt)) {
+          authenticated = true;
+        }
+      } catch (_) {
+        authenticated = false;
+      }
+    }
+
+    return {
+      configured: true,
+      authenticated,
+      username: authenticated ? config.username : undefined,
+    };
+  }
+
+  public static async setupAdminCredentials(
+    params: { username: string; password: string; currentPassword?: string },
+    ipAddress?: string
+  ) {
+    const cleanUsername = (params.username || '').trim();
+    const cleanPassword = params.password || '';
+
+    if (!cleanUsername) {
+      throw new Error('Username is required.');
+    }
+    if (!cleanPassword || cleanPassword.length < 4) {
+      throw new Error('Password must be at least 4 characters long.');
+    }
+
+    const existingConfig = await this.getAdminAuthConfig();
+    if (existingConfig.configured) {
+      if (!params.currentPassword) {
+        throw new Error('Current password is required to update existing login credentials.');
+      }
+      const matches = await bcrypt.compare(params.currentPassword, existingConfig.passwordHash);
+      if (!matches) {
+        throw new Error('Current password is incorrect.');
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(cleanPassword, 10);
+    const updatedAt = new Date().toISOString();
+    const newConfig: AdminAuthConfig = {
+      configured: true,
+      username: cleanUsername,
+      passwordHash,
+      updatedAt,
+    };
+
+    localStore.app_config.set('admin_auth_config', {
+      key: 'admin_auth_config',
+      value: newConfig,
+      updated_at: updatedAt,
+    });
+
+    if (db.isPostgresConnected) {
+      try {
+        await db.query(
+          `INSERT INTO app_config (key, value, updated_at)
+           VALUES ('admin_auth_config', $1, CURRENT_TIMESTAMP)
+           ON CONFLICT (key)
+           DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+          [JSON.stringify(newConfig)]
+        );
+      } catch (err) {
+        console.error('[AdminService.setupAdminCredentials] PostgreSQL sync error:', err);
+      }
+    }
+
+    try {
+      let dump: Record<string, any> = {};
+      if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
+        try {
+          dump = JSON.parse(fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8'));
+        } catch (_) {}
+      }
+      dump.admin_auth_config = newConfig;
+      const dir = path.dirname(PERSISTENT_CONFIG_FILE);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify(dump, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('[AdminService] Could not write persistent admin_auth_config', e);
+    }
+
+    // Sync admin user record if present
+    const adminUser = localStore.users.get('usr_adm_001');
+    if (adminUser) {
+      adminUser.password_hash = passwordHash;
+      adminUser.password_changed_at = updatedAt;
+      adminUser.updated_at = updatedAt;
+      await db.persistUser(adminUser);
+    }
+
+    // Record in admin audit logs
+    const auditId = `aud_${Date.now()}_cred`;
+    const auditRecord = {
+      id: auditId,
+      admin_id: 'usr_adm_001',
+      action: 'ADMIN_SET_LOGIN_CREDENTIALS',
+      resource_type: 'ADMIN_AUTH',
+      resource_id: 'usr_adm_001',
+      details: {
+        username: cleanUsername,
+        timestamp: updatedAt,
+      },
+      ip_address: ipAddress || '127.0.0.1',
+      created_at: updatedAt,
+    };
+    localStore.admin_audit_logs.set(auditId, auditRecord);
+    if (db.isPostgresConnected) {
+      try {
+        await db.query(
+          `INSERT INTO admin_audit_logs (id, admin_id, action, resource_type, resource_id, details, ip_address, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)`,
+          [auditRecord.id, auditRecord.admin_id, auditRecord.action, auditRecord.resource_type, auditRecord.resource_id, JSON.stringify(auditRecord.details), auditRecord.ip_address]
+        );
+      } catch (_) {}
+    }
+
+    return {
+      configured: true,
+      username: cleanUsername,
+      updatedAt,
+      message: 'Admin login username and password saved. Login is now active.',
+    };
+  }
+
+  public static async loginAdmin(username: string, password: string) {
+    const config = await this.getAdminAuthConfig();
+    if (!config.configured) {
+      throw new Error('Admin login credentials have not been set yet.');
+    }
+
+    if (!username || !password) {
+      throw new Error('Please enter both username and password.');
+    }
+
+    const cleanUsername = username.trim();
+    if (cleanUsername.toLowerCase() !== config.username.trim().toLowerCase()) {
+      throw new Error('Invalid username or password.');
+    }
+
+    const isMatch = await bcrypt.compare(password, config.passwordHash);
+    if (!isMatch) {
+      throw new Error('Invalid username or password.');
+    }
+
+    const token = jwt.sign(
+      {
+        userId: 'usr_adm_001',
+        role: 'admin',
+        username: config.username,
+        email: 'admin@safaris.ug',
+        phone: '+256 700 000001',
+        adminAuth: true,
+        authVersion: config.updatedAt,
+      },
+      ENV.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return {
+      token,
+      username: config.username,
+      user: {
+        id: 'usr_adm_001',
+        username: config.username,
+        role: 'admin',
+      },
+    };
   }
 
   // -----------------------------------------------------------

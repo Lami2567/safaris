@@ -60,38 +60,60 @@ export default function SettingsPage() {
     city: 'Kampala',
   });
 
+  const [isAuthConfigured, setIsAuthConfigured] = useState(false);
+  const [adminUsername, setAdminUsername] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
   const [passwordFeedback, setPasswordFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  const handlePasswordChange = async (e: React.FormEvent) => {
+  const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordFeedback(null);
 
-    if (!currentPassword) {
-      setPasswordFeedback({ text: 'Current password is required.', type: 'error' });
+    if (!adminUsername.trim()) {
+      setPasswordFeedback({ text: 'Username is required.', type: 'error' });
       return;
     }
-    if (!newPassword || newPassword.length < 8) {
-      setPasswordFeedback({ text: 'New password must be at least 8 characters long.', type: 'error' });
+    if (isAuthConfigured && !currentPassword) {
+      setPasswordFeedback({ text: 'Current password is required to update existing credentials.', type: 'error' });
+      return;
+    }
+    if (!newPassword || newPassword.length < 4) {
+      setPasswordFeedback({ text: 'Password must be at least 4 characters long.', type: 'error' });
       return;
     }
     if (newPassword !== confirmPassword) {
-      setPasswordFeedback({ text: 'New passwords do not match.', type: 'error' });
+      setPasswordFeedback({ text: 'Passwords do not match.', type: 'error' });
       return;
     }
 
     setChangingPassword(true);
     try {
-      const res = await api.changeAdminPassword({ currentPassword, newPassword });
-      setPasswordFeedback({ text: res.message || 'Admin password successfully updated in database.', type: 'success' });
+      const res = await api.setupAdminCredentials({
+        username: adminUsername.trim(),
+        password: newPassword,
+        ...(isAuthConfigured ? { currentPassword } : {}),
+      });
+      setIsAuthConfigured(true);
+      setPasswordFeedback({
+        text: res.message || 'Admin login username and password saved. Redirecting to login...',
+        type: 'success',
+      });
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+
+      // Clear current token so the login page appears immediately after setting credentials
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          localStorage.removeItem('safaris_admin_token');
+          window.dispatchEvent(new Event('safaris-admin-auth-change'));
+        }, 900);
+      }
     } catch (err: any) {
-      setPasswordFeedback({ text: err.message || 'Failed to update password.', type: 'error' });
+      setPasswordFeedback({ text: err.message || 'Failed to save login credentials.', type: 'error' });
     } finally {
       setChangingPassword(false);
     }
@@ -104,6 +126,14 @@ export default function SettingsPage() {
       if (typeof window !== 'undefined') {
         localStorage.removeItem('safaris_mapbox_token');
       }
+
+      try {
+        const authStatus = await api.getAdminAuthStatus();
+        setIsAuthConfigured(Boolean(authStatus.configured));
+        if (authStatus.username) {
+          setAdminUsername(authStatus.username);
+        }
+      } catch (_) {}
 
       const config = await api.getConfig();
       if (config) {
@@ -258,6 +288,122 @@ export default function SettingsPage() {
           {message.text}
         </div>
       )}
+
+      {/* Administrator Authentication & Security */}
+      <div className="border border-white/15 rounded-xl p-6 bg-black space-y-6">
+        <div className="flex items-center justify-between border-b border-white/10 pb-4">
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="w-5 h-5 text-emerald-400" />
+            <div>
+              <h3 className="text-base font-bold text-white">Admin Panel Login Credentials (Username & Password)</h3>
+              <p className="text-xs text-white/50">
+                {isAuthConfigured
+                  ? 'Login is active and enforced. Update your admin username and password below.'
+                  : 'Login is not enforced until you set your username and password below.'}
+              </p>
+            </div>
+          </div>
+          <span
+            className={`text-[10px] font-mono px-2.5 py-1 rounded border ${
+              isAuthConfigured
+                ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
+                : 'text-amber-400 border-amber-500/30 bg-amber-500/10'
+            }`}
+          >
+            {isAuthConfigured ? 'LOGIN ENFORCED' : 'NOT SET YET (OPEN ACCESS)'}
+          </span>
+        </div>
+
+        {passwordFeedback && (
+          <div
+            className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+              passwordFeedback.type === 'success'
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                : 'bg-red-500/10 border-red-500/30 text-red-300'
+            }`}
+          >
+            {passwordFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+            )}
+            <span>{passwordFeedback.text}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleCredentialsSubmit} className="space-y-4 max-w-xl">
+          <div>
+            <label className="text-xs text-white/60 uppercase font-mono">Login Username</label>
+            <input
+              type="text"
+              value={adminUsername}
+              onChange={(e) => setAdminUsername(e.target.value)}
+              placeholder="Enter admin username"
+              required
+              className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-white"
+            />
+          </div>
+
+          {isAuthConfigured && (
+            <div>
+              <label className="text-xs text-white/60 uppercase font-mono">Current Password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="••••••••••••"
+                required
+                className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-white"
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-white/60 uppercase font-mono">
+                {isAuthConfigured ? 'New Password' : 'Login Password'}
+              </label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Enter password"
+                required
+                className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-white/60 uppercase font-mono">
+                {isAuthConfigured ? 'Confirm New Password' : 'Confirm Password'}
+              </label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Repeat password"
+                required
+                className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-white"
+              />
+            </div>
+          </div>
+
+          <div className="pt-2 flex items-center justify-between">
+            <p className="text-[11px] text-white/40">
+              {isAuthConfigured
+                ? 'Saving new credentials will require signing in again with the updated username and password.'
+                : 'Once you save your username and password, the login screen will be activated and required.'}
+            </p>
+            <button
+              type="submit"
+              disabled={changingPassword}
+              className="px-4 py-2 bg-white text-black font-semibold text-xs rounded-md hover:bg-white/90 transition-colors disabled:opacity-50 shrink-0 ml-4 flex items-center gap-2"
+            >
+              {changingPassword && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              <span>{isAuthConfigured ? 'Update Login Credentials' : 'Set Login Credentials'}</span>
+            </button>
+          </div>
+        </form>
+      </div>
 
       {/* Domain Readiness Box */}
       <div className="border border-white/20 rounded-xl p-6 bg-white/[0.02]">
@@ -636,92 +782,6 @@ export default function SettingsPage() {
             className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-white"
           />
         </div>
-      </div>
-
-      {/* Administrator Authentication & Security */}
-      <div className="border border-white/15 rounded-xl p-6 bg-black space-y-6">
-        <div className="flex items-center justify-between border-b border-white/10 pb-4">
-          <div className="flex items-center gap-3">
-            <ShieldCheck className="w-5 h-5 text-emerald-400" />
-            <div>
-              <h3 className="text-base font-bold text-white">Administrator Credentials & Access Security</h3>
-              <p className="text-xs text-white/50">Change root administrator password with BCrypt hash and database audit log</p>
-            </div>
-          </div>
-          <span className="text-[10px] font-mono text-emerald-400 border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 rounded">
-            AUTHENTICATED
-          </span>
-        </div>
-
-        {passwordFeedback && (
-          <div
-            className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
-              passwordFeedback.type === 'success'
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                : 'bg-red-500/10 border-red-500/30 text-red-300'
-            }`}
-          >
-            {passwordFeedback.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-            ) : (
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-            )}
-            <span>{passwordFeedback.text}</span>
-          </div>
-        )}
-
-        <form onSubmit={handlePasswordChange} className="space-y-4 max-w-xl">
-          <div>
-            <label className="text-xs text-white/60 uppercase font-mono">Current Password</label>
-            <input
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder="••••••••••••"
-              required
-              className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-white"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs text-white/60 uppercase font-mono">New Password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Min. 8 characters"
-                required
-                className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-white"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-white/60 uppercase font-mono">Confirm New Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Repeat new password"
-                required
-                className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-white"
-              />
-            </div>
-          </div>
-
-          <div className="pt-2 flex items-center justify-between">
-            <p className="text-[11px] text-white/40">
-              Updates take effect immediately on next sign-in and invalidate obsolete session caches.
-            </p>
-            <button
-              type="submit"
-              disabled={changingPassword}
-              className="px-4 py-2 bg-white text-black font-semibold text-xs rounded-md hover:bg-white/90 transition-colors disabled:opacity-50 shrink-0 ml-4 flex items-center gap-2"
-            >
-              {changingPassword && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-              <span>Update Password</span>
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );

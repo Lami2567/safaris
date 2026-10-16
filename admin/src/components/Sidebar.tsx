@@ -85,6 +85,19 @@ export const Sidebar: React.FC = () => {
 
       {/* Footer Info */}
       <div className="p-4 border-t border-white/10 space-y-3">
+        {typeof window !== 'undefined' && localStorage.getItem('safaris_admin_token') && (
+          <button
+            type="button"
+            onClick={() => {
+              localStorage.removeItem('safaris_admin_token');
+              window.dispatchEvent(new Event('safaris-admin-auth-change'));
+            }}
+            className="w-full px-3 py-2 text-xs font-medium text-white/80 hover:text-white border border-white/15 hover:border-white/30 hover:bg-white/[0.04] rounded-md transition-colors text-left"
+          >
+            Logout
+          </button>
+        )}
+
         <div className="px-3 py-2 rounded border border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2 text-[11px] text-white/80">
             <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
