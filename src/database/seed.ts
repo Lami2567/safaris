@@ -5,67 +5,7 @@ import { ENV } from '../config/env';
 export async function seedUgandaData() {
   const defaultPasswordHash = await bcrypt.hash('password123', 10);
 
-  // 1. SEED USERS (Only if not already created, protecting registered accounts)
-  const customerUser = {
-    id: 'usr_ug_001',
-    full_name: 'David Kato',
-    phone: '+256 772 123456',
-    email: 'david.kato@safaris.ug',
-    password_hash: defaultPasswordHash,
-    role: 'customer',
-    avatar_url: '',
-    rating: 5.0,
-    total_trips: 0,
-    wallet_balance_ugx: 0.0,
-    is_verified: true,
-    created_at: new Date().toISOString(),
-  };
-
-  const driverUser = {
-    id: 'usr_drv_001',
-    full_name: 'Moses Okello',
-    phone: '+256 701 847291',
-    email: 'moses.okello@safaris.ug',
-    password_hash: defaultPasswordHash,
-    role: 'driver',
-    avatar_url: '',
-    rating: 5.0,
-    total_trips: 0,
-    wallet_balance_ugx: 0.0,
-    is_verified: true,
-    created_at: new Date().toISOString(),
-  };
-
-  const driverBodaUser = {
-    id: 'usr_drv_002',
-    full_name: 'Geoffrey Ssenyonga',
-    phone: '+256 752 901842',
-    email: 'geoffrey.boda@safaris.ug',
-    password_hash: defaultPasswordHash,
-    role: 'driver',
-    avatar_url: '',
-    rating: 5.0,
-    total_trips: 0,
-    wallet_balance_ugx: 0.0,
-    is_verified: true,
-    created_at: new Date().toISOString(),
-  };
-
-  const guideUser = {
-    id: 'usr_gd_001',
-    full_name: 'Patrick Mukasa',
-    phone: '+256 782 391029',
-    email: 'patrick.mukasa@safaris.ug',
-    password_hash: defaultPasswordHash,
-    role: 'tour_guide',
-    avatar_url: '',
-    rating: 5.0,
-    total_trips: 0,
-    wallet_balance_ugx: 0.0,
-    is_verified: true,
-    created_at: new Date().toISOString(),
-  };
-
+  // 1. ENSURE ADMIN ACCOUNT EXISTS (Do NOT seed fake customers, drivers, or tour guides)
   const adminUser = {
     id: 'usr_adm_001',
     full_name: 'Safaris Admin Director',
@@ -78,90 +18,12 @@ export async function seedUgandaData() {
     total_trips: 0,
     wallet_balance_ugx: 0.0,
     is_verified: true,
+    approval_status: 'APPROVED',
     created_at: new Date().toISOString(),
   };
 
-  const seedUsers = [customerUser, driverUser, driverBodaUser, guideUser, adminUser];
-  for (const u of seedUsers) {
-    if (!localStore.users.has(u.id)) {
-      await db.persistUser(u);
-    }
-  }
-
-  // 2. SEED VEHICLES
-  const vehiclePremio = {
-    id: 'veh_001',
-    driver_id: driverUser.id,
-    tier: 'comfort',
-    make: 'Toyota',
-    model: 'Premio (Air Conditioned)',
-    registration_plate: 'UBM 714K',
-    color: 'Silver Metallic',
-    capacity: 4,
-    status: 'active',
-  };
-
-  const vehicleBoda = {
-    id: 'veh_002',
-    driver_id: driverBodaUser.id,
-    tier: 'boda',
-    make: 'Bajaj',
-    model: 'Boxer BM 150',
-    registration_plate: 'UEX 419P',
-    color: 'Red',
-    capacity: 1,
-    status: 'active',
-  };
-
-  localStore.vehicles.set(vehiclePremio.id, vehiclePremio);
-  localStore.vehicles.set(vehicleBoda.id, vehicleBoda);
-
-  // 3. SEED DRIVERS
-  const driverProfile = {
-    id: driverUser.id,
-    vehicle_id: vehiclePremio.id,
-    is_online: true,
-    is_available: true,
-    current_lat: 0.3136,
-    current_lng: 32.5811, // Kampala CBD
-    heading: 45.0,
-    license_number: 'UG-DL-8829104',
-    license_expiry: '2028-10-12',
-    acceptance_rate: 98.5,
-    today_earnings_ugx: 185000.0,
-  };
-
-  const driverBodaProfile = {
-    id: driverBodaUser.id,
-    vehicle_id: vehicleBoda.id,
-    is_online: true,
-    is_available: true,
-    current_lat: 0.3354,
-    current_lng: 32.5886, // Acacia Mall
-    heading: 90.0,
-    license_number: 'UG-DL-4910294',
-    license_expiry: '2027-04-18',
-    acceptance_rate: 99.0,
-    today_earnings_ugx: 75000.0,
-  };
-
-  localStore.drivers.set(driverProfile.id, driverProfile);
-  localStore.drivers.set(driverBodaProfile.id, driverBodaProfile);
-
-  // 4. SEED TOUR GUIDES (Only if empty)
-  if (localStore.tour_guides.size === 0) {
-    const guideProfile = {
-      id: guideUser.id,
-      title: 'Senior Primate & Gorilla Specialist',
-      bio: 'Patrick has 12 years of experience guiding visitors through Bwindi and Mgahinga. Certified by the Uganda Wildlife Authority with unmatched tracking insights.',
-      languages: ['English', 'Luganda', 'Rukiga', 'French'],
-      specialties: ['Bwindi Gorillas', 'Birding', 'Nature Photography'],
-      daily_rate_ugx: 180000.0,
-      is_uwa_certified: true,
-      is_available: true,
-      expeditions_count: 310,
-    };
-    localStore.tour_guides.set(guideProfile.id, guideProfile);
+  if (!localStore.users.has(adminUser.id)) {
+    await db.persistUser(adminUser);
   }
 
   // 5. SEED DESTINATIONS

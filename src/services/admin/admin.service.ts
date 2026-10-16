@@ -37,9 +37,19 @@ const DEFAULT_PRICING: PricingConfig = {
 
 export class AdminService {
   public static getDashboardStats() {
-    const totalUsers = localStore.users.size;
-    const totalDrivers = localStore.drivers.size;
-    const totalGuides = localStore.tour_guides.size;
+    const approvedDrivers = Array.from(localStore.drivers.values()).filter(
+      (d: any) => d.is_approved === true && d.approval_status === 'APPROVED'
+    );
+    const approvedGuides = Array.from(localStore.tour_guides.values()).filter(
+      (g: any) => g.is_approved === true && g.approval_status === 'APPROVED'
+    );
+    const registeredUsers = Array.from(localStore.users.values()).filter(
+      (u: any) => !['driver', 'tour_guide'].includes(u.role) || u.approval_status === 'APPROVED'
+    );
+
+    const totalUsers = registeredUsers.length;
+    const totalDrivers = approvedDrivers.length;
+    const totalGuides = approvedGuides.length;
     const totalDestinations = localStore.destinations.size;
     const totalPackages = localStore.tour_packages.size;
     const totalTrips = localStore.trips.size;
@@ -77,7 +87,7 @@ export class AdminService {
       (d: any) => ['PLACED', 'ASSIGNED', 'PICKED_UP', 'IN_TRANSIT'].includes(d.status)
     ).length;
 
-    const onlineDriversCount = Array.from(localStore.drivers.values()).filter(
+    const onlineDriversCount = approvedDrivers.filter(
       (d: any) => d.is_online && d.is_available
     ).length;
 
@@ -250,44 +260,146 @@ export class AdminService {
   }
 
   // -----------------------------------------------------------
-  // Drivers & Fleet Management
+  // Drivers & Fleet Management (Only Approved Drivers)
   // -----------------------------------------------------------
-  public static getDriversFleet() {
-    return Array.from(localStore.drivers.values()).map((d: any) => {
-      const user = localStore.users.get(d.id);
-      const vehicle = d.vehicle_id ? localStore.vehicles.get(d.vehicle_id) : null;
-      return {
-        ...d,
-        full_name: user?.full_name || 'Driver Partner',
-        phone: user?.phone || '',
-        email: user?.email || '',
-        avatar_url: user?.avatar_url || '',
-        rating: user?.rating || 4.95,
-        vehicle_make: vehicle?.make || 'Toyota',
-        vehicle_model: vehicle?.model || 'Sedan',
-        registration_plate: vehicle?.registration_plate || 'UBM 000X',
-        vehicle_tier: vehicle?.tier || 'comfort',
-        color: vehicle?.color || 'Silver',
-      };
-    });
+  public static async getDriversFleet() {
+    if (db.isPostgresConnected) {
+      try {
+        const res = await db.query(`
+          SELECT d.*,
+                 u.full_name, u.phone, u.email, u.avatar_url, u.rating,
+                 v.make as vehicle_make, v.model as vehicle_model,
+                 v.registration_plate, v.tier as vehicle_tier, v.color
+          FROM drivers d
+          JOIN users u ON d.id = u.id
+          LEFT JOIN vehicles v ON d.vehicle_id = v.id
+          WHERE d.is_approved = true AND d.approval_status = 'APPROVED'
+          ORDER BY d.updated_at DESC
+        `);
+        if (res && Array.isArray(res.rows)) {
+          return res.rows.map((row: any) => ({
+            ...row,
+            name: row.full_name || 'Driver Partner',
+            full_name: row.full_name || 'Driver Partner',
+            phoneNumber: row.phone || '',
+            phone: row.phone || '',
+            email: row.email || '',
+            rating: parseFloat(row.rating || '5.0'),
+            vehicleModel: `${row.vehicle_make || 'Toyota'} ${row.vehicle_model || 'Safari'}`,
+            vehicle_make: row.vehicle_make || 'Toyota',
+            vehicle_model: row.vehicle_model || 'Safari',
+            licensePlate: row.registration_plate || '',
+            registration_plate: row.registration_plate || '',
+            isOnline: row.is_online === true,
+            is_online: row.is_online === true,
+          }));
+        }
+      } catch (err) {
+        console.warn('[AdminService.getDriversFleet] PostgreSQL query error:', err);
+      }
+    }
+
+    return Array.from(localStore.drivers.values())
+      .filter((d: any) => d.is_approved === true && d.approval_status === 'APPROVED')
+      .map((d: any) => {
+        const user = localStore.users.get(d.id);
+        const vehicle = d.vehicle_id ? localStore.vehicles.get(d.vehicle_id) : null;
+        return {
+          ...d,
+          name: user?.full_name || 'Driver Partner',
+          full_name: user?.full_name || 'Driver Partner',
+          phoneNumber: user?.phone || '',
+          phone: user?.phone || '',
+          email: user?.email || '',
+          avatar_url: user?.avatar_url || '',
+          rating: user?.rating || 4.95,
+          vehicleModel: `${vehicle?.make || 'Toyota'} ${vehicle?.model || 'Sedan'}`,
+          vehicle_make: vehicle?.make || 'Toyota',
+          vehicle_model: vehicle?.model || 'Sedan',
+          licensePlate: vehicle?.registration_plate || '',
+          registration_plate: vehicle?.registration_plate || '',
+          vehicle_tier: vehicle?.tier || 'comfort',
+          color: vehicle?.color || 'Silver',
+          isOnline: d.is_online === true,
+        };
+      });
   }
 
   // -----------------------------------------------------------
-  // Users List
+  // Users List (Permanent PostgreSQL Registered Accounts)
   // -----------------------------------------------------------
-  public static getAllUsers() {
-    return Array.from(localStore.users.values()).map((u: any) => ({
-      id: u.id,
-      full_name: u.full_name,
-      phone: u.phone,
-      email: u.email,
-      role: u.role,
-      rating: u.rating,
-      total_trips: u.total_trips,
-      wallet_balance_ugx: u.wallet_balance_ugx || 0,
-      is_verified: u.is_verified,
-      created_at: u.created_at,
-    }));
+  public static async getAllUsers() {
+    if (db.isPostgresConnected) {
+      try {
+        const res = await db.query(`
+          SELECT id, full_name, phone, email, role, avatar_url, rating,
+                 total_trips, wallet_balance_ugx, is_verified, approval_status, created_at
+          FROM users
+          WHERE (role NOT IN ('driver', 'tour_guide') OR approval_status = 'APPROVED')
+            AND id NOT IN ('driver-001', 'usr_ug_001', 'usr_drv_001', 'usr_drv_002', 'usr_gd_001')
+          ORDER BY created_at DESC
+        `);
+        if (res && Array.isArray(res.rows)) {
+          for (const row of res.rows) {
+            const existing = localStore.users.get(row.id) || {};
+            localStore.users.set(row.id, {
+              ...existing,
+              id: row.id,
+              full_name: row.full_name || '',
+              phone: row.phone || '',
+              email: row.email || '',
+              role: row.role || 'customer',
+              avatar_url: row.avatar_url || '',
+              rating: parseFloat(row.rating || '5.0'),
+              total_trips: parseInt(row.total_trips || '0', 10),
+              wallet_balance_ugx: parseFloat(row.wallet_balance_ugx || '0'),
+              is_verified: row.is_verified === true,
+              approval_status: row.approval_status || 'APPROVED',
+              created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+            });
+          }
+          return res.rows.map((u: any) => ({
+            id: u.id,
+            full_name: u.full_name,
+            phone: u.phone,
+            email: u.email,
+            role: u.role,
+            rating: parseFloat(u.rating || '5.0'),
+            total_trips: parseInt(u.total_trips || '0', 10),
+            wallet_balance_ugx: parseFloat(u.wallet_balance_ugx || '0'),
+            is_verified: u.is_verified === true,
+            approval_status: u.approval_status || 'APPROVED',
+            created_at: u.created_at ? new Date(u.created_at).toISOString() : new Date().toISOString(),
+          }));
+        }
+      } catch (err) {
+        console.warn('[AdminService.getAllUsers] PostgreSQL query error:', err);
+      }
+    }
+
+    return Array.from(localStore.users.values())
+      .filter((u: any) => {
+        if (['driver-001', 'usr_ug_001', 'usr_drv_001', 'usr_drv_002', 'usr_gd_001'].includes(u.id)) {
+          return false;
+        }
+        if (u.role === 'driver' || u.role === 'tour_guide') {
+          return u.approval_status === 'APPROVED';
+        }
+        return true;
+      })
+      .map((u: any) => ({
+        id: u.id,
+        full_name: u.full_name,
+        phone: u.phone,
+        email: u.email,
+        role: u.role,
+        rating: u.rating,
+        total_trips: u.total_trips,
+        wallet_balance_ugx: u.wallet_balance_ugx || 0,
+        is_verified: u.is_verified,
+        approval_status: u.approval_status || 'APPROVED',
+        created_at: u.created_at,
+      }));
   }
 
   // -----------------------------------------------------------

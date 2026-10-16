@@ -19,12 +19,9 @@ export class TourGuideService {
   public static async init(): Promise<void> {
     if (this.isInitialized) return;
 
-    // 1. Try loading from persistent disk files first
-    this.loadFromDisk();
-
-    // 2. If PostgreSQL is connected, load latest from database tables
     if (db.isPostgresConnected) {
       try {
+        localStore.tour_guides.clear();
         const res = await db.query(`
           SELECT tg.*, 
                  COALESCE(u.full_name, tg.full_name, 'Safari Guide') as full_name,
@@ -33,6 +30,7 @@ export class TourGuideService {
                  COALESCE(tg.rating, u.rating, 4.95) as rating
           FROM tour_guides tg
           LEFT JOIN users u ON tg.id = u.id
+          WHERE tg.is_approved = true AND tg.approval_status = 'APPROVED'
           ORDER BY tg.created_at ASC
         `);
 
@@ -42,23 +40,7 @@ export class TourGuideService {
             const fullName = row.full_name || 'Safari Guide';
             const avatarUrl = row.avatar_url || '';
             const rating = Number(row.rating || 4.95);
-            const phone = row.phone || '+256 700 000000';
 
-            // Sync user entry
-            localStore.users.set(id, {
-              id,
-              full_name: fullName,
-              phone,
-              email: row.email || `${id}@safaris.ug`,
-              role: 'tour_guide',
-              avatar_url: avatarUrl,
-              rating,
-              total_trips: Number(row.expeditions_count || 0),
-              is_verified: row.is_uwa_certified !== false,
-              created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
-            });
-
-            // Sync guide profile
             localStore.tour_guides.set(id, {
               id,
               title: row.title || 'Uganda Wildlife Guide',
@@ -68,6 +50,8 @@ export class TourGuideService {
               daily_rate_ugx: Number(row.daily_rate_ugx || 150000),
               is_uwa_certified: row.is_uwa_certified !== false,
               is_available: row.is_available !== false,
+              is_approved: true,
+              approval_status: 'APPROVED',
               expeditions_count: Number(row.expeditions_count || 0),
               avatar_url: avatarUrl,
               full_name: fullName,
@@ -76,11 +60,13 @@ export class TourGuideService {
               updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
             });
           }
-          console.log(`🧭 [TourGuideService] Loaded ${res.rows.length} tour guides from PostgreSQL.`);
+          console.log(`🧭 [TourGuideService] Loaded ${res.rows.length} approved tour guides from PostgreSQL.`);
         }
       } catch (err) {
         console.warn('[TourGuideService] Notice: PostgreSQL query error during init:', err);
       }
+    } else {
+      this.loadFromDisk();
     }
 
     this.saveToDisk();
@@ -95,24 +81,11 @@ export class TourGuideService {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
             for (const g of parsed) {
-              if (g && g.id) {
+              if (g && g.id && g.is_approved === true && g.approval_status === 'APPROVED') {
                 const id = g.id;
                 const fullName = g.full_name || 'Safari Guide';
                 const avatarUrl = g.avatar_url || '';
                 const rating = Number(g.rating || 4.95);
-
-                localStore.users.set(id, {
-                  id,
-                  full_name: fullName,
-                  phone: g.phone || '+256 700 000000',
-                  email: `${id}@safaris.ug`,
-                  role: 'tour_guide',
-                  avatar_url: avatarUrl,
-                  rating,
-                  total_trips: Number(g.expeditions_count || 0),
-                  is_verified: g.is_uwa_certified !== false,
-                  created_at: new Date().toISOString(),
-                });
 
                 localStore.tour_guides.set(id, {
                   id,
@@ -123,6 +96,8 @@ export class TourGuideService {
                   daily_rate_ugx: Number(g.daily_rate_ugx || 150000),
                   is_uwa_certified: g.is_uwa_certified !== false,
                   is_available: g.is_available !== false,
+                  is_approved: true,
+                  approval_status: 'APPROVED',
                   expeditions_count: Number(g.expeditions_count || 0),
                   avatar_url: avatarUrl,
                   full_name: fullName,
@@ -154,7 +129,9 @@ export class TourGuideService {
   }
 
   public static getAllGuides(specialization?: string) {
-    const guides = Array.from(localStore.tour_guides.values());
+    const guides = Array.from(localStore.tour_guides.values()).filter(
+      (g: any) => g.is_approved === true && g.approval_status === 'APPROVED'
+    );
     const enriched = guides.map((guide: any) => {
       const user = localStore.users.get(guide.id);
       return {

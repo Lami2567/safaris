@@ -49,18 +49,18 @@ export class AdminController {
     }
   }
 
-  public static getDriversFleet(req: Request, res: Response) {
+  public static async getDriversFleet(req: Request, res: Response) {
     try {
-      const fleet = AdminService.getDriversFleet();
+      const fleet = await AdminService.getDriversFleet();
       return sendSuccess(res, fleet);
     } catch (err: any) {
       return sendError(res, 'FETCH_FLEET_FAILED', err.message, 500);
     }
   }
 
-  public static getAllUsers(req: Request, res: Response) {
+  public static async getAllUsers(req: Request, res: Response) {
     try {
-      const users = AdminService.getAllUsers();
+      const users = await AdminService.getAllUsers();
       return sendSuccess(res, users);
     } catch (err: any) {
       return sendError(res, 'FETCH_USERS_FAILED', err.message, 500);

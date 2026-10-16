@@ -62,9 +62,6 @@ class DatabaseManager {
   }
 
   public async init(): Promise<void> {
-    // 1. First load all persistent data from disk so they survive restarts
-    this.loadAllFromDisk();
-
     try {
       this.pool = new Pool({
         connectionString: ENV.DATABASE_URL,
@@ -77,13 +74,14 @@ class DatabaseManager {
       this.isPostgresConnected = true;
       console.log('✅ [Database] Connected successfully to PostgreSQL instance.');
 
-      // 2. Ensure Schema DDL exists in PostgreSQL
+      // 1. Ensure Schema DDL exists in PostgreSQL & remove any legacy mock seed records
       await this.ensureSchema();
 
-      // 3. Load all entities from PostgreSQL into memory
+      // 2. Load all entities authoritatively from PostgreSQL into memory
       await this.loadAllFromPostgres();
     } catch (err) {
       this.isPostgresConnected = false;
+      this.loadAllFromDisk();
       console.log('⚡ [Database] PostgreSQL not detected locally. Initialized in-memory data store with disk persistence.');
     }
   }
@@ -102,9 +100,18 @@ class DatabaseManager {
       if (schemaPath) {
         const sql = fs.readFileSync(schemaPath, 'utf-8');
         await this.pool.query(sql);
-        this.isSchemaInitialized = true;
-        console.log('✅ [Database] Database schema verified and synchronized.');
       }
+
+      // Clean up legacy mock/seed accounts so only genuine registered accounts remain
+      await this.pool.query(`
+        DELETE FROM drivers WHERE id IN ('driver-001', 'usr_drv_001', 'usr_drv_002');
+        DELETE FROM vehicles WHERE id IN ('veh-001', 'veh_001', 'veh_002') OR driver_id IN ('driver-001', 'usr_drv_001', 'usr_drv_002');
+        DELETE FROM tour_guides WHERE id IN ('usr_gd_001');
+        DELETE FROM users WHERE id IN ('driver-001', 'usr_ug_001', 'usr_drv_001', 'usr_drv_002', 'usr_gd_001');
+      `);
+
+      this.isSchemaInitialized = true;
+      console.log('✅ [Database] Database schema verified and synchronized.');
     } catch (err) {
       console.warn('⚠️ [Database] Schema synchronization notice (non-fatal):', err);
     }
@@ -171,6 +178,17 @@ class DatabaseManager {
   public async loadAllFromPostgres(): Promise<void> {
     if (!this.isPostgresConnected || !this.pool) return;
     try {
+      // Clear in-memory caches so PostgreSQL is the sole authoritative source
+      localStore.users.clear();
+      localStore.drivers.clear();
+      localStore.vehicles.clear();
+      localStore.tour_guides.clear();
+      localStore.career_applications.clear();
+      localStore.trips.clear();
+      localStore.deliveries.clear();
+      localStore.tour_bookings.clear();
+      localStore.payments.clear();
+
       // 1. Users
       const userRes = await this.pool.query('SELECT * FROM users ORDER BY created_at ASC');
       if (userRes?.rows?.length > 0) {
@@ -235,7 +253,15 @@ class DatabaseManager {
         }
       }
 
-      // 4. Career Applications
+      // 4. Tour Guides (Only approved guides)
+      const tgRes = await this.pool.query('SELECT * FROM tour_guides WHERE is_approved = true AND approval_status = \'APPROVED\'');
+      if (tgRes?.rows?.length > 0) {
+        for (const row of tgRes.rows) {
+          localStore.tour_guides.set(row.id, row);
+        }
+      }
+
+      // 5. Career Applications
       const appRes = await this.pool.query('SELECT * FROM career_applications ORDER BY created_at DESC');
       if (appRes?.rows?.length > 0) {
         for (const row of appRes.rows) {
@@ -243,7 +269,7 @@ class DatabaseManager {
         }
       }
 
-      // 5. Trips
+      // 6. Trips
       const tripRes = await this.pool.query('SELECT * FROM trips ORDER BY created_at DESC LIMIT 500');
       if (tripRes?.rows?.length > 0) {
         for (const row of tripRes.rows) {
@@ -251,7 +277,23 @@ class DatabaseManager {
         }
       }
 
-      // 6. Payments
+      // 7. Deliveries
+      const delRes = await this.pool.query('SELECT * FROM deliveries ORDER BY created_at DESC LIMIT 500');
+      if (delRes?.rows?.length > 0) {
+        for (const row of delRes.rows) {
+          localStore.deliveries.set(row.id, row);
+        }
+      }
+
+      // 8. Tour Bookings
+      const bkRes = await this.pool.query('SELECT * FROM tour_bookings ORDER BY created_at DESC LIMIT 500');
+      if (bkRes?.rows?.length > 0) {
+        for (const row of bkRes.rows) {
+          localStore.tour_bookings.set(row.id, row);
+        }
+      }
+
+      // 9. Payments
       const payRes = await this.pool.query('SELECT * FROM payments ORDER BY created_at DESC LIMIT 500');
       if (payRes?.rows?.length > 0) {
         for (const row of payRes.rows) {
