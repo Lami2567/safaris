@@ -1,10 +1,34 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #000000;
-  --foreground: #ffffff;
+:root,
+html.light {
+  --bg-page: #f1f5f9;
+  --bg-card: #ffffff;
+  --bg-subtle: #f8fafc;
+  --bg-input: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #1e293b;
+  --text-muted: #475569;
+  --border-subtle: #e2e8f0;
+  --border-default: #cbd5e1;
+  --border-strong: #94a3b8;
+}
+
+html.dark {
+  --bg-page: #0a0a0c;
+  --bg-card: #121316;
+  --bg-subtle: #181a1f;
+  --bg-input: #0d0e11;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-default: rgba(255, 255, 255, 0.16);
+  --border-strong: rgba(255, 255, 255, 0.28);
 }
 
 * {
@@ -13,29 +37,176 @@
 
 html,
 body {
-  background-color: #000000;
-  color: #ffffff;
+  background-color: var(--bg-page);
+  color: var(--text-primary);
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 500;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom pure black scrollbar */
+/* ============================================================================
+   CONSISTENT LIGHT MODE ADAPTATION FOR ADMIN & CAREERS PANELS
+   ============================================================================ */
+
+html.light body {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+/* Main and Card Surfaces in Light Mode */
+html.light .bg-black {
+  background-color: #ffffff !important;
+}
+
+html.light main.bg-black,
+html.light div.min-h-screen.bg-black,
+html.light div.flex-1.bg-black {
+  background-color: #f1f5f9 !important;
+}
+
+html.light .bg-\[\#090a0d\],
+html.light .bg-\[\#0a0a0c\],
+html.light .bg-\[\#0d0e11\],
+html.light .bg-\[\#111215\],
+html.light .bg-\[\#121316\],
+html.light .bg-\[\#141518\] {
+  background-color: #ffffff !important;
+}
+
+html.light .bg-black\/90,
+html.light .bg-black\/80,
+html.light .bg-black\/70,
+html.light .bg-black\/60 {
+  background-color: rgba(255, 255, 255, 0.96) !important;
+}
+
+html.light .bg-white\/\[0\.02\],
+html.light .bg-white\/\[0\.03\],
+html.light .bg-white\/\[0\.04\],
+html.light .bg-white\/5 {
+  background-color: #f8fafc !important;
+}
+
+html.light .bg-white\/10 {
+  background-color: #e2e8f0 !important;
+}
+
+html.light .hover\:bg-white\/\[0\.04\]:hover,
+html.light .hover\:bg-white\/\[0\.05\]:hover,
+html.light .hover\:bg-white\/5:hover,
+html.light .hover\:bg-white\/10:hover {
+  background-color: #f1f5f9 !important;
+}
+
+/* High-Visibility Typography in Light Mode */
+html.light .text-white {
+  color: #0f172a !important;
+}
+
+html.light .text-white\/90,
+html.light .text-white\/80 {
+  color: #1e293b !important;
+}
+
+html.light .text-white\/70,
+html.light .text-white\/60 {
+  color: #334155 !important;
+}
+
+html.light .text-white\/50,
+html.light .text-white\/40 {
+  color: #475569 !important;
+}
+
+html.light .text-white\/30,
+html.light .text-white\/20 {
+  color: #64748b !important;
+}
+
+html.light .placeholder\:text-white\/30::placeholder,
+html.light .placeholder\:text-white\/40::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Primary Action Buttons (bg-white text-black -> Solid Dark Slate/Navy in Light Mode) */
+html.light button.bg-white.text-black,
+html.light a.bg-white.text-black,
+html.light span.bg-white.text-black {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  border: 1px solid #0f172a !important;
+}
+
+html.light button.bg-white.text-black:hover,
+html.light a.bg-white.text-black:hover {
+  background-color: #1e293b !important;
+}
+
+/* Borders & Dividers in Light Mode */
+html.light .border-white\/5,
+html.light .border-white\/10 {
+  border-color: #cbd5e1 !important;
+}
+
+html.light .border-white\/15,
+html.light .border-white\/20,
+html.light .border-white\/25,
+html.light .border-white\/30 {
+  border-color: #94a3b8 !important;
+}
+
+html.light .divide-white\/5 > :not([hidden]) ~ :not([hidden]),
+html.light .divide-white\/10 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+/* Status Accents in Light Mode for Strong Contrast */
+html.light .text-emerald-400,
+html.light .text-emerald-300 {
+  color: #047857 !important;
+}
+
+html.light .text-amber-400,
+html.light .text-amber-300 {
+  color: #b45309 !important;
+}
+
+html.light .text-red-400,
+html.light .text-red-300 {
+  color: #b91c1c !important;
+}
+
+/* Inputs & Selects in Light Mode */
+html.light input:not([type="checkbox"]):not([type="radio"]),
+html.light select,
+html.light textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #94a3b8 !important;
+  font-weight: 500;
+}
+
+html.light input:not([type="checkbox"]):not([type="radio"]):focus,
+html.light select:focus,
+html.light textarea:focus {
+  border-color: #1d4ed8 !important;
+  box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.12);
+}
+
+/* Scrollbar styling for Light & Dark Modes */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #000000;
+  background: var(--bg-page);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--border-strong);
   border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.35);
 }

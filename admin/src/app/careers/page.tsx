@@ -1,53 +1,26 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { 
-  Car, 
-  Compass, 
-  ShieldCheck, 
-  Upload, 
-  CheckCircle2, 
-  AlertCircle, 
-  Clock, 
-  Search, 
-  FileText, 
-  Award, 
-  Phone, 
-  Mail, 
-  MapPin, 
-  ChevronRight, 
-  ArrowLeft,
-  X,
-  ExternalLink,
-  Briefcase,
-  Users,
-  Calendar,
-  Lock,
-  Radio,
-  Activity,
-  KeyRound,
-  Shield,
-  Check,
-  RotateCw,
-  LogOut,
-  Navigation
-} from 'lucide-react';
 import { api } from '@/lib/api';
+import { useTheme } from '@/components/ThemeProvider';
 
 type ApplicationTrack = 'driver' | 'tour_guide';
 type PortalStep = 'login' | 'setup_password' | 'dashboard';
 
 export default function CareersPage() {
+  const { theme, toggleTheme } = useTheme();
+  const isLight = theme === 'light';
+
   const [activeTab, setActiveTab] = useState<'apply' | 'status' | 'portal' | 'requirements'>('apply');
   const [track, setTrack] = useState<ApplicationTrack>('driver');
-  
+
   // Application Form State
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [nationalId, setNationalId] = useState('');
   const [operatingCity, setOperatingCity] = useState('Kampala');
-  
+
   // Driver-specific fields
   const [licenseNumber, setLicenseNumber] = useState('');
   const [licenseClass, setLicenseClass] = useState('Class B / CM');
@@ -56,17 +29,17 @@ export default function CareersPage() {
   const [vehicleModel, setVehicleModel] = useState('Land Cruiser Prado 4x4');
   const [vehiclePlate, setVehiclePlate] = useState('');
   const [vehicleTier, setVehicleTier] = useState('safari_4x4');
-  
+
   // Guide-specific fields
   const [uwaNumber, setUwaNumber] = useState('');
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>(['English', 'Luganda']);
   const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>(['Savannah Wildlife Safari', 'Gorilla Trekking']);
-  
+
   // Documents
   const [documents, setDocuments] = useState<Record<string, string>>({});
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
-  
+
   // Submission & Feedback
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionSuccess, setSubmissionSuccess] = useState<any | null>(null);
@@ -106,7 +79,6 @@ export default function CareersPage() {
   const [gpsFeedback, setGpsFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
-    // Check saved session
     if (typeof window !== 'undefined') {
       const savedToken = localStorage.getItem('safaris_partner_token');
       const savedUser = localStorage.getItem('safaris_partner_user');
@@ -131,23 +103,23 @@ export default function CareersPage() {
   ];
 
   const availableSpecialties = [
-    'Savannah Wildlife Safari', 
-    'Gorilla Trekking', 
-    'Chimpanzee Tracking', 
-    'Bird Watching (Avian Safari)', 
-    'Cultural & Heritage Tours', 
+    'Savannah Wildlife Safari',
+    'Gorilla Trekking',
+    'Chimpanzee Tracking',
+    'Bird Watching (Avian Safari)',
+    'Cultural & Heritage Tours',
     'Mountaineering (Rwenzori/Elgon)',
     'Water Rafting & Adventure'
   ];
 
   const handleLanguageToggle = (lang: string) => {
-    setSelectedLanguages(prev => 
+    setSelectedLanguages(prev =>
       prev.includes(lang) ? prev.filter(l => l !== lang) : [...prev, lang]
     );
   };
 
   const handleSpecialtyToggle = (spec: string) => {
-    setSelectedSpecialties(prev => 
+    setSelectedSpecialties(prev =>
       prev.includes(spec) ? prev.filter(s => s !== spec) : [...prev, spec]
     );
   };
@@ -198,6 +170,7 @@ export default function CareersPage() {
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
         national_id: nationalId.trim(),
+        operating_city: operatingCity,
         experience_years: parseInt(experienceYears, 10) || 0,
         documents,
       };
@@ -244,28 +217,58 @@ export default function CareersPage() {
     }
   };
 
-  // --------------------------------------------------------------------------
-  // Partner Portal: Step 1 — OTP Login
-  // --------------------------------------------------------------------------
   const handleOtpLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setPortalError(null);
+
     if (!portalEmail.trim() || !portalOtp.trim()) {
-      setPortalError('Please enter both your registered email address and the 6-digit OTP code.');
+      setPortalError('Please enter both your email address and 6-digit OTP code.');
       return;
     }
 
     setPortalLoading(true);
-    setPortalError(null);
-
     try {
       const res = await api.loginWithOtp(portalEmail.trim().toLowerCase(), portalOtp.trim());
-      if (res.requiresPasswordSetup && res.setupToken) {
+      if (res && res.requiresPasswordSetup && res.setupToken) {
         setSetupToken(res.setupToken);
         setPortalUser(res.user);
         setPortalStep('setup_password');
-      } else if (res.accessToken) {
-        setPortalUser(res.user);
+      } else if (res && res.accessToken) {
         setPortalAuthToken(res.accessToken);
+        setPortalUser(res.user);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('safaris_partner_token', res.accessToken);
+          localStorage.setItem('safaris_partner_user', JSON.stringify(res.user));
+        }
+        setPortalStep('dashboard');
+      }
+    } catch (err: any) {
+      setPortalError(err.message || 'Invalid OTP or email. Please check your approval email.');
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  const handleSetupPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSetupError(null);
+
+    if (newPassword.length < 6) {
+      setSetupError('Password must be at least 6 characters long.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setSetupError('Passwords do not match. Please re-enter.');
+      return;
+    }
+
+    setSetupLoading(true);
+    try {
+      const res = await api.setupPassword(portalEmail.trim().toLowerCase(), setupToken, newPassword);
+      if (res && res.accessToken) {
+        setPortalAuthToken(res.accessToken);
+        setPortalUser(res.user);
         setIsOnline(res.user?.driver_details?.is_online || false);
         if (typeof window !== 'undefined') {
           localStorage.setItem('safaris_partner_token', res.accessToken);
@@ -274,58 +277,24 @@ export default function CareersPage() {
         setPortalStep('dashboard');
       }
     } catch (err: any) {
-      setPortalError(err.message || 'Login failed. Please verify your OTP code or check if application is approved.');
-    } finally {
-      setPortalLoading(false);
-    }
-  };
-
-  // --------------------------------------------------------------------------
-  // Partner Portal: Step 2 — Set Permanent Password
-  // --------------------------------------------------------------------------
-  const handleSetupPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPassword || newPassword.length < 6) {
-      setSetupError('Password must be at least 6 characters.');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setSetupError('Passwords do not match. Please re-enter.');
-      return;
-    }
-
-    setSetupLoading(true);
-    setSetupError(null);
-
-    try {
-      const res = await api.setupPassword(portalEmail.trim().toLowerCase(), setupToken, newPassword);
-      setPortalUser(res.user);
-      setPortalAuthToken(res.accessToken);
-      setIsOnline(res.user?.driver_details?.is_online || false);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('safaris_partner_token', res.accessToken);
-        localStorage.setItem('safaris_partner_user', JSON.stringify(res.user));
-      }
-      setPortalStep('dashboard');
-    } catch (err: any) {
-      setSetupError(err.message || 'Failed to set password. Please try again.');
+      setSetupError(err.message || 'Could not set password. Please try again.');
     } finally {
       setSetupLoading(false);
     }
   };
 
-  // --------------------------------------------------------------------------
-  // Partner Portal: Step 3 — Toggle Status & Transmit Location
-  // --------------------------------------------------------------------------
   const handleToggleOnline = async () => {
     if (!portalAuthToken) return;
     setStatusUpdating(true);
     try {
-      const nextStatus = !isOnline;
-      await api.setDriverAvailability(nextStatus, portalAuthToken);
-      setIsOnline(nextStatus);
+      const nextState = !isOnline;
+      await api.setDriverAvailability(nextState, portalAuthToken);
+      setIsOnline(nextState);
+      if (nextState) {
+        await sendLocationToBackend(currentLat, currentLng, heading);
+      }
     } catch (err: any) {
-      alert(err.message || 'Failed to update online status.');
+      setGpsFeedback({ text: err.message || 'Failed to update availability.', type: 'error' });
     } finally {
       setStatusUpdating(false);
     }
@@ -335,8 +304,7 @@ export default function CareersPage() {
     setTransmittingGps(true);
     setGpsFeedback(null);
 
-    // Try HTML5 Geolocation or use configured coordinates
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+    if (typeof window !== 'undefined' && 'geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         async (pos) => {
           const lat = parseFloat(pos.coords.latitude.toFixed(6));
@@ -350,7 +318,6 @@ export default function CareersPage() {
           await sendLocationToBackend(lat, lng, hdg);
         },
         async () => {
-          // Fallback to current state coordinates (e.g. Kampala)
           await sendLocationToBackend(currentLat, currentLng, heading);
         },
         { enableHighAccuracy: true, timeout: 6000 }
@@ -366,7 +333,7 @@ export default function CareersPage() {
       const timestamp = new Date().toLocaleTimeString();
       setLastLocationPing(timestamp);
       setGpsFeedback({
-        text: `✓ Live GPS transmitted to Mumwe Safaris Dispatch: ${lat}, ${lng} at ${timestamp}. Admin map is now updated.`,
+        text: `Live GPS transmitted to Mumwe Safaris Dispatch: ${lat}, ${lng} at ${timestamp}. Admin map is now updated.`,
         type: 'success',
       });
     } catch (err: any) {
@@ -391,342 +358,436 @@ export default function CareersPage() {
     setPortalOtp('');
   };
 
+  // Theme-consistent classic styles
+  const pageBg = isLight ? 'bg-[#eef2f6] text-[#0f172a]' : 'bg-[#0b0c10] text-[#f8fafc]';
+  const headerBg = isLight ? 'bg-white border-[#cbd5e1]' : 'bg-[#12141a] border-[#2d323e]';
+  const panelBg = isLight ? 'bg-white border-[#cbd5e1]' : 'bg-[#12141a] border-[#2d323e]';
+  const sectionHeaderBg = isLight ? 'bg-[#f8fafc] border-[#cbd5e1] text-[#0f172a]' : 'bg-[#181b22] border-[#2d323e] text-[#f8fafc]';
+  const labelClass = `block text-[14px] font-bold mb-1.5 ${isLight ? 'text-[#0f172a]' : 'text-[#f1f5f9]'}`;
+  const helperClass = `text-[13px] font-medium mt-1 block ${isLight ? 'text-[#475569]' : 'text-[#94a3b8]'}`;
+  const inputClass = `w-full px-3.5 py-2.5 rounded-[4px] border text-[15px] font-semibold focus:outline-none ${
+    isLight
+      ? 'bg-white border-[#94a3b8] text-[#0f172a] focus:border-[#1d4ed8]'
+      : 'bg-[#0d0f14] border-[#3f4654] text-[#f8fafc] focus:border-[#3b82f6]'
+  }`;
+  const primaryBtnClass = `px-6 py-3 rounded-[4px] font-bold text-[15px] transition-colors disabled:opacity-50 ${
+    isLight
+      ? 'bg-[#1e3a8a] hover:bg-[#172e6e] text-white border border-[#172554]'
+      : 'bg-[#2563eb] hover:bg-[#1d4ed8] text-white border border-[#1d4ed8]'
+  }`;
+  const secondaryBtnClass = `px-4 py-2 rounded-[4px] font-bold text-[13px] border transition-colors ${
+    isLight
+      ? 'bg-[#f8fafc] hover:bg-[#e2e8f0] text-[#0f172a] border-[#94a3b8]'
+      : 'bg-[#181b22] hover:bg-[#232730] text-[#f1f5f9] border-[#3f4654]'
+  }`;
+
   return (
-    <div className="min-h-screen bg-black text-white font-sans selection:bg-amber-500 selection:text-black">
-      {/* Top Header */}
-      <header className="border-b border-white/10 bg-black/90 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center font-bold text-amber-400 tracking-wider">
-              M
+    <div
+      className={`min-h-screen ${pageBg}`}
+      style={{
+        fontFamily: "'Plus Jakarta Sans', 'Inter', 'Segoe UI', Arial, sans-serif",
+      }}
+    >
+      {/* Classic Institutional Top Navigation Bar */}
+      <header className={`border-b ${headerBg} sticky top-0 z-40 shadow-sm`}>
+        <div className="max-w-5xl mx-auto px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <div className="text-[19px] font-extrabold tracking-tight">
+              MUMWE SAFARIS UGANDA
             </div>
-            <div>
-              <span className="font-bold tracking-wider text-sm block text-white">MUMWE SAFARIS UGANDA</span>
-              <span className="text-[10px] font-mono uppercase tracking-widest text-amber-400 block">Careers & Partner Portal</span>
+            <div className={`text-[13px] font-semibold ${isLight ? 'text-[#334155]' : 'text-[#cbd5e1]'}`}>
+              Driver &amp; Tour Guide Application Portal
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
               onClick={() => { setActiveTab('apply'); setSubmissionSuccess(null); }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
-                activeTab === 'apply' 
-                  ? 'bg-amber-500 text-black font-bold' 
-                  : 'text-white/70 hover:text-white hover:bg-white/5'
+              className={`px-3.5 py-2 rounded-[4px] text-[13px] font-bold border transition-colors ${
+                activeTab === 'apply'
+                  ? isLight
+                    ? 'bg-[#1e3a8a] text-white border-[#172554]'
+                    : 'bg-[#2563eb] text-white border-[#1d4ed8]'
+                  : isLight
+                  ? 'bg-white text-[#1e293b] border-[#cbd5e1] hover:bg-[#f1f5f9]'
+                  : 'bg-[#181b22] text-[#e2e8f0] border-[#2d323e] hover:bg-[#232730]'
               }`}
             >
-              <Briefcase className="w-3.5 h-3.5 text-amber-400" />
               Apply Online
             </button>
+
             <button
+              type="button"
               onClick={() => setActiveTab('status')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
-                activeTab === 'status' 
-                  ? 'bg-amber-500 text-black font-bold' 
-                  : 'text-white/70 hover:text-white hover:bg-white/5'
+              className={`px-3.5 py-2 rounded-[4px] text-[13px] font-bold border transition-colors ${
+                activeTab === 'status'
+                  ? isLight
+                    ? 'bg-[#1e3a8a] text-white border-[#172554]'
+                    : 'bg-[#2563eb] text-white border-[#1d4ed8]'
+                  : isLight
+                  ? 'bg-white text-[#1e293b] border-[#cbd5e1] hover:bg-[#f1f5f9]'
+                  : 'bg-[#181b22] text-[#e2e8f0] border-[#2d323e] hover:bg-[#232730]'
               }`}
             >
-              <Search className="w-3.5 h-3.5 text-amber-400" />
-              Track Status
+              Application Status
             </button>
+
             <button
+              type="button"
               onClick={() => setActiveTab('portal')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
-                activeTab === 'portal' 
-                  ? 'bg-amber-500 text-black font-bold' 
-                  : 'text-white/70 hover:text-white hover:bg-white/5 border border-amber-500/30'
+              className={`px-3.5 py-2 rounded-[4px] text-[13px] font-bold border transition-colors ${
+                activeTab === 'portal'
+                  ? isLight
+                    ? 'bg-[#1e3a8a] text-white border-[#172554]'
+                    : 'bg-[#2563eb] text-white border-[#1d4ed8]'
+                  : isLight
+                  ? 'bg-white text-[#1e293b] border-[#cbd5e1] hover:bg-[#f1f5f9]'
+                  : 'bg-[#181b22] text-[#e2e8f0] border-[#2d323e] hover:bg-[#232730]'
               }`}
             >
-              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-              Partner & Driver Portal
+              Partner Login
             </button>
+
             <button
+              type="button"
               onClick={() => setActiveTab('requirements')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
-                activeTab === 'requirements' 
-                  ? 'bg-amber-500 text-black font-bold' 
-                  : 'text-white/70 hover:text-white hover:bg-white/5'
+              className={`px-3.5 py-2 rounded-[4px] text-[13px] font-bold border transition-colors ${
+                activeTab === 'requirements'
+                  ? isLight
+                    ? 'bg-[#1e3a8a] text-white border-[#172554]'
+                    : 'bg-[#2563eb] text-white border-[#1d4ed8]'
+                  : isLight
+                  ? 'bg-white text-[#1e293b] border-[#cbd5e1] hover:bg-[#f1f5f9]'
+                  : 'bg-[#181b22] text-[#e2e8f0] border-[#2d323e] hover:bg-[#232730]'
               }`}
             >
-              <FileText className="w-3.5 h-3.5 text-amber-400" />
               Requirements
+            </button>
+
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={secondaryBtnClass}
+              title="Toggle Light / Dark Mode"
+            >
+              {isLight ? 'Dark Mode' : 'Light Mode'}
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="max-w-6xl mx-auto px-4 py-8">
-        
+      {/* Main Content Container */}
+      <main className="max-w-5xl mx-auto px-6 py-8">
         {/* ================================================================= */}
         {/* TAB 1: APPLY ONLINE */}
         {/* ================================================================= */}
         {activeTab === 'apply' && (
           <div>
             {submissionSuccess ? (
-              <div className="max-w-2xl mx-auto text-center py-12 px-6 rounded-3xl bg-[#0a0a0c] border border-amber-500/30 shadow-2xl space-y-6">
-                <div className="w-16 h-16 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-10 h-10 text-amber-400" />
+              <div className={`max-w-2xl mx-auto rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                <div className={`px-6 py-4 border-b ${sectionHeaderBg}`}>
+                  <h2 className="text-[20px] font-extrabold">Application Submitted Successfully</h2>
                 </div>
-                <div>
-                  <h2 className="text-2xl font-bold tracking-tight text-white">Application Successfully Submitted</h2>
-                  <p className="text-xs text-white/60 font-mono mt-1">
-                    Application Reference: <span className="text-amber-400 font-bold">{submissionSuccess.applicationId}</span>
+                <div className="p-6 sm:p-8 space-y-6">
+                  <p className="text-[15px] font-semibold">
+                    Application Reference ID:{' '}
+                    <span className="font-extrabold underline">{submissionSuccess.applicationId}</span>
                   </p>
-                </div>
 
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 text-left text-xs space-y-3 font-mono">
-                  <div className="flex justify-between border-b border-white/10 pb-2">
-                    <span className="text-white/50">Applicant Name</span>
-                    <span className="text-white font-bold">{fullName}</span>
+                  <div className={`rounded-[4px] border p-5 space-y-3 text-[14px] ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
+                    <div className="flex justify-between border-b border-current/10 pb-2">
+                      <span className="font-semibold">Applicant Name:</span>
+                      <span className="font-extrabold">{fullName}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-current/10 pb-2">
+                      <span className="font-semibold">Application Track:</span>
+                      <span className="font-extrabold uppercase">{track === 'driver' ? 'Safari Driver / Chauffeur' : 'Licensed Tour Guide'}</span>
+                    </div>
+                    <div className="flex justify-between border-b border-current/10 pb-2">
+                      <span className="font-semibold">Contact Email:</span>
+                      <span className="font-extrabold">{email}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-semibold">Review Status:</span>
+                      <span className="font-extrabold">PENDING ADMIN APPROVAL</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between border-b border-white/10 pb-2">
-                    <span className="text-white/50">Role / Track</span>
-                    <span className="text-amber-400 font-bold uppercase">{track === 'driver' ? 'Safari Chauffeur' : 'Tour Guide'}</span>
-                  </div>
-                  <div className="flex justify-between border-b border-white/10 pb-2">
-                    <span className="text-white/50">Contact Email</span>
-                    <span className="text-white">{email}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/50">Initial Review Status</span>
-                    <span className="text-amber-300 font-bold">PENDING APPROVAL</span>
-                  </div>
-                </div>
 
-                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300/90 text-left space-y-1.5">
-                  <div className="font-bold flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
-                    What Happens Next:
+                  <div className={`p-4 rounded-[4px] border text-[14px] leading-relaxed ${isLight ? 'bg-[#eff6ff] border-[#93c5fd] text-[#1e3a8a]' : 'bg-[#172554]/40 border-[#1d4ed8] text-[#dbeafe]'}`}>
+                    <p className="font-extrabold mb-1">Next Steps in the Approval Process:</p>
+                    <ol className="list-decimal list-inside space-y-1 font-medium">
+                      <li>Our administrators will review your submitted details and attached verification documents.</li>
+                      <li>Once approved, an activation email containing a 6-digit One-Time Passcode (OTP) will be sent to <strong>{email}</strong>.</li>
+                      <li>Use the <strong>Partner Login</strong> tab with your email and OTP to set your password and enter your dashboard.</li>
+                    </ol>
                   </div>
-                  <p className="leading-relaxed">
-                    1. Mumwe Safaris operations team will review your permit, NIN, and submitted documents.<br/>
-                    2. Once approved, an automated activation email containing your <strong>One-Time Passcode (OTP)</strong> will be dispatched to <strong>{email}</strong>.<br/>
-                    3. You will log in using your email and OTP, create your password, and enter your live dashboard!
-                  </p>
-                </div>
 
-                <div className="flex items-center justify-center gap-3 pt-2">
-                  <button
-                    onClick={() => { setActiveTab('status'); setSearchQuery(submissionSuccess.applicationId); }}
-                    className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs uppercase tracking-wider flex items-center gap-2"
-                  >
-                    <Search className="w-4 h-4 text-black" />
-                    Track Review Status
-                  </button>
-                  <button
-                    onClick={() => { setSubmissionSuccess(null); setActiveTab('apply'); }}
-                    className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-mono"
-                  >
-                    Submit Another Application
-                  </button>
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setActiveTab('status'); setSearchQuery(submissionSuccess.applicationId); }}
+                      className={primaryBtnClass}
+                    >
+                      Check Application Status
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setSubmissionSuccess(null); setActiveTab('apply'); }}
+                      className={secondaryBtnClass}
+                    >
+                      Submit Another Application
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
-              <div className="space-y-8">
-                {/* Hero Banner */}
-                <div className="relative rounded-3xl bg-gradient-to-b from-white/[0.05] to-black border border-white/10 p-8 sm:p-12 overflow-hidden text-center max-w-4xl mx-auto">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono mb-4">
-                    <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                    Official Partner Recruitment Platform
+              <div className="space-y-6">
+                {/* Page Title & Role Selection Banner */}
+                <div className={`rounded-[4px] border ${panelBg} p-6 sm:p-8 shadow-sm`}>
+                  <div className="border-b border-current/10 pb-5 mb-6">
+                    <h1 className="text-[24px] sm:text-[28px] font-extrabold tracking-tight">
+                      Partner &amp; Chauffeur Registration Form
+                    </h1>
+                    <p className={`text-[15px] font-medium mt-2 leading-relaxed ${isLight ? 'text-[#334155]' : 'text-[#cbd5e1]'}`}>
+                      Complete the official form below to apply as a registered Safari Driver or Licensed Tour Guide with Mumwe Safaris Uganda. All fields marked with an asterisk (*) are mandatory.
+                    </p>
                   </div>
-                  <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-white max-w-2xl mx-auto leading-tight">
-                    Drive and Guide with <span className="text-amber-400">Mumwe Safaris</span>
-                  </h1>
-                  <p className="text-sm sm:text-base text-white/60 max-w-xl mx-auto mt-4 leading-relaxed">
-                    Join Uganda’s premier wildlife and safari mobility network. Guaranteed daily bookings, premium tourist clientele, and verified digital dispatch across all national parks and cities.
-                  </p>
 
-                  {/* Track Selector */}
-                  <div className="grid grid-cols-2 gap-4 max-w-md mx-auto mt-8">
-                    <button
-                      type="button"
-                      onClick={() => setTrack('driver')}
-                      className={`p-4 rounded-2xl border text-left transition-all ${
-                        track === 'driver'
-                          ? 'border-amber-400 bg-amber-500/10 shadow-lg shadow-amber-500/10'
-                          : 'border-white/10 bg-white/[0.02] hover:border-white/20'
-                      }`}
-                    >
-                      <Car className="w-6 h-6 text-amber-400 mb-2" />
-                      <div className="font-bold text-sm text-white">Safari Driver / Chauffeur</div>
-                      <div className="text-[11px] text-white/50 mt-1">4x4 Fleet, Airport Transfers & City Rides</div>
-                    </button>
+                  <div>
+                    <label className={labelClass}>Select Application Category *</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                      <label
+                        onClick={() => setTrack('driver')}
+                        className={`cursor-pointer p-4 rounded-[4px] border-2 flex items-start gap-3 transition-colors ${
+                          track === 'driver'
+                            ? isLight
+                              ? 'border-[#1e3a8a] bg-[#eff6ff]'
+                              : 'border-[#3b82f6] bg-[#1e3a8a]/25'
+                            : isLight
+                            ? 'border-[#cbd5e1] bg-[#f8fafc] hover:border-[#94a3b8]'
+                            : 'border-[#2d323e] bg-[#181b22] hover:border-[#475569]'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="applicant_track"
+                          checked={track === 'driver'}
+                          onChange={() => setTrack('driver')}
+                          className="mt-1 w-4 h-4"
+                        />
+                        <div>
+                          <div className="text-[16px] font-extrabold">Safari Driver / Chauffeur</div>
+                          <div className={`text-[13px] font-medium mt-0.5 ${isLight ? 'text-[#475569]' : 'text-[#94a3b8]'}`}>
+                            4x4 Safari Vehicles, Executive Transfers &amp; City Mobility
+                          </div>
+                        </div>
+                      </label>
 
-                    <button
-                      type="button"
-                      onClick={() => setTrack('tour_guide')}
-                      className={`p-4 rounded-2xl border text-left transition-all ${
-                        track === 'tour_guide'
-                          ? 'border-amber-400 bg-amber-500/10 shadow-lg shadow-amber-500/10'
-                          : 'border-white/10 bg-white/[0.02] hover:border-white/20'
-                      }`}
-                    >
-                      <Compass className="w-6 h-6 text-amber-400 mb-2" />
-                      <div className="font-bold text-sm text-white">Licensed Tour Guide</div>
-                      <div className="text-[11px] text-white/50 mt-1">Wildlife Expeditions & Gorilla Trekking</div>
-                    </button>
+                      <label
+                        onClick={() => setTrack('tour_guide')}
+                        className={`cursor-pointer p-4 rounded-[4px] border-2 flex items-start gap-3 transition-colors ${
+                          track === 'tour_guide'
+                            ? isLight
+                              ? 'border-[#1e3a8a] bg-[#eff6ff]'
+                              : 'border-[#3b82f6] bg-[#1e3a8a]/25'
+                            : isLight
+                            ? 'border-[#cbd5e1] bg-[#f8fafc] hover:border-[#94a3b8]'
+                            : 'border-[#2d323e] bg-[#181b22] hover:border-[#475569]'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="applicant_track"
+                          checked={track === 'tour_guide'}
+                          onChange={() => setTrack('tour_guide')}
+                          className="mt-1 w-4 h-4"
+                        />
+                        <div>
+                          <div className="text-[16px] font-extrabold">Licensed Tour Guide</div>
+                          <div className={`text-[13px] font-medium mt-0.5 ${isLight ? 'text-[#475569]' : 'text-[#94a3b8]'}`}>
+                            National Park Expeditions, Gorilla Trekking &amp; Cultural Tours
+                          </div>
+                        </div>
+                      </label>
+                    </div>
                   </div>
                 </div>
 
-                {/* Form Container */}
-                <div className="max-w-3xl mx-auto rounded-3xl bg-[#090a0d] border border-white/10 p-6 sm:p-10">
-                  <form onSubmit={handleSubmitApplication} className="space-y-8">
-                    {errorMessage && (
-                      <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-3">
-                        <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
-                        <span>{errorMessage}</span>
+                {/* Main Application Form */}
+                <form onSubmit={handleSubmitApplication} className="space-y-6">
+                  {errorMessage && (
+                    <div className="p-4 rounded-[4px] bg-[#fef2f2] border border-[#f87171] text-[#991b1b] text-[14px] font-bold">
+                      {errorMessage}
+                    </div>
+                  )}
+
+                  {/* Section 1: Personal & Contact Details */}
+                  <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                    <div className={`px-6 py-3.5 border-b ${sectionHeaderBg}`}>
+                      <h2 className="text-[16px] font-extrabold uppercase tracking-wide">
+                        Section 1: Personal &amp; Contact Information
+                      </h2>
+                    </div>
+                    <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div>
+                        <label className={labelClass}>Full Legal Name *</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Denis Kiggundu"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          className={inputClass}
+                        />
                       </div>
-                    )}
 
-                    {/* Section 1: Personal Info */}
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-                        <Users className="w-4 h-4 text-amber-400" />
-                        <h3 className="text-xs font-mono uppercase tracking-widest text-amber-400 font-bold">1. Personal & Contact Details</h3>
+                      <div>
+                        <label className={labelClass}>Primary Phone Number (MTN / Airtel) *</label>
+                        <input
+                          type="tel"
+                          required
+                          placeholder="+256 700 000 000"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          className={inputClass}
+                        />
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-xs text-white/70 block mb-1">Full Legal Name *</label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="e.g. Denis Kiggundu"
-                            value={fullName}
-                            onChange={(e) => setFullName(e.target.value)}
-                            className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                          />
-                        </div>
+                      <div>
+                        <label className={labelClass}>Email Address *</label>
+                        <input
+                          type="email"
+                          required
+                          placeholder="applicant@example.com"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          className={inputClass}
+                        />
+                        <span className={helperClass}>
+                          Your approval notification and login OTP code will be sent to this email.
+                        </span>
+                      </div>
 
-                        <div>
-                          <label className="text-xs text-white/70 block mb-1">Primary Phone Number (MTN/Airtel) *</label>
-                          <input
-                            type="tel"
-                            required
-                            placeholder="+256 700 000 000"
-                            value={phone}
-                            onChange={(e) => setPhone(e.target.value)}
-                            className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                          />
-                        </div>
+                      <div>
+                        <label className={labelClass}>National ID Number (NIN) or Passport Number *</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. CM920384758392"
+                          value={nationalId}
+                          onChange={(e) => setNationalId(e.target.value)}
+                          className={`${inputClass} uppercase`}
+                        />
+                      </div>
 
-                        <div>
-                          <label className="text-xs text-white/70 block mb-1">Official Email Address *</label>
-                          <input
-                            type="email"
-                            required
-                            placeholder="denis@example.com"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                          />
-                          <span className="text-[10px] text-white/40 mt-1 block">Your activation OTP and login credentials will be delivered here.</span>
-                        </div>
+                      <div>
+                        <label className={labelClass}>Primary Operating City / Region *</label>
+                        <select
+                          value={operatingCity}
+                          onChange={(e) => setOperatingCity(e.target.value)}
+                          className={inputClass}
+                        >
+                          <option value="Kampala">Kampala Metropolitan</option>
+                          <option value="Entebbe">Entebbe International Corridor</option>
+                          <option value="Jinja">Jinja &amp; Eastern Region</option>
+                          <option value="Mbarara">Mbarara &amp; Western Safari Circuit</option>
+                          <option value="Fort Portal">Fort Portal / Kasese</option>
+                          <option value="Gulu">Gulu &amp; Northern Circuit</option>
+                        </select>
+                      </div>
 
-                        <div>
-                          <label className="text-xs text-white/70 block mb-1">National ID (NIN) or Passport Number *</label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="e.g. CM920384758392"
-                            value={nationalId}
-                            onChange={(e) => setNationalId(e.target.value)}
-                            className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none uppercase font-mono"
-                          />
-                        </div>
+                      <div>
+                        <label className={labelClass}>Years of Professional Experience *</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="45"
+                          required
+                          value={experienceYears}
+                          onChange={(e) => setExperienceYears(e.target.value)}
+                          className={inputClass}
+                        />
                       </div>
                     </div>
+                  </div>
 
-                    {/* Section 2: Role Details */}
-                    {track === 'driver' ? (
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-                          <Car className="w-4 h-4 text-amber-400" />
-                          <h3 className="text-xs font-mono uppercase tracking-widest text-amber-400 font-bold">2. Driving Accreditation & Vehicle Information</h3>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                          <div>
-                            <label className="text-xs text-white/70 block mb-1">Driving Permit Number *</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="e.g. DL-UG-984321"
-                              value={licenseNumber}
-                              onChange={(e) => setLicenseNumber(e.target.value)}
-                              className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none font-mono"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-xs text-white/70 block mb-1">Permit Class</label>
-                            <select
-                              value={licenseClass}
-                              onChange={(e) => setLicenseClass(e.target.value)}
-                              className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                            >
-                              <option value="Class B / CM">Class B / CM (Passenger Vehicle)</option>
-                              <option value="Class DL / DM">Class DL / DM (Tour Coach & Van)</option>
-                              <option value="Class A">Class A (Motorcycle Courier)</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="text-xs text-white/70 block mb-1">Commercial Experience (Years)</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max="40"
-                              value={experienceYears}
-                              onChange={(e) => setExperienceYears(e.target.value)}
-                              className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none font-mono"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-xs text-white/70 block mb-1">Vehicle Make *</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="Toyota"
-                              value={vehicleMake}
-                              onChange={(e) => setVehicleMake(e.target.value)}
-                              className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-xs text-white/70 block mb-1">Vehicle Model *</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="Land Cruiser Prado"
-                              value={vehicleModel}
-                              onChange={(e) => setVehicleModel(e.target.value)}
-                              className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-xs text-white/70 block mb-1">Registration Plate Number *</label>
-                            <input
-                              type="text"
-                              required
-                              placeholder="UBD 123A"
-                              value={vehiclePlate}
-                              onChange={(e) => setVehiclePlate(e.target.value)}
-                              className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none font-mono uppercase"
-                            />
-                          </div>
+                  {/* Section 2: Role-Specific Qualifications */}
+                  {track === 'driver' ? (
+                    <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                      <div className={`px-6 py-3.5 border-b ${sectionHeaderBg}`}>
+                        <h2 className="text-[16px] font-extrabold uppercase tracking-wide">
+                          Section 2: Driving Permit &amp; Vehicle Particulars
+                        </h2>
+                      </div>
+                      <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <label className={labelClass}>Uganda Driving Permit Number *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. DL-UG-984321"
+                            value={licenseNumber}
+                            onChange={(e) => setLicenseNumber(e.target.value)}
+                            className={inputClass}
+                          />
                         </div>
 
                         <div>
-                          <label className="text-xs text-white/70 block mb-1">Vehicle Classification Tier</label>
+                          <label className={labelClass}>Driving Permit Class *</label>
+                          <select
+                            value={licenseClass}
+                            onChange={(e) => setLicenseClass(e.target.value)}
+                            className={inputClass}
+                          >
+                            <option value="Class B / CM">Class B / CM (Passenger Vehicle)</option>
+                            <option value="Class DL / DM">Class DL / DM (Tour Coach &amp; Van)</option>
+                            <option value="Class A">Class A (Motorcycle Courier)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className={labelClass}>Vehicle Make *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. Toyota"
+                            value={vehicleMake}
+                            onChange={(e) => setVehicleMake(e.target.value)}
+                            className={inputClass}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={labelClass}>Vehicle Model *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. Land Cruiser Prado 4x4"
+                            value={vehicleModel}
+                            onChange={(e) => setVehicleModel(e.target.value)}
+                            className={inputClass}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={labelClass}>Vehicle Registration Plate Number *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. UBD 123A"
+                            value={vehiclePlate}
+                            onChange={(e) => setVehiclePlate(e.target.value)}
+                            className={`${inputClass} uppercase`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className={labelClass}>Service Classification Tier *</label>
                           <select
                             value={vehicleTier}
                             onChange={(e) => setVehicleTier(e.target.value)}
-                            className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
+                            className={inputClass}
                           >
                             <option value="safari_4x4">Safari 4x4 (Land Cruiser, Super Custom, Prado)</option>
                             <option value="go">Mumwe Go (Standard Sedan / Compact)</option>
@@ -736,301 +797,304 @@ export default function CareersPage() {
                           </select>
                         </div>
                       </div>
-                    ) : (
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-                          <Compass className="w-4 h-4 text-amber-400" />
-                          <h3 className="text-xs font-mono uppercase tracking-widest text-amber-400 font-bold">2. Guiding Credentials & Specialties</h3>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div>
-                            <label className="text-xs text-white/70 block mb-1">UWA / UTB Guide Accreditation ID</label>
-                            <input
-                              type="text"
-                              placeholder="e.g. UWA-TG-2024-893"
-                              value={uwaNumber}
-                              onChange={(e) => setUwaNumber(e.target.value)}
-                              className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none font-mono uppercase"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="text-xs text-white/70 block mb-1">Guiding Experience (Years)</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max="40"
-                              value={experienceYears}
-                              onChange={(e) => setExperienceYears(e.target.value)}
-                              className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none font-mono"
-                            />
-                          </div>
+                    </div>
+                  ) : (
+                    <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                      <div className={`px-6 py-3.5 border-b ${sectionHeaderBg}`}>
+                        <h2 className="text-[16px] font-extrabold uppercase tracking-wide">
+                          Section 2: Tour Guiding Credentials &amp; Specializations
+                        </h2>
+                      </div>
+                      <div className="p-6 sm:p-8 space-y-6">
+                        <div className="max-w-md">
+                          <label className={labelClass}>UWA / UTB Guide License Number *</label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. UWA-TG-2024-893"
+                            value={uwaNumber}
+                            onChange={(e) => setUwaNumber(e.target.value)}
+                            className={`${inputClass} uppercase`}
+                          />
                         </div>
 
                         <div>
-                          <label className="text-xs text-white/70 block mb-2">Fluent Languages</label>
-                          <div className="flex flex-wrap gap-2">
+                          <label className={labelClass}>Spoken Languages (Select all that apply)</label>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
                             {availableLanguages.map((lang) => {
                               const active = selectedLanguages.includes(lang);
                               return (
-                                <button
-                                  type="button"
+                                <label
                                   key={lang}
-                                  onClick={() => handleLanguageToggle(lang)}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all ${
+                                  className={`cursor-pointer px-3.5 py-2.5 rounded-[4px] border text-[14px] font-bold flex items-center gap-2.5 ${
                                     active
-                                      ? 'bg-amber-500 text-black font-bold border border-amber-400'
-                                      : 'bg-white/5 text-white/70 border border-white/10 hover:border-white/20'
+                                      ? isLight
+                                        ? 'bg-[#eff6ff] border-[#1e3a8a] text-[#1e3a8a]'
+                                        : 'bg-[#1e3a8a]/30 border-[#3b82f6] text-white'
+                                      : isLight
+                                      ? 'bg-white border-[#cbd5e1] text-[#334155]'
+                                      : 'bg-[#181b22] border-[#2d323e] text-[#cbd5e1]'
                                   }`}
                                 >
-                                  {lang} {active && '✓'}
-                                </button>
+                                  <input
+                                    type="checkbox"
+                                    checked={active}
+                                    onChange={() => handleLanguageToggle(lang)}
+                                    className="w-4 h-4"
+                                  />
+                                  <span>{lang}</span>
+                                </label>
                               );
                             })}
                           </div>
                         </div>
 
                         <div>
-                          <label className="text-xs text-white/70 block mb-2">Safari Specialties</label>
-                          <div className="flex flex-wrap gap-2">
+                          <label className={labelClass}>Safari Specialties (Select all that apply)</label>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                             {availableSpecialties.map((spec) => {
                               const active = selectedSpecialties.includes(spec);
                               return (
-                                <button
-                                  type="button"
+                                <label
                                   key={spec}
-                                  onClick={() => handleSpecialtyToggle(spec)}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all ${
+                                  className={`cursor-pointer px-3.5 py-2.5 rounded-[4px] border text-[14px] font-bold flex items-center gap-2.5 ${
                                     active
-                                      ? 'bg-amber-500 text-black font-bold border border-amber-400'
-                                      : 'bg-white/5 text-white/70 border border-white/10 hover:border-white/20'
+                                      ? isLight
+                                        ? 'bg-[#eff6ff] border-[#1e3a8a] text-[#1e3a8a]'
+                                        : 'bg-[#1e3a8a]/30 border-[#3b82f6] text-white'
+                                      : isLight
+                                      ? 'bg-white border-[#cbd5e1] text-[#334155]'
+                                      : 'bg-[#181b22] border-[#2d323e] text-[#cbd5e1]'
                                   }`}
                                 >
-                                  {spec} {active && '✓'}
-                                </button>
+                                  <input
+                                    type="checkbox"
+                                    checked={active}
+                                    onChange={() => handleSpecialtyToggle(spec)}
+                                    className="w-4 h-4"
+                                  />
+                                  <span>{spec}</span>
+                                </label>
                               );
                             })}
                           </div>
                         </div>
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {/* Section 3: Document Attachments */}
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-                        <Upload className="w-4 h-4 text-amber-400" />
-                        <h3 className="text-xs font-mono uppercase tracking-widest text-amber-400 font-bold">3. Verification Document Uploads (Images or PDFs)</h3>
+                  {/* Section 3: Verification Documents */}
+                  <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                    <div className={`px-6 py-3.5 border-b ${sectionHeaderBg}`}>
+                      <h2 className="text-[16px] font-extrabold uppercase tracking-wide">
+                        Section 3: Required Verification Documents
+                      </h2>
+                    </div>
+                    <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className={`p-4 rounded-[4px] border ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="text-[14px] font-bold">
+                            {track === 'driver' ? '1. Uganda Driving Permit (Front & Back) *' : '1. UWA Guide License Scan *'}
+                          </label>
+                          {documents.license && (
+                            <span className="text-[12px] font-extrabold text-emerald-700 dark:text-emerald-400">
+                              Attached
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => handleFileUpload('license', e)}
+                          className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer"
+                        />
+                        {uploadingDoc === 'license' && <span className={helperClass}>Reading file...</span>}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {/* Driving Permit or UWA Badge */}
-                        <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-2">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-bold text-white">
-                              {track === 'driver' ? 'Uganda Driving Permit (Front & Back)' : 'UWA Guide License Scan'} *
+                      <div className={`p-4 rounded-[4px] border ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="text-[14px] font-bold">
+                            2. National ID Card (NIN) or Passport *
+                          </label>
+                          {documents.national_id && (
+                            <span className="text-[12px] font-extrabold text-emerald-700 dark:text-emerald-400">
+                              Attached
                             </span>
-                            {documents.license && <span className="text-[10px] text-amber-400 font-mono">Uploaded ✓</span>}
-                          </div>
-                          <label className="cursor-pointer block text-center py-4 border border-dashed border-white/20 rounded-xl hover:border-amber-400 transition-colors">
-                            <Upload className="w-5 h-5 mx-auto text-amber-400 mb-1" />
-                            <span className="text-[11px] text-white/60">Click to select scan / PDF</span>
-                            <input
-                              type="file"
-                              accept="image/*,application/pdf"
-                              onChange={(e) => handleFileUpload('license', e)}
-                              className="hidden"
-                            />
-                          </label>
+                          )}
                         </div>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => handleFileUpload('national_id', e)}
+                          className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer"
+                        />
+                        {uploadingDoc === 'national_id' && <span className={helperClass}>Reading file...</span>}
+                      </div>
 
-                        {/* National ID / Passport */}
-                        <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-2">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-bold text-white">National ID Card (NIN) / Passport *</span>
-                            {documents.national_id && <span className="text-[10px] text-amber-400 font-mono">Uploaded ✓</span>}
-                          </div>
-                          <label className="cursor-pointer block text-center py-4 border border-dashed border-white/20 rounded-xl hover:border-amber-400 transition-colors">
-                            <Upload className="w-5 h-5 mx-auto text-amber-400 mb-1" />
-                            <span className="text-[11px] text-white/60">Click to select scan / PDF</span>
-                            <input
-                              type="file"
-                              accept="image/*,application/pdf"
-                              onChange={(e) => handleFileUpload('national_id', e)}
-                              className="hidden"
-                            />
+                      <div className={`p-4 rounded-[4px] border ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="text-[14px] font-bold">
+                            {track === 'driver' ? '3. Vehicle Logbook & Insurance Certificate' : '3. First Aid / Training Certificate'}
                           </label>
-                        </div>
-
-                        {/* Logbook or Accreditation */}
-                        <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-2">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-bold text-white">
-                              {track === 'driver' ? 'Vehicle Logbook & Insurance Certificate' : 'First Aid / Conservation Certificate'}
+                          {documents.logbook && (
+                            <span className="text-[12px] font-extrabold text-emerald-700 dark:text-emerald-400">
+                              Attached
                             </span>
-                            {documents.logbook && <span className="text-[10px] text-amber-400 font-mono">Uploaded ✓</span>}
-                          </div>
-                          <label className="cursor-pointer block text-center py-4 border border-dashed border-white/20 rounded-xl hover:border-amber-400 transition-colors">
-                            <Upload className="w-5 h-5 mx-auto text-amber-400 mb-1" />
-                            <span className="text-[11px] text-white/60">Click to select scan / PDF</span>
-                            <input
-                              type="file"
-                              accept="image/*,application/pdf"
-                              onChange={(e) => handleFileUpload('logbook', e)}
-                              className="hidden"
-                            />
-                          </label>
+                          )}
                         </div>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => handleFileUpload('logbook', e)}
+                          className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer"
+                        />
+                        {uploadingDoc === 'logbook' && <span className={helperClass}>Reading file...</span>}
+                      </div>
 
-                        {/* Candidate Passport Photo */}
-                        <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-2">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-bold text-white">Passport Photo / Driver Portrait *</span>
-                            {documents.avatar && <span className="text-[10px] text-amber-400 font-mono">Uploaded ✓</span>}
-                          </div>
-                          <label className="cursor-pointer block text-center py-4 border border-dashed border-white/20 rounded-xl hover:border-amber-400 transition-colors">
-                            <Upload className="w-5 h-5 mx-auto text-amber-400 mb-1" />
-                            <span className="text-[11px] text-white/60">Click to select photo</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) => handleFileUpload('avatar', e)}
-                              className="hidden"
-                            />
+                      <div className={`p-4 rounded-[4px] border ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="text-[14px] font-bold">
+                            4. Passport Photo / Portrait *
                           </label>
+                          {documents.avatar && (
+                            <span className="text-[12px] font-extrabold text-emerald-700 dark:text-emerald-400">
+                              Attached
+                            </span>
+                          )}
                         </div>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => handleFileUpload('avatar', e)}
+                          className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer"
+                        />
+                        {uploadingDoc === 'avatar' && <span className={helperClass}>Reading file...</span>}
                       </div>
                     </div>
+                  </div>
 
-                    {/* Terms & Submit */}
-                    <div className="pt-4 border-t border-white/10 space-y-4">
-                      <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 flex items-start gap-3">
-                        <input
-                          type="checkbox"
-                          id="terms"
-                          checked={agreedToTerms}
-                          onChange={(e) => setAgreedToTerms(e.target.checked)}
-                          className="mt-1 w-4 h-4 rounded border-white/30 text-amber-500 focus:ring-0 bg-black cursor-pointer"
-                        />
-                        <label htmlFor="terms" className="text-xs text-white/70 leading-relaxed cursor-pointer">
-                          I declare that all submitted credentials and attached documents are authentic and valid. I agree to abide by the <strong className="text-white">Mumwe Safaris Tourist Safety Code of Conduct</strong> and Uganda Wildlife Authority park regulations.
-                        </label>
-                      </div>
+                  {/* Section 4: Declaration & Submission */}
+                  <div className={`rounded-[4px] border ${panelBg} p-6 sm:p-8 shadow-sm space-y-5`}>
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={agreedToTerms}
+                        onChange={(e) => setAgreedToTerms(e.target.checked)}
+                        className="mt-1 w-4 h-4"
+                      />
+                      <span className="text-[14px] font-semibold leading-relaxed">
+                        I hereby declare that all information and documents submitted in this application are true and accurate. I agree to abide by the Mumwe Safaris Uganda Operational Standards, Road Safety Regulations, and Uganda Wildlife Authority Guidelines.
+                      </span>
+                    </label>
 
+                    <div className="pt-2">
                       <button
                         type="submit"
                         disabled={isSubmitting}
-                        className="w-full py-4 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-sm tracking-wider uppercase transition-all shadow-xl shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                        className={primaryBtnClass}
                       >
-                        <ShieldCheck className="w-4 h-4 text-black" />
-                        {isSubmitting ? 'Verifying & Submitting...' : 'Submit Official Application'}
+                        {isSubmitting ? 'Submitting Application...' : 'Submit Official Application'}
                       </button>
                     </div>
-                  </form>
-                </div>
+                  </div>
+                </form>
               </div>
             )}
           </div>
         )}
 
         {/* ================================================================= */}
-        {/* TAB 2: TRACK STATUS */}
+        {/* TAB 2: APPLICATION STATUS */}
         {/* ================================================================= */}
         {activeTab === 'status' && (
           <div className="max-w-2xl mx-auto space-y-6">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold tracking-tight text-white">Application Review Status</h2>
-              <p className="text-xs text-white/60">
-                Track your vetting progress, permit verification, and recruitment approval in real-time.
-              </p>
-            </div>
-
-            <form onSubmit={handleStatusSearch} className="flex gap-2">
-              <input
-                type="text"
-                required
-                placeholder="Enter Application Reference ID (e.g. app_9a8b7c6d) or Email"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none font-mono"
-              />
-              <button
-                type="submit"
-                disabled={isSearching}
-                className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs uppercase tracking-wider disabled:opacity-50 flex items-center gap-2"
-              >
-                <Search className="w-4 h-4 text-black" />
-                {isSearching ? 'Checking...' : 'Check Status'}
-              </button>
-            </form>
-
-            {statusError && (
-              <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
-                <span>{statusError}</span>
+            <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+              <div className={`px-6 py-4 border-b ${sectionHeaderBg}`}>
+                <h2 className="text-[20px] font-extrabold">Check Application Status</h2>
               </div>
-            )}
+              <div className="p-6 sm:p-8 space-y-5">
+                <p className="text-[15px] font-medium">
+                  Enter your Application Reference ID or your registered email address to verify the status of your application.
+                </p>
 
-            {statusResult && (
-              <div className="p-6 rounded-2xl bg-[#0a0a0c] border border-white/15 shadow-xl space-y-4">
-                <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                  <div>
-                    <h3 className="font-bold text-white text-base">{statusResult.full_name}</h3>
-                    <span className="text-[11px] font-mono text-white/40">{statusResult.email} • {statusResult.phone}</span>
-                  </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-mono font-bold ${
-                    statusResult.status === 'APPROVED'
-                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                      : statusResult.status === 'REJECTED'
-                      ? 'bg-red-500/20 text-red-400 border border-red-500/40'
-                      : 'bg-white/10 text-white/80 border border-white/20'
-                  }`}>
-                    {statusResult.status}
-                  </span>
-                </div>
+                <form onSubmit={handleStatusSearch} className="flex flex-col sm:flex-row gap-3">
+                  <input
+                    type="text"
+                    required
+                    placeholder="Application ID (e.g. app_9a8b7c6d) or Email Address"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className={`${inputClass} flex-1`}
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSearching}
+                    className={primaryBtnClass}
+                  >
+                    {isSearching ? 'Searching...' : 'Search Status'}
+                  </button>
+                </form>
 
-                <div className="grid grid-cols-2 gap-4 text-xs font-mono">
-                  <div>
-                    <span className="text-white/40 block text-[10px]">APPLICATION ID</span>
-                    <span className="text-white font-bold">{statusResult.id}</span>
+                {statusError && (
+                  <div className="p-4 rounded-[4px] bg-[#fef2f2] border border-[#f87171] text-[#991b1b] text-[14px] font-bold">
+                    {statusError}
                   </div>
-                  <div>
-                    <span className="text-white/40 block text-[10px]">TRACK</span>
-                    <span className="text-amber-400 font-bold uppercase">{statusResult.applicant_type}</span>
-                  </div>
-                  <div>
-                    <span className="text-white/40 block text-[10px]">EXPERIENCE</span>
-                    <span className="text-white">{statusResult.experience_years} Years</span>
-                  </div>
-                  <div>
-                    <span className="text-white/40 block text-[10px]">SUBMISSION DATE</span>
-                    <span className="text-white">{new Date(statusResult.created_at).toLocaleDateString()}</span>
-                  </div>
-                </div>
+                )}
 
-                {statusResult.status === 'APPROVED' && (
-                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 space-y-2">
-                    <div className="font-bold flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-                      Congratulations! Your Application is Approved.
+                {statusResult && (
+                  <div className={`mt-4 rounded-[4px] border p-5 space-y-4 ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
+                    <div className="flex items-center justify-between border-b border-current/10 pb-3">
+                      <div>
+                        <h3 className="text-[18px] font-extrabold">{statusResult.full_name}</h3>
+                        <p className="text-[13px] font-semibold opacity-75">
+                          {statusResult.email} • {statusResult.phone}
+                        </p>
+                      </div>
+                      <span className="px-3 py-1 rounded-[4px] text-[13px] font-extrabold border border-current/25">
+                        {statusResult.status}
+                      </span>
                     </div>
-                    <p className="text-[11px] text-white/80 leading-relaxed">
-                      Your credentials have been verified. An activation code has been sent to your email. You can now switch to the <strong>Partner & Driver Portal</strong> tab to log in with your OTP and access your live dashboard.
-                    </p>
-                    <button
-                      onClick={() => {
-                        setPortalEmail(statusResult.email);
-                        setActiveTab('portal');
-                      }}
-                      className="px-4 py-2 rounded-lg bg-amber-500 text-black font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 mt-2"
-                    >
-                      <KeyRound className="w-3.5 h-3.5 text-black" />
-                      Open Partner Portal to Set Password
-                    </button>
+
+                    <div className="grid grid-cols-2 gap-4 text-[14px]">
+                      <div>
+                        <span className="block text-[12px] font-bold uppercase opacity-60">Application ID</span>
+                        <span className="font-extrabold">{statusResult.id}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[12px] font-bold uppercase opacity-60">Category</span>
+                        <span className="font-extrabold uppercase">{statusResult.applicant_type}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[12px] font-bold uppercase opacity-60">Experience</span>
+                        <span className="font-extrabold">{statusResult.experience_years} Years</span>
+                      </div>
+                      <div>
+                        <span className="block text-[12px] font-bold uppercase opacity-60">Submitted On</span>
+                        <span className="font-extrabold">{new Date(statusResult.created_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+
+                    {statusResult.status === 'APPROVED' && (
+                      <div className="pt-3 border-t border-current/10 space-y-3">
+                        <p className="text-[14px] font-bold text-emerald-700 dark:text-emerald-400">
+                          Your application has been approved. Check your email inbox for your 6-digit login OTP code.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPortalEmail(statusResult.email);
+                            setActiveTab('portal');
+                          }}
+                          className={primaryBtnClass}
+                        >
+                          Proceed to Partner Login
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
+            </div>
           </div>
         )}
 
@@ -1038,273 +1102,245 @@ export default function CareersPage() {
         {/* TAB 3: PARTNER & DRIVER PORTAL (OTP LOGIN -> PASSWORD -> DASHBOARD) */}
         {/* ================================================================= */}
         {activeTab === 'portal' && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            
+          <div className="max-w-4xl mx-auto">
             {/* STEP 1: OTP LOGIN */}
             {portalStep === 'login' && (
-              <div className="max-w-md mx-auto p-8 rounded-3xl bg-[#090a0d] border border-white/10 shadow-2xl space-y-6">
-                <div className="text-center space-y-2">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
-                    <KeyRound className="w-6 h-6 text-amber-400" />
-                  </div>
-                  <h2 className="text-xl font-bold tracking-tight text-white">Partner & Driver Login</h2>
-                  <p className="text-xs text-white/60">
-                    Enter your approved email and the 6-digit OTP code sent to your inbox upon approval.
-                  </p>
+              <div className={`max-w-lg mx-auto rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                <div className={`px-6 py-4 border-b ${sectionHeaderBg}`}>
+                  <h2 className="text-[19px] font-extrabold">Approved Partner &amp; Driver Login</h2>
                 </div>
+                <div className="p-6 sm:p-8 space-y-5">
+                  <p className="text-[14px] font-medium leading-relaxed">
+                    Enter your approved email address and the 6-digit One-Time Passcode (OTP) sent to your email upon administrator approval.
+                  </p>
 
-                {portalError && (
-                  <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>{portalError}</span>
-                  </div>
-                )}
+                  {portalError && (
+                    <div className="p-3.5 rounded-[4px] bg-[#fef2f2] border border-[#f87171] text-[#991b1b] text-[14px] font-bold">
+                      {portalError}
+                    </div>
+                  )}
 
-                <form onSubmit={handleOtpLogin} className="space-y-4">
-                  <div>
-                    <label className="text-xs text-white/70 block mb-1">Registered Email Address</label>
-                    <input
-                      type="email"
-                      required
-                      placeholder="driver@example.com"
-                      value={portalEmail}
-                      onChange={(e) => setPortalEmail(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                    />
-                  </div>
+                  <form onSubmit={handleOtpLogin} className="space-y-5">
+                    <div>
+                      <label className={labelClass}>Registered Email Address *</label>
+                      <input
+                        type="email"
+                        required
+                        placeholder="driver@example.com"
+                        value={portalEmail}
+                        onChange={(e) => setPortalEmail(e.target.value)}
+                        className={inputClass}
+                      />
+                    </div>
 
-                  <div>
-                    <label className="text-xs text-white/70 block mb-1">6-Digit Activation Code (OTP)</label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={6}
-                      placeholder="123456"
-                      value={portalOtp}
-                      onChange={(e) => setPortalOtp(e.target.value.trim())}
-                      className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-amber-400 text-lg font-mono text-center tracking-widest focus:border-amber-400 focus:outline-none font-bold"
-                    />
-                    <span className="text-[10px] text-white/40 mt-1 block">Check your spam folder if you do not see the activation email in your inbox.</span>
-                  </div>
+                    <div>
+                      <label className={labelClass}>6-Digit Activation OTP *</label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={6}
+                        placeholder="123456"
+                        value={portalOtp}
+                        onChange={(e) => setPortalOtp(e.target.value.trim())}
+                        className={`${inputClass} tracking-widest text-center text-[18px] font-extrabold`}
+                      />
+                    </div>
 
-                  <button
-                    type="submit"
-                    disabled={portalLoading}
-                    className="w-full py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <Check className="w-4 h-4 text-black" />
-                    {portalLoading ? 'Verifying OTP...' : 'Verify OTP & Proceed'}
-                  </button>
-                </form>
+                    <button
+                      type="submit"
+                      disabled={portalLoading}
+                      className={`${primaryBtnClass} w-full`}
+                    >
+                      {portalLoading ? 'Verifying OTP...' : 'Verify OTP & Continue'}
+                    </button>
+                  </form>
+                </div>
               </div>
             )}
 
             {/* STEP 2: SET PERMANENT PASSWORD */}
             {portalStep === 'setup_password' && (
-              <div className="max-w-md mx-auto p-8 rounded-3xl bg-[#090a0d] border border-amber-500/30 shadow-2xl space-y-6">
-                <div className="text-center space-y-2">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400">
-                    <Lock className="w-6 h-6 text-amber-400" />
-                  </div>
-                  <h2 className="text-xl font-bold tracking-tight text-white">Create Your Permanent Password</h2>
-                  <p className="text-xs text-white/60">
-                    Your credentials have been verified. Set a secure password to access your driver dashboard anytime.
-                  </p>
+              <div className={`max-w-lg mx-auto rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                <div className={`px-6 py-4 border-b ${sectionHeaderBg}`}>
+                  <h2 className="text-[19px] font-extrabold">Set Your Account Password</h2>
                 </div>
+                <div className="p-6 sm:p-8 space-y-5">
+                  <p className="text-[14px] font-medium">
+                    Your OTP has been verified. Please create a permanent password to access your partner dashboard.
+                  </p>
 
-                {setupError && (
-                  <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>{setupError}</span>
-                  </div>
-                )}
+                  {setupError && (
+                    <div className="p-3.5 rounded-[4px] bg-[#fef2f2] border border-[#f87171] text-[#991b1b] text-[14px] font-bold">
+                      {setupError}
+                    </div>
+                  )}
 
-                <form onSubmit={handleSetupPassword} className="space-y-4">
-                  <div>
-                    <label className="text-xs text-white/70 block mb-1">New Password (Min. 6 characters)</label>
-                    <input
-                      type="password"
-                      required
-                      placeholder="••••••••"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                    />
-                  </div>
+                  <form onSubmit={handleSetupPassword} className="space-y-5">
+                    <div>
+                      <label className={labelClass}>New Password (Minimum 6 characters) *</label>
+                      <input
+                        type="password"
+                        required
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className={inputClass}
+                      />
+                    </div>
 
-                  <div>
-                    <label className="text-xs text-white/70 block mb-1">Confirm New Password</label>
-                    <input
-                      type="password"
-                      required
-                      placeholder="••••••••"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl bg-black border border-white/15 text-white text-xs focus:border-amber-400 focus:outline-none"
-                    />
-                  </div>
+                    <div>
+                      <label className={labelClass}>Confirm New Password *</label>
+                      <input
+                        type="password"
+                        required
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className={inputClass}
+                      />
+                    </div>
 
-                  <button
-                    type="submit"
-                    disabled={setupLoading}
-                    className="w-full py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <ShieldCheck className="w-4 h-4 text-black" />
-                    {setupLoading ? 'Saving Password...' : 'Save Password & Enter Dashboard'}
-                  </button>
-                </form>
+                    <button
+                      type="submit"
+                      disabled={setupLoading}
+                      className={`${primaryBtnClass} w-full`}
+                    >
+                      {setupLoading ? 'Saving Password...' : 'Save Password & Enter Dashboard'}
+                    </button>
+                  </form>
+                </div>
               </div>
             )}
 
             {/* STEP 3: DRIVER & GUIDE DASHBOARD */}
             {portalStep === 'dashboard' && portalUser && (
               <div className="space-y-6">
-                {/* Dashboard Header Bar */}
-                <div className="p-6 rounded-3xl bg-[#090a0d] border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xl uppercase">
-                      {portalUser.full_name?.substring(0, 2) || 'MS'}
+                <div className={`rounded-[4px] border ${panelBg} p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4`}>
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-[22px] font-extrabold">{portalUser.full_name}</h2>
+                      <span className="px-2.5 py-0.5 rounded-[4px] text-[12px] font-extrabold border border-current/25 uppercase">
+                        {portalUser.role === 'driver' ? 'Approved Driver' : 'Approved Tour Guide'}
+                      </span>
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-xl font-bold text-white">{portalUser.full_name}</h2>
-                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase">
-                          {portalUser.role === 'driver' ? 'Verified Driver' : 'Licensed Guide'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-white/50 font-mono mt-0.5">
-                        {portalUser.email} • {portalUser.phone}
-                      </p>
-                    </div>
+                    <p className="text-[14px] font-semibold opacity-75 mt-1">
+                      {portalUser.email} • {portalUser.phone}
+                    </p>
                   </div>
 
-                  <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                  <div className="flex items-center gap-3">
                     <button
+                      type="button"
                       onClick={handleToggleOnline}
                       disabled={statusUpdating}
-                      className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-2 ${
-                        isOnline
-                          ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
-                          : 'bg-white/10 hover:bg-white/15 text-white/70'
-                      }`}
+                      className={primaryBtnClass}
                     >
-                      <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-black animate-pulse' : 'bg-white/40'}`} />
-                      {statusUpdating ? 'Updating...' : isOnline ? 'Online & Active' : 'Go Online'}
+                      {statusUpdating ? 'Updating...' : isOnline ? 'Status: Online (Active)' : 'Go Online'}
                     </button>
                     <button
+                      type="button"
                       onClick={handlePortalLogout}
-                      className="p-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-white/60 hover:text-white"
-                      title="Log Out"
+                      className={secondaryBtnClass}
                     >
-                      <LogOut className="w-4 h-4 text-amber-400" />
+                      Log Out
                     </button>
                   </div>
                 </div>
 
-                {/* Dashboard Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {/* Card 1: Equipment / Credentials */}
-                  <div className="p-6 rounded-3xl bg-[#090a0d] border border-white/10 space-y-4">
-                    <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-                      <Car className="w-4 h-4 text-amber-400" />
-                      <h3 className="font-bold text-white text-xs uppercase tracking-wider">Accreditation & Specs</h3>
+                  {/* Card 1: Credentials */}
+                  <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                    <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                      <h3 className="text-[14px] font-extrabold uppercase">Accreditation Details</h3>
                     </div>
-
-                    {portalUser.role === 'driver' ? (
-                      <div className="space-y-3 text-xs font-mono">
-                        <div>
-                          <span className="text-white/40 block text-[10px]">VEHICLE</span>
-                          <span className="text-white font-bold">{portalUser.vehicle_details?.make || 'Toyota'} {portalUser.vehicle_details?.model || 'Safari 4x4'}</span>
-                        </div>
-                        <div>
-                          <span className="text-white/40 block text-[10px]">PLATE NUMBER</span>
-                          <span className="text-amber-400 font-bold">{portalUser.vehicle_details?.registration_plate || portalUser.driver_details?.license_number || 'REGISTERED'}</span>
-                        </div>
-                        <div>
-                          <span className="text-white/40 block text-[10px]">VEHICLE TIER</span>
-                          <span className="text-white uppercase">{portalUser.vehicle_details?.tier || 'safari_4x4'}</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-3 text-xs font-mono">
-                        <div>
-                          <span className="text-white/40 block text-[10px]">UWA ACCREDITATION</span>
-                          <span className="text-amber-400 font-bold">{portalUser.guide_details?.license_number || 'UWA CERTIFIED'}</span>
-                        </div>
-                        <div>
-                          <span className="text-white/40 block text-[10px]">DAILY EXPEDITION RATE</span>
-                          <span className="text-white font-bold">UGX 150,000 / day</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Card 2: Performance & Earnings */}
-                  <div className="p-6 rounded-3xl bg-[#090a0d] border border-white/10 space-y-4">
-                    <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-                      <Activity className="w-4 h-4 text-amber-400" />
-                      <h3 className="font-bold text-white text-xs uppercase tracking-wider">Dispatch Performance</h3>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-                      <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                        <span className="text-white/40 block text-[10px]">TODAY TRIPS</span>
-                        <span className="text-xl font-bold text-white">0</span>
-                      </div>
-                      <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                        <span className="text-white/40 block text-[10px]">RATING</span>
-                        <span className="text-xl font-bold text-amber-400">5.0 ★</span>
-                      </div>
-                      <div className="col-span-2 p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                        <span className="text-white/40 block text-[10px]">WALLET BALANCE</span>
-                        <span className="text-lg font-bold text-white">UGX 0</span>
-                      </div>
+                    <div className="p-5 space-y-3 text-[14px]">
+                      {portalUser.role === 'driver' ? (
+                        <>
+                          <div>
+                            <span className="block text-[12px] font-bold uppercase opacity-60">Assigned Vehicle</span>
+                            <span className="font-extrabold">
+                              {portalUser.vehicle_details?.make || 'Toyota'} {portalUser.vehicle_details?.model || 'Safari 4x4'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="block text-[12px] font-bold uppercase opacity-60">Registration Plate</span>
+                            <span className="font-extrabold">
+                              {portalUser.vehicle_details?.registration_plate || portalUser.driver_details?.license_number || 'REGISTERED'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="block text-[12px] font-bold uppercase opacity-60">Service Tier</span>
+                            <span className="font-extrabold uppercase">{portalUser.vehicle_details?.tier || 'safari_4x4'}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div>
+                            <span className="block text-[12px] font-bold uppercase opacity-60">UWA Accreditation</span>
+                            <span className="font-extrabold">{portalUser.guide_details?.license_number || 'UWA CERTIFIED'}</span>
+                          </div>
+                          <div>
+                            <span className="block text-[12px] font-bold uppercase opacity-60">Status</span>
+                            <span className="font-extrabold">Approved &amp; Active</span>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
-                  {/* Card 3: Live GPS Telemetry Transmission */}
-                  <div className="p-6 rounded-3xl bg-[#090a0d] border border-amber-500/20 space-y-4">
-                    <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                      <div className="flex items-center gap-2">
-                        <Radio className="w-4 h-4 text-amber-400" />
-                        <h3 className="font-bold text-white text-xs uppercase tracking-wider">Live GPS Telemetry</h3>
-                      </div>
-                      <span className="text-[10px] font-mono text-amber-400 animate-pulse">ACTIVE FEED</span>
+                  {/* Card 2: Account Summary */}
+                  <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                    <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                      <h3 className="text-[14px] font-extrabold uppercase">Operations Summary</h3>
                     </div>
-
-                    <div className="space-y-2 text-xs font-mono">
-                      <div className="flex justify-between">
-                        <span className="text-white/40">LATITUDE</span>
-                        <span className="text-white font-bold">{currentLat}</span>
+                    <div className="p-5 space-y-3 text-[14px]">
+                      <div className="flex justify-between border-b border-current/10 pb-2">
+                        <span className="font-semibold">Completed Trips:</span>
+                        <span className="font-extrabold">0</span>
+                      </div>
+                      <div className="flex justify-between border-b border-current/10 pb-2">
+                        <span className="font-semibold">Partner Rating:</span>
+                        <span className="font-extrabold">5.0</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-white/40">LONGITUDE</span>
-                        <span className="text-white font-bold">{currentLng}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-white/40">HEADING</span>
-                        <span className="text-white">{heading}°</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-white/40">LAST SYNC</span>
-                        <span className="text-amber-400">{lastLocationPing || 'Initial location set'}</span>
+                        <span className="font-semibold">Wallet Balance:</span>
+                        <span className="font-extrabold">UGX 0</span>
                       </div>
                     </div>
+                  </div>
 
-                    <button
-                      onClick={handleTransmitGps}
-                      disabled={transmittingGps}
-                      className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs uppercase tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10"
-                    >
-                      <Navigation className="w-3.5 h-3.5 text-black" />
-                      {transmittingGps ? 'Transmitting GPS...' : 'Transmit Current Location'}
-                    </button>
+                  {/* Card 3: Live GPS Telemetry */}
+                  <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                    <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                      <h3 className="text-[14px] font-extrabold uppercase">Live GPS Location Feed</h3>
+                    </div>
+                    <div className="p-5 space-y-3 text-[14px]">
+                      <div className="flex justify-between">
+                        <span className="font-semibold">Latitude:</span>
+                        <span className="font-extrabold">{currentLat}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-semibold">Longitude:</span>
+                        <span className="font-extrabold">{currentLng}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-semibold">Last Update:</span>
+                        <span className="font-extrabold">{lastLocationPing || 'Ready'}</span>
+                      </div>
 
-                    {gpsFeedback && (
-                      <p className="text-[11px] font-mono leading-relaxed text-amber-400">
-                        {gpsFeedback.text}
-                      </p>
-                    )}
+                      <button
+                        type="button"
+                        onClick={handleTransmitGps}
+                        disabled={transmittingGps}
+                        className={`${primaryBtnClass} w-full mt-2`}
+                      >
+                        {transmittingGps ? 'Sending Location...' : 'Transmit Current GPS Location'}
+                      </button>
+
+                      {gpsFeedback && (
+                        <p className="text-[13px] font-bold pt-1">
+                          {gpsFeedback.text}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1313,97 +1349,52 @@ export default function CareersPage() {
         )}
 
         {/* ================================================================= */}
-        {/* TAB 4: REQUIREMENTS & FAQS */}
+        {/* TAB 4: REQUIREMENTS */}
         {/* ================================================================= */}
         {activeTab === 'requirements' && (
-          <div className="max-w-4xl mx-auto space-y-8">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-bold tracking-tight text-white">Partner Eligibility & Standards</h2>
-              <p className="text-xs text-white/60">
-                To uphold tourist safety, all Mumwe Safaris drivers and tour guides are vetted against national standards.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Driver Requirements */}
-              <div className="bg-[#0a0a0c] border border-white/10 rounded-2xl p-6 space-y-4">
-                <div className="flex items-center gap-3 border-b border-white/10 pb-3">
-                  <Car className="w-6 h-6 text-amber-400" />
-                  <h3 className="font-bold text-white text-base">Chauffeur & Driver Standards</h3>
-                </div>
-                <ul className="text-xs text-white/70 space-y-2.5">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>Valid Uganda Driving Permit (Class B, CM, DL, or DM) with clean record.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>Minimum of 2 years verifiable commercial or safari driving experience.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>National Identification Card (NIN) or valid Passport.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>Vehicle must be roadworthy with working AC, seatbelts, comprehensive insurance, and valid inspection.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>PSV Badge or Defensive Driving Certificate is an added advantage.</span>
-                  </li>
-                </ul>
+          <div className="space-y-6">
+            <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+              <div className={`px-6 py-4 border-b ${sectionHeaderBg}`}>
+                <h2 className="text-[20px] font-extrabold">Mandatory Partner Qualification Requirements</h2>
               </div>
-
-              {/* Guide Requirements */}
-              <div className="bg-[#0a0a0c] border border-white/10 rounded-2xl p-6 space-y-4">
-                <div className="flex items-center gap-3 border-b border-white/10 pb-3">
-                  <Compass className="w-6 h-6 text-amber-400" />
-                  <h3 className="font-bold text-white text-base">Licensed Tour Guide Standards</h3>
+              <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-3">
+                  <h3 className="text-[17px] font-extrabold border-b border-current/15 pb-2">
+                    1. Safari Driver &amp; Chauffeur Requirements
+                  </h3>
+                  <ul className="list-disc pl-5 space-y-2 text-[15px] font-medium leading-relaxed">
+                    <li>Valid Uganda Driving Permit (Class B, CM, DL, or DM) with an unblemished safety record.</li>
+                    <li>Minimum of 2 years verifiable commercial or safari driving experience in Uganda.</li>
+                    <li>Valid National Identification Card (NIN) or Passport.</li>
+                    <li>Roadworthy vehicle with comprehensive insurance, working air conditioning, and valid inspection certificate.</li>
+                    <li>Public Service Vehicle (PSV) badge or defensive driving certification is highly recommended.</li>
+                  </ul>
                 </div>
-                <ul className="text-xs text-white/70 space-y-2.5">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>Accredited by Uganda Wildlife Authority (UWA) or Uganda Tourism Board (UTB).</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>Demonstrated fluency in English. Additional languages (French, German, Spanish) receive priority tourist bookings.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>Deep expertise in Ugandan flora, fauna, gorilla tracking etiquette, and cultural history.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>First Aid certification and emergency field response training.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>Commitment to environmental conservation and anti-poaching protocols.</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
 
-            <div className="text-center pt-4">
-              <button
-                onClick={() => { setActiveTab('apply'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs uppercase tracking-wider"
-              >
-                Start Your Partner Application
-              </button>
+                <div className="space-y-3">
+                  <h3 className="text-[17px] font-extrabold border-b border-current/15 pb-2">
+                    2. Licensed Tour Guide Requirements
+                  </h3>
+                  <ul className="list-disc pl-5 space-y-2 text-[15px] font-medium leading-relaxed">
+                    <li>Valid accreditation from the Uganda Wildlife Authority (UWA) or Uganda Tourism Board (UTB).</li>
+                    <li>Strong command of English; additional international languages (French, German, Spanish) are an advantage.</li>
+                    <li>Extensive knowledge of Uganda national parks, wildlife conservation, and gorilla trekking protocols.</li>
+                    <li>Valid First Aid certification and field emergency response readiness.</li>
+                    <li>Valid National Identification Card (NIN) or Passport.</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-white/10 mt-16 py-8 text-center text-xs text-white/40">
-        <p>© 2026 Mumwe Safaris Uganda Ltd. All rights reserved.</p>
-        <p className="mt-1 font-mono text-[10px]">
-          Recruitment Inquiries: <a href="mailto:careers@mumwesafarisuganda.com" className="text-amber-400 hover:underline">careers@mumwesafarisuganda.com</a> | Kampala, Uganda
-        </p>
+      {/* Classic Footer */}
+      <footer className={`border-t ${headerBg} mt-12 py-6 text-center text-[13px] font-semibold`}>
+        <div className="max-w-5xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <span>© 2026 Mumwe Safaris Uganda Ltd. All rights reserved.</span>
+          <span>Official Recruitment &amp; Partner Portal (careers.mumwesafarisuganda.com)</span>
+        </div>
       </footer>
     </div>
   );

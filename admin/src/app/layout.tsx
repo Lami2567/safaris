@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AdminLayoutWrapper } from '../components/AdminLayoutWrapper';
+import { ThemeProvider } from '../components/ThemeProvider';
 
 export const metadata: Metadata = {
   title: 'SAFARIS Uganda - Operations & Recruitment',
-  description: 'Pure Black Control Center & Careers Portal for SAFARIS Mobility & Tourism Platform',
+  description: 'Control Center & Careers Portal for SAFARIS Mobility & Tourism Platform',
 };
 
 export default function RootLayout({
@@ -13,9 +14,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className="bg-black text-white selection:bg-white selection:text-black antialiased">
-        <AdminLayoutWrapper>{children}</AdminLayoutWrapper>
+    <html lang="en" className="light" suppressHydrationWarning>
+      <body className="antialiased">
+        <ThemeProvider>
+          <AdminLayoutWrapper>{children}</AdminLayoutWrapper>
+        </ThemeProvider>
       </body>
     </html>
   );
