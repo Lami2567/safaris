@@ -132,7 +132,7 @@ export default function CareersPage() {
         setIncomingRequests(data?.incomingRequests || []);
         setCompletedTrips(data?.completedTrips || []);
         if (data?.driverId) {
-          const notifs = await api.getUserNotifications(data.driverId, token).catch(() => []);
+          const notifs = await api.getPartnerNotifications(data.driverId, token).catch(() => []);
           setPartnerNotifications(Array.isArray(notifs) ? notifs : []);
         }
       }
@@ -553,7 +553,7 @@ export default function CareersPage() {
     setActionBusyId(tripId);
     setOperationalFeedback(null);
     try {
-      await api.rejectTrip(tripId, 'Declined by driver', portalAuthToken);
+      await api.rejectTrip(tripId, portalAuthToken);
       setIncomingRequests((prev) => prev.filter((r) => (r.tripId || r.id) !== tripId));
       setOperationalFeedback({ text: 'Ride request declined.', type: 'success' });
     } catch (err: any) {
@@ -583,7 +583,7 @@ export default function CareersPage() {
     setActionBusyId(bookingId);
     setOperationalFeedback(null);
     try {
-      await api.updateGuideBookingStatus(bookingId, nextStatus, portalAuthToken);
+      await api.updatePartnerBookingStatus(bookingId, nextStatus, portalAuthToken);
       setOperationalFeedback({ text: `Safari booking status updated to ${nextStatus}. Customer notified in real time.`, type: 'success' });
       await loadPartnerDashboard(portalAuthToken, 'tour_guide');
     } catch (err: any) {
@@ -603,7 +603,7 @@ export default function CareersPage() {
     setActionBusyId('cashout');
     setOperationalFeedback(null);
     try {
-      const res = await api.cashoutDriverEarnings(balance, portalUser?.phone || '', portalAuthToken);
+      const res = await api.driverCashOut(portalAuthToken);
       setOperationalFeedback({ text: res.message || 'Withdrawal completed.', type: 'success' });
       await loadPartnerDashboard(portalAuthToken, 'driver');
     } catch (err: any) {
