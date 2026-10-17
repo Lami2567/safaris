@@ -11,18 +11,28 @@ export class DriverController {
       const result = DriverService.setAvailability(driverId, Boolean(isOnline));
       return sendSuccess(res, result);
     } catch (err: any) {
-      return sendError(res, 'AVAILABILITY_UPDATE_FAILED', err.message);
+      const status = err.message?.includes('not approved') || err.message?.includes('pending') ? 403 : 400;
+      return sendError(res, 'AVAILABILITY_UPDATE_FAILED', err.message, status);
     }
   }
 
   public static updateLocation(req: AuthenticatedRequest, res: Response) {
     try {
       const driverId = req.user!.userId;
-      const { lat, lng, heading } = req.body;
-      const result = DriverService.updateLocation(driverId, Number(lat), Number(lng), Number(heading || 0));
+      const { lat, lng, heading, speed, accuracy, batteryLevel } = req.body;
+      const result = DriverService.updateLocation(
+        driverId,
+        Number(lat),
+        Number(lng),
+        Number(heading || 0),
+        Number(speed || 0),
+        Number(accuracy || 5),
+        batteryLevel !== undefined ? Number(batteryLevel) : undefined
+      );
       return sendSuccess(res, result);
     } catch (err: any) {
-      return sendError(res, 'LOCATION_UPDATE_FAILED', err.message);
+      const status = err.message?.includes('not approved') ? 403 : 400;
+      return sendError(res, 'LOCATION_UPDATE_FAILED', err.message, status);
     }
   }
 

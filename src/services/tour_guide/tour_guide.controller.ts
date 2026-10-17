@@ -22,14 +22,28 @@ export class TourGuideController {
     }
   }
 
+  public static getDashboard(req: Request, res: Response) {
+    try {
+      const guideId = (req as any).user?.userId || (req.query.guideId as string);
+      if (!guideId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required for guide dashboard.', 401);
+      }
+      const dashboard = TourGuideService.getGuideDashboard(guideId);
+      return sendSuccess(res, dashboard);
+    } catch (err: any) {
+      return sendError(res, 'GUIDE_DASHBOARD_FAILED', err.message, 400);
+    }
+  }
+
   public static toggleAvailability(req: Request, res: Response) {
     try {
       const guideId = (req as any).user?.userId || req.params.id;
-      const { isAvailable } = req.body;
+      const isAvailable = req.body.isAvailable !== undefined ? req.body.isAvailable : req.body.isOnline;
       const updated = TourGuideService.toggleAvailability(guideId, Boolean(isAvailable));
       return sendSuccess(res, updated);
     } catch (err: any) {
-      return sendError(res, 'TOGGLE_AVAILABILITY_FAILED', err.message, 400);
+      const status = err.message?.includes('not approved') || err.message?.includes('pending') ? 403 : 400;
+      return sendError(res, 'TOGGLE_AVAILABILITY_FAILED', err.message, status);
     }
   }
 

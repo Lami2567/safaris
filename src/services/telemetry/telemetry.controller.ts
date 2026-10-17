@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { db, localStore } from '../../config/database';
-import { emitToTrip, broadcastToFleet } from '../../realtime/socket_server';
+import { emitToTrip, broadcastDriverSnapshot } from '../../realtime/socket_server';
 import { sendSuccess, sendError } from '../../shared/response';
 
 export class TelemetryController {
@@ -20,7 +20,13 @@ export class TelemetryController {
 
       for (const pt of points) {
         const id = pt.id || `loc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        const driverId = pt.driverId || pt.driver_id || req.body.driverId || req.body.driver_id || (req as any).user?.id || 'driver-001';
+        const driverId =
+          pt.driverId ||
+          pt.driver_id ||
+          req.body.driverId ||
+          req.body.driver_id ||
+          (req as any).user?.userId ||
+          (req as any).user?.id;
         const tripId = pt.tripId || pt.trip_id || req.body.tripId || req.body.trip_id || null;
         const safariLegId = pt.safariLegId || pt.safari_leg_id || req.body.safariLegId || req.body.safari_leg_id || null;
         const lat = parseFloat(pt.latitude || pt.lat);
@@ -31,6 +37,15 @@ export class TelemetryController {
         const batteryLevel = pt.batteryLevel != null ? parseFloat(pt.batteryLevel) : (pt.battery_level != null ? parseFloat(pt.battery_level) : null);
         const isOfflineQueued = pt.isOfflineQueued === true || pt.is_offline_sync === true;
         const recordedAt = pt.recorded_at ? new Date(pt.recorded_at) : (pt.recordedAt ? new Date(pt.recordedAt) : (pt.timestamp ? new Date(pt.timestamp) : new Date()));
+
+        if (!driverId || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+          continue;
+        }
+
+        const drv = localStore.drivers.get(driverId);
+        if (!drv || drv.is_approved !== true || drv.approval_status !== 'APPROVED') {
+          continue;
+        }
 
         // 1. Deduplicate & save to localStore fallback
         if (!localStore.location_points.has(id)) {
@@ -76,18 +91,13 @@ export class TelemetryController {
           driver.speed = latestPoint.speed;
           driver.battery_level = latestPoint.battery_level;
           driver.updated_at = new Date().toISOString();
-        }
-
-        if (db.isPostgresConnected) {
-          await db.query(
-            `UPDATE drivers SET current_lat = $1, current_lng = $2, heading = $3, updated_at = NOW() WHERE id = $4`,
-            [latestPoint.lat, latestPoint.lng, latestPoint.heading, latestPoint.driver_id]
-          );
+          await db.persistDriver(driver);
         }
 
         // Broadcast latest telemetry to trip room and admin fleet stream
         if (latestPoint.trip_id) {
           emitToTrip(latestPoint.trip_id, 'trip:driver_location', {
+            tripId: latestPoint.trip_id,
             driverId: latestPoint.driver_id,
             lat: latestPoint.lat,
             lng: latestPoint.lng,
@@ -97,18 +107,7 @@ export class TelemetryController {
           });
         }
 
-        broadcastToFleet({
-          driverId: latestPoint.driver_id,
-          lat: latestPoint.lat,
-          lng: latestPoint.lng,
-          heading: latestPoint.heading,
-          speed: latestPoint.speed,
-          accuracy: latestPoint.accuracy,
-          batteryLevel: latestPoint.battery_level,
-          tripId: latestPoint.trip_id,
-          safariLegId: latestPoint.safari_leg_id,
-          updatedAt: new Date().toISOString(),
-        });
+        broadcastDriverSnapshot(latestPoint.driver_id, 'fleet:telemetry_update');
       }
 
       return sendSuccess(res, {

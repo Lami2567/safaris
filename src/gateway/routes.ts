@@ -67,6 +67,8 @@ apiRouter.get('/admin/trips', authenticate, requireRole('admin'), AdminControlle
 apiRouter.get('/admin/deliveries', authenticate, requireRole('admin'), AdminController.getAllDeliveries);
 apiRouter.get('/admin/fleet', authenticate, requireRole('admin'), AdminController.getDriversFleet);
 apiRouter.get('/admin/live-fleet', authenticate, requireRole('admin'), AdminAuditController.getLiveFleet);
+apiRouter.get('/admin/live-fleet/stream', authenticate, requireRole('admin'), AdminAuditController.streamLiveFleet);
+apiRouter.get('/realtime/stream', authenticate, AdminAuditController.streamUserEvents);
 apiRouter.post('/admin/audit-log', authenticate, requireRole('admin'), AdminAuditController.recordAudit);
 apiRouter.get('/admin/audit-logs', authenticate, requireRole('admin'), AdminAuditController.getAuditLogs);
 apiRouter.get('/admin/users', authenticate, requireRole('admin'), AdminController.getAllUsers);
@@ -110,7 +112,9 @@ apiRouter.post('/users/role', authenticate, UserController.switchRole);
 apiRouter.get('/drivers/nearby', DriverController.getNearby);
 apiRouter.get('/drivers/dashboard', authenticate, DriverController.getDashboard);
 apiRouter.post('/drivers/status', authenticate, DriverController.setAvailability);
+apiRouter.put('/drivers/status', authenticate, DriverController.setAvailability);
 apiRouter.post('/drivers/location', authenticate, DriverController.updateLocation);
+apiRouter.put('/drivers/location', authenticate, DriverController.updateLocation);
 apiRouter.post('/drivers/cashout', authenticate, DriverController.cashOut);
 
 // -------------------------------------------------------------
@@ -121,6 +125,7 @@ apiRouter.post('/trips', authenticate, TripController.createTrip);
 apiRouter.get('/trips/active', authenticate, TripController.getActiveTrip);
 apiRouter.get('/trips/:tripId', TripController.getTrip);
 apiRouter.post('/trips/:tripId/accept', authenticate, TripController.acceptTrip);
+apiRouter.post('/trips/:tripId/reject', authenticate, TripController.rejectTrip);
 apiRouter.post('/trips/:tripId/location', authenticate, TripController.updateLocation);
 apiRouter.put('/trips/:tripId/status', authenticate, TripController.updateStatus);
 apiRouter.post('/trips/:tripId/rate', authenticate, TripController.rateTrip);
@@ -144,13 +149,18 @@ apiRouter.delete('/tourism/packages/:id', TourismController.deletePackage);
 apiRouter.post('/tourism/bookings', authenticate, TourismController.createBooking);
 apiRouter.get('/tourism/bookings', TourismController.getAllBookings);
 apiRouter.get('/tourism/bookings/:id', TourismController.getBookingById);
-apiRouter.put('/tourism/bookings/:id/status', TourismController.updateBookingStatus);
+apiRouter.put('/tourism/bookings/:id/assign-guide', authenticate, requireRole('admin'), TourismController.assignGuide);
+apiRouter.put('/tourism/bookings/:id/status', authenticate, TourismController.updateBookingStatus);
 apiRouter.get('/tourism/user/bookings', authenticate, TourismController.getUserBookings);
 
 // -------------------------------------------------------------
 // Tour Guides
 // -------------------------------------------------------------
 apiRouter.get('/guides', TourGuideController.getAllGuides);
+apiRouter.get('/guides/dashboard', authenticate, TourGuideController.getDashboard);
+apiRouter.get('/guides/me/dashboard', authenticate, TourGuideController.getDashboard);
+apiRouter.put('/guides/me/availability', authenticate, TourGuideController.toggleAvailability);
+apiRouter.post('/guides/status', authenticate, TourGuideController.toggleAvailability);
 apiRouter.get('/guides/:id', TourGuideController.getGuideById);
 apiRouter.post('/guides', TourGuideController.createGuide);
 apiRouter.put('/guides/:id', TourGuideController.updateGuide);

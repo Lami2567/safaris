@@ -140,13 +140,30 @@ export class TourismController {
     }
   }
 
+  public static assignGuide(req: Request, res: Response) {
+    try {
+      const guideId = req.body.guideId || req.body.tourGuideId;
+      if (!guideId) {
+        return sendError(res, 'INVALID_INPUT', 'guideId is required to assign a tour guide.', 400);
+      }
+      const booking = TourismService.assignGuideToBooking(req.params.id, guideId);
+      return sendSuccess(res, booking);
+    } catch (err: any) {
+      const code = err.message?.includes('Only approved') ? 403 : 400;
+      return sendError(res, 'ASSIGN_GUIDE_FAILED', err.message, code);
+    }
+  }
+
   public static updateBookingStatus(req: Request, res: Response) {
     try {
       const { status } = req.body;
-      const booking = TourismService.updateBookingStatus(req.params.id, status);
+      const actorId = (req as any).user?.userId;
+      const actorRole = (req as any).user?.role;
+      const booking = TourismService.updateBookingStatus(req.params.id, status, actorId, actorRole);
       return sendSuccess(res, booking);
     } catch (err: any) {
-      return sendError(res, 'UPDATE_BOOKING_STATUS_FAILED', err.message, 400);
+      const code = err.message?.includes('not authorized') ? 403 : 400;
+      return sendError(res, 'UPDATE_BOOKING_STATUS_FAILED', err.message, code);
     }
   }
 }

@@ -253,11 +253,20 @@ class DatabaseManager {
         }
       }
 
-      // 4. Tour Guides (Only approved guides)
-      const tgRes = await this.pool.query('SELECT * FROM tour_guides WHERE is_approved = true AND approval_status = \'APPROVED\'');
+      // 4. Tour Guides
+      const tgRes = await this.pool.query('SELECT * FROM tour_guides');
       if (tgRes?.rows?.length > 0) {
         for (const row of tgRes.rows) {
-          localStore.tour_guides.set(row.id, row);
+          localStore.tour_guides.set(row.id, {
+            ...row,
+            is_approved: row.is_approved === true,
+            approval_status: row.approval_status || 'PENDING_APPROVAL',
+            is_available: row.is_available !== false,
+            is_uwa_certified: row.is_uwa_certified !== false,
+            daily_rate_ugx: parseFloat(row.daily_rate_ugx || '150000'),
+            expeditions_count: parseInt(row.expeditions_count || '0', 10),
+            rating: parseFloat(row.rating || '4.95'),
+          });
         }
       }
 
@@ -273,7 +282,19 @@ class DatabaseManager {
       const tripRes = await this.pool.query('SELECT * FROM trips ORDER BY created_at DESC LIMIT 500');
       if (tripRes?.rows?.length > 0) {
         for (const row of tripRes.rows) {
-          localStore.trips.set(row.id, row);
+          localStore.trips.set(row.id, {
+            ...row,
+            pickup_lat: parseFloat(row.pickup_lat || '0.3136'),
+            pickup_lng: parseFloat(row.pickup_lng || '32.5811'),
+            dest_lat: parseFloat(row.dest_lat || '0.3476'),
+            dest_lng: parseFloat(row.dest_lng || '32.5825'),
+            distance_km: parseFloat(row.distance_km || '1.0'),
+            estimated_duration_mins: parseInt(row.estimated_duration_mins || '10', 10),
+            fare_ugx: parseFloat(row.fare_ugx || '0'),
+            tip_ugx: parseFloat(row.tip_ugx || '0'),
+            created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+            updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+          });
         }
       }
 
@@ -289,7 +310,24 @@ class DatabaseManager {
       const bkRes = await this.pool.query('SELECT * FROM tour_bookings ORDER BY created_at DESC LIMIT 500');
       if (bkRes?.rows?.length > 0) {
         for (const row of bkRes.rows) {
-          localStore.tour_bookings.set(row.id, row);
+          const guideId = row.tour_guide_id || row.guide_id || null;
+          const bookingStatus = row.booking_status || row.status || 'CONFIRMED';
+          const travelDate = row.travel_date || (row.start_date ? String(row.start_date).slice(0, 10) : new Date().toISOString().slice(0, 10));
+          const guestsCount = parseInt(row.guests_count || row.travelers_count || '1', 10);
+          localStore.tour_bookings.set(row.id, {
+            ...row,
+            guide_id: guideId,
+            tour_guide_id: guideId,
+            status: bookingStatus,
+            booking_status: bookingStatus,
+            travel_date: travelDate,
+            start_date: travelDate,
+            guests_count: guestsCount,
+            travelers_count: guestsCount,
+            total_ugx: parseFloat(row.total_ugx || '0'),
+            created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+            updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+          });
         }
       }
 
@@ -600,6 +638,117 @@ class DatabaseManager {
       }
     }
     this.saveTableToDisk(PERSISTENT_PRICING_AUDIT_FILES, localStore.pricing_audit_logs);
+  }
+
+  public async persistTrip(trip: any): Promise<void> {
+    localStore.trips.set(trip.id, trip);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO trips (
+             id, customer_id, driver_id, pickup_title, pickup_address,
+             pickup_lat, pickup_lng, dest_title, dest_address, dest_lat, dest_lng,
+             vehicle_tier, status, distance_km, estimated_duration_mins,
+             fare_ugx, tip_ugx, payment_method, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+             $16, $17, $18, $19, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             driver_id = EXCLUDED.driver_id,
+             status = EXCLUDED.status,
+             fare_ugx = EXCLUDED.fare_ugx,
+             tip_ugx = EXCLUDED.tip_ugx,
+             payment_method = EXCLUDED.payment_method,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            trip.id,
+            trip.customer_id || null,
+            trip.driver_id || null,
+            trip.pickup_title || 'Pickup',
+            trip.pickup_address || '',
+            Number(trip.pickup_lat ?? 0.3136),
+            Number(trip.pickup_lng ?? 32.5811),
+            trip.dest_title || 'Destination',
+            trip.dest_address || '',
+            Number(trip.dest_lat ?? 0.3476),
+            Number(trip.dest_lng ?? 32.5825),
+            trip.vehicle_tier || 'go',
+            trip.status || 'SEARCHING',
+            Number(trip.distance_km ?? 1.0),
+            Number(trip.estimated_duration_mins ?? 10),
+            Number(trip.fare_ugx ?? 0),
+            Number(trip.tip_ugx ?? 0),
+            trip.payment_method || 'MTN Mobile Money',
+            trip.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.error('[Database Error] Failed to persist trip to PostgreSQL:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_TRIPS_FILES, localStore.trips);
+  }
+
+  public async persistTourBooking(booking: any): Promise<void> {
+    localStore.tour_bookings.set(booking.id, booking);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        const guideId = booking.tour_guide_id || booking.guide_id || null;
+        const bookingStatus = booking.booking_status || booking.status || 'CONFIRMED';
+        const travelDate = booking.travel_date || booking.start_date || new Date().toISOString().slice(0, 10);
+        const guestsCount = Number(booking.guests_count ?? booking.travelers_count ?? 1);
+        await this.pool.query(
+          `INSERT INTO tour_bookings (
+             id, customer_id, destination_id, package_id, guide_id, tour_guide_id,
+             travelers_count, guests_count, start_date, travel_date, pickup_location,
+             special_requests, total_ugx, status, booking_status, payment_method,
+             payment_status, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+             $17, $18, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             destination_id = EXCLUDED.destination_id,
+             package_id = EXCLUDED.package_id,
+             guide_id = EXCLUDED.guide_id,
+             tour_guide_id = EXCLUDED.tour_guide_id,
+             travelers_count = EXCLUDED.travelers_count,
+             guests_count = EXCLUDED.guests_count,
+             start_date = EXCLUDED.start_date,
+             travel_date = EXCLUDED.travel_date,
+             pickup_location = EXCLUDED.pickup_location,
+             special_requests = EXCLUDED.special_requests,
+             total_ugx = EXCLUDED.total_ugx,
+             status = EXCLUDED.status,
+             booking_status = EXCLUDED.booking_status,
+             payment_method = EXCLUDED.payment_method,
+             payment_status = EXCLUDED.payment_status,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            booking.id,
+            booking.customer_id || null,
+            booking.destination_id || null,
+            booking.package_id || null,
+            guideId,
+            guideId,
+            guestsCount,
+            guestsCount,
+            travelDate,
+            travelDate,
+            booking.pickup_location || 'Kampala',
+            booking.special_requests || '',
+            Number(booking.total_ugx ?? 0),
+            bookingStatus,
+            bookingStatus,
+            booking.payment_method || 'MTN Mobile Money',
+            booking.payment_status || 'PENDING',
+            booking.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.error('[Database Error] Failed to persist tour booking to PostgreSQL:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_BOOKINGS_FILES, localStore.tour_bookings);
   }
 
   public async query(text: string, params?: any[]): Promise<QueryResult<any> | any> {

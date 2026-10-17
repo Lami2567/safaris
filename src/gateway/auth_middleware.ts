@@ -20,12 +20,17 @@ export interface AuthenticatedRequest extends Request {
 
 export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
+  const queryToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
   const isAdminLoginEnforced = AdminService.isAdminAuthConfiguredSync();
 
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split(' ')[1];
+  const rawToken =
+    authHeader && authHeader.startsWith('Bearer ')
+      ? authHeader.split(' ')[1]
+      : queryToken;
+
+  if (rawToken) {
     try {
-      const payload = jwt.verify(token, ENV.JWT_SECRET) as AuthUserPayload;
+      const payload = jwt.verify(rawToken, ENV.JWT_SECRET) as AuthUserPayload;
       req.user = payload;
       return next();
     } catch (err: any) {
@@ -40,7 +45,7 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
   }
 
   if (!isAdminLoginEnforced) {
-    const adminKey = req.headers['x-admin-key'];
+    const adminKey = req.headers['x-admin-key'] || req.query?.adminKey;
     const validAdminKeys = [
       ENV.JWT_SECRET,
       process.env.ADMIN_ACCESS_KEY,

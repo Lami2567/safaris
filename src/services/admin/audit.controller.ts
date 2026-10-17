@@ -189,4 +189,89 @@ export class AdminAuditController {
       return sendError(res, 'FETCH_LIVE_FLEET_FAILED', err.message || 'Failed to fetch live fleet', 500);
     }
   }
+
+  /**
+   * Real-time Server-Sent Events (SSE) stream for Admin Live Fleet Map
+   * Pushes single-driver telemetry and status updates immediately without polling or refresh.
+   */
+  static async streamLiveFleet(req: Request, res: Response) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    const { registerSseClient } = await import('../../realtime/socket_server');
+    const unsubscribe = registerSseClient('admin:fleet', res);
+
+    // Send initial connection confirmation
+    res.write(
+      `event: connected\ndata: ${JSON.stringify({
+        event: 'connected',
+        channel: 'admin:fleet',
+        timestamp: new Date().toISOString(),
+      })}\n\n`
+    );
+
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(`: heartbeat ${Date.now()}\n\n`);
+      } catch (_) {
+        clearInterval(heartbeat);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+  }
+
+  /**
+   * Real-time Server-Sent Events (SSE) stream for authenticated Driver, Tour Guide, or Customer
+   */
+  static async streamUserEvents(req: Request, res: Response) {
+    const user = (req as any).user;
+    if (!user?.userId) {
+      return sendError(res, 'UNAUTHORIZED', 'Authentication required for real-time stream.', 401);
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    const { registerSseClient } = await import('../../realtime/socket_server');
+    const unsubUser = registerSseClient(`user:${user.userId}`, res);
+    const unsubAll = registerSseClient('all_users', res);
+    const unsubTrip =
+      typeof req.query.tripId === 'string' && req.query.tripId
+        ? registerSseClient(`trip:${req.query.tripId}`, res)
+        : () => {};
+
+    res.write(
+      `event: connected\ndata: ${JSON.stringify({
+        event: 'connected',
+        userId: user.userId,
+        role: user.role,
+        timestamp: new Date().toISOString(),
+      })}\n\n`
+    );
+
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(`: heartbeat ${Date.now()}\n\n`);
+      } catch (_) {
+        clearInterval(heartbeat);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      unsubUser();
+      unsubAll();
+      unsubTrip();
+    });
+  }
 }

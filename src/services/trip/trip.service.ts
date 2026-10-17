@@ -1,6 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
-import { localStore } from '../../config/database';
-import { emitToUser, emitToRoom } from '../../realtime/socket_server';
+import { db, localStore } from '../../config/database';
+import {
+  emitToUser,
+  emitToRoom,
+  emitToTrip,
+  broadcastToFleet,
+  broadcastDriverSnapshot,
+} from '../../realtime/socket_server';
 import { NotificationService } from '../notification/notification.service';
 import { AdminService } from '../admin/admin.service';
 
@@ -27,6 +33,17 @@ export interface CreateTripRequest {
   paymentMethod: string;
 }
 
+const VALID_TRANSITIONS: Record<string, string[]> = {
+  REQUESTED: ['SEARCHING', 'DRIVER_ASSIGNED', 'CANCELLED'],
+  SEARCHING: ['DRIVER_ASSIGNED', 'CANCELLED'],
+  DRIVER_ASSIGNED: ['DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED', 'CANCELLED'],
+  DRIVER_ARRIVING: ['DRIVER_ARRIVED', 'TRIP_STARTED', 'CANCELLED'],
+  DRIVER_ARRIVED: ['TRIP_STARTED', 'CANCELLED'],
+  TRIP_STARTED: ['TRIP_COMPLETED', 'CANCELLED'],
+  TRIP_COMPLETED: [],
+  CANCELLED: [],
+};
+
 export class TripService {
   public static getTierPricing(): Record<string, { base: number; perKm: number }> {
     const adminPricing = AdminService.getPricing();
@@ -43,7 +60,7 @@ export class TripService {
     const estimates: Record<string, number> = {};
     const pricing = this.getTierPricing();
     for (const [tier, rates] of Object.entries(pricing)) {
-      estimates[tier] = rates.base + distanceKm * rates.perKm;
+      estimates[tier] = Math.round(rates.base + distanceKm * rates.perKm);
     }
     return estimates;
   }
@@ -51,37 +68,65 @@ export class TripService {
   public static createTrip(data: CreateTripRequest) {
     const tripId = `trp_${uuidv4().substring(0, 8)}`;
     const pricingMap = this.getTierPricing();
-    const pricing = pricingMap[data.vehicleTier] || pricingMap.go;
-    const fareUGX = pricing.base + data.distanceKm * pricing.perKm;
+    const tierKey = (data.vehicleTier || 'go').toLowerCase();
+    const pricing = pricingMap[tierKey] || pricingMap.go;
+    const distanceKm = Math.max(0.5, Number(data.distanceKm || 2.5));
+    const fareUGX = Math.round(pricing.base + distanceKm * pricing.perKm);
 
-    const newTrip = {
+    const customer = data.customerId ? localStore.users.get(data.customerId) : null;
+    const nowIso = new Date().toISOString();
+
+    const newTrip: any = {
       id: tripId,
       customer_id: data.customerId,
+      customer_name: customer?.full_name || 'Safaris Customer',
+      customer_phone: customer?.phone || '',
       driver_id: null,
-      pickup_title: data.pickupTitle,
-      pickup_address: data.pickupAddress,
-      pickup_lat: data.pickupLat,
-      pickup_lng: data.pickupLng,
-      dest_title: data.destTitle,
-      dest_address: data.destAddress,
-      dest_lat: data.destLat,
-      dest_lng: data.destLng,
-      vehicle_tier: data.vehicleTier,
+      pickup_title: data.pickupTitle || 'Kampala Pickup',
+      pickup_address: data.pickupAddress || data.pickupTitle || 'Kampala',
+      pickup_lat: Number(data.pickupLat ?? 0.3136),
+      pickup_lng: Number(data.pickupLng ?? 32.5811),
+      dest_title: data.destTitle || 'Destination',
+      dest_address: data.destAddress || data.destTitle || 'Kampala',
+      dest_lat: Number(data.destLat ?? 0.3476),
+      dest_lng: Number(data.destLng ?? 32.5825),
+      vehicle_tier: tierKey,
       status: 'SEARCHING',
-      distance_km: data.distanceKm,
-      estimated_duration_mins: Math.max(5, Math.round(data.distanceKm * 2.2)),
+      distance_km: distanceKm,
+      estimated_duration_mins: Math.max(5, Math.round(distanceKm * 2.2)),
       fare_ugx: fareUGX,
       tip_ugx: 0,
       payment_method: data.paymentMethod || 'MTN Mobile Money',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      declined_by: [],
+      created_at: nowIso,
+      updated_at: nowIso,
     };
 
     localStore.trips.set(tripId, newTrip);
+    db.persistTrip(newTrip).catch((err) =>
+      console.error('[TripService.createTrip persist error]', err)
+    );
+
+    // Find drivers who already have an active trip so we don't dispatch to busy drivers
+    const busyDriverIds = new Set<string>();
+    for (const t of localStore.trips.values()) {
+      if (
+        t.driver_id &&
+        ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(t.status)
+      ) {
+        busyDriverIds.add(t.driver_id);
+      }
+    }
 
     // Broadcast request to all online, available, approved drivers so a real driver can accept
     for (const d of localStore.drivers.values()) {
-      if (d.is_online && d.is_available && d.is_approved && d.approval_status === 'APPROVED') {
+      if (
+        d.is_online &&
+        d.is_available &&
+        d.is_approved &&
+        d.approval_status === 'APPROVED' &&
+        !busyDriverIds.has(d.id)
+      ) {
         emitToUser(d.id, 'trip:incoming_request', {
           tripId,
           trip: newTrip,
@@ -89,27 +134,62 @@ export class TripService {
       }
     }
 
+    // Also broadcast to admin fleet stream
+    broadcastToFleet(newTrip, 'trip:created');
+
     return newTrip;
   }
 
   /**
-   * Called when a real driver accepts an incoming trip.
+   * Called when a real approved driver accepts an incoming trip.
    */
   public static acceptTrip(tripId: string, driverId: string) {
     const trip = localStore.trips.get(tripId);
     if (!trip) throw new Error('Trip not found.');
-    if (trip.status !== 'SEARCHING') throw new Error(`Trip is no longer searching (status: ${trip.status}).`);
+    if (trip.status !== 'SEARCHING') {
+      throw new Error(
+        `Trip is no longer searching (current status: ${trip.status}). Another driver may have already accepted it.`
+      );
+    }
 
     const driver = localStore.drivers.get(driverId);
     if (!driver) throw new Error('Driver profile not found.');
     if (!driver.is_approved || driver.approval_status !== 'APPROVED') {
-      throw new Error('Driver must be approved by Mumwe Safaris administrators before accepting trips.');
+      throw new Error(
+        'Driver must be approved by Mumwe Safaris administrators before accepting trips.'
+      );
+    }
+    if (!driver.is_online) {
+      throw new Error('Driver must be online to accept a ride request.');
+    }
+
+    // Check if driver already has an active trip
+    for (const existing of localStore.trips.values()) {
+      if (
+        existing.id !== tripId &&
+        existing.driver_id === driverId &&
+        ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(
+          existing.status
+        )
+      ) {
+        throw new Error(
+          `You already have an active trip (${existing.id}). Complete it before accepting another request.`
+        );
+      }
     }
 
     trip.driver_id = driverId;
     trip.status = 'DRIVER_ASSIGNED';
     trip.updated_at = new Date().toISOString();
     driver.is_available = false;
+    driver.updated_at = new Date().toISOString();
+
+    db.persistTrip(trip).catch((err) =>
+      console.error('[TripService.acceptTrip persistTrip error]', err)
+    );
+    db.persistDriver(driver).catch((err) =>
+      console.error('[TripService.acceptTrip persistDriver error]', err)
+    );
 
     const driverUser = localStore.users.get(driverId);
     const vehicle = driver.vehicle_id ? localStore.vehicles.get(driver.vehicle_id) : null;
@@ -118,68 +198,132 @@ export class TripService {
       driverId,
       fullName: driverUser ? driverUser.full_name : 'Driver',
       phone: driverUser ? driverUser.phone : '',
-      rating: driverUser ? driverUser.rating : 5.0,
-      vehicleModel: vehicle ? `${vehicle.make} ${vehicle.model}` : 'Vehicle',
+      rating: Number(driverUser?.rating ?? 5.0),
+      totalTrips: Number(driverUser?.total_trips ?? 0),
+      vehicleModel: vehicle ? `${vehicle.make} ${vehicle.model}` : 'Safari Vehicle',
       licensePlate: vehicle ? vehicle.registration_plate : '',
       vehicleColor: vehicle ? vehicle.color : '',
+      tier: vehicle ? vehicle.tier : trip.vehicle_tier,
+      lat: Number(driver.current_lat ?? trip.pickup_lat),
+      lng: Number(driver.current_lng ?? trip.pickup_lng),
+      heading: Number(driver.heading ?? 0),
     };
 
-    // Broadcast real-time assignment via WebSockets to customer
-    emitToUser(trip.customer_id, 'trip:driver_assigned', {
+    // Notify all other online drivers that this request is now closed
+    for (const d of localStore.drivers.values()) {
+      if (d.id !== driverId && d.is_online) {
+        emitToUser(d.id, 'trip:request_closed', {
+          tripId,
+          acceptedBy: driverId,
+        });
+      }
+    }
+
+    // Broadcast real-time assignment via WebSockets & SSE to customer and trip room
+    const assignedPayload = {
       tripId,
+      trip: this.getTrip(tripId),
       driver: driverDetails,
       status: 'DRIVER_ASSIGNED',
-    });
+    };
+    if (trip.customer_id) {
+      emitToUser(trip.customer_id, 'trip:driver_assigned', assignedPayload);
+      emitToUser(trip.customer_id, 'trip:status_change', assignedPayload);
+    }
+    emitToUser(driverId, 'trip:driver_assigned', assignedPayload);
+    emitToTrip(tripId, 'trip:status_change', assignedPayload);
 
-    emitToRoom(`trip:${tripId}`, 'trip:status_change', {
-      tripId,
-      status: 'DRIVER_ASSIGNED',
-    });
+    // Update Admin Map marker to Blue (Assigned/In Trip) immediately
+    broadcastDriverSnapshot(driverId, 'fleet:status_update');
 
-    NotificationService.createNotification({
-      userId: trip.customer_id,
-      title: 'Driver Assigned',
-      message: `${driverDetails.fullName} in ${driverDetails.vehicleModel} (${driverDetails.licensePlate}) accepted your trip and is on the way.`,
-      type: 'DRIVER',
-      metadata: {
-        tripId,
-        driverId,
-        driverName: driverDetails.fullName,
-        licensePlate: driverDetails.licensePlate,
-        vehicleModel: driverDetails.vehicleModel,
-      },
-    }).catch((err) => console.error('[TripDriverNotification Error]', err));
+    if (trip.customer_id) {
+      NotificationService.createNotification({
+        userId: trip.customer_id,
+        title: 'Driver Assigned',
+        message: `${driverDetails.fullName} in ${driverDetails.vehicleModel} (${driverDetails.licensePlate}) accepted your trip and is on the way.`,
+        type: 'DRIVER',
+        metadata: {
+          tripId,
+          driverId,
+          driverName: driverDetails.fullName,
+          licensePlate: driverDetails.licensePlate,
+          vehicleModel: driverDetails.vehicleModel,
+        },
+      }).catch((err) => console.error('[TripDriverNotification Error]', err));
+    }
 
-    return { trip, driver: driverDetails };
+    return { status: 'DRIVER_ASSIGNED', trip: this.getTrip(tripId), driver: driverDetails };
   }
 
   /**
-   * Receives real telemetry updates from an assigned driver and transmits to customer.
+   * Called when a driver declines an incoming trip request so it leaves their queue.
    */
-  public static updateDriverLocation(tripId: string, lat: number, lng: number, heading?: number) {
+  public static rejectTrip(tripId: string, driverId: string) {
     const trip = localStore.trips.get(tripId);
     if (!trip) throw new Error('Trip not found.');
 
-    // Broadcast to customer and trip room
-    emitToRoom(`trip:${tripId}`, 'trip:driver_location', {
-      tripId,
-      lat,
-      lng,
-      heading: heading || 0,
-      timestamp: Date.now(),
-    });
-
-    if (trip.customer_id) {
-      emitToUser(trip.customer_id, 'trip:driver_location', {
-        tripId,
-        lat,
-        lng,
-        heading: heading || 0,
-        timestamp: Date.now(),
-      });
+    if (!Array.isArray(trip.declined_by)) {
+      trip.declined_by = [];
+    }
+    if (!trip.declined_by.includes(driverId)) {
+      trip.declined_by.push(driverId);
     }
 
-    return { tripId, lat, lng };
+    emitToUser(driverId, 'trip:request_closed', {
+      tripId,
+      declinedBy: driverId,
+    });
+
+    return { tripId, status: trip.status, declined: true };
+  }
+
+  /**
+   * Receives real telemetry updates from an assigned driver and transmits to customer & admin map.
+   */
+  public static updateDriverLocation(
+    tripId: string,
+    lat: number,
+    lng: number,
+    heading?: number,
+    driverId?: string
+  ) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      throw new Error('Invalid GPS coordinates.');
+    }
+
+    const trip = localStore.trips.get(tripId);
+    if (!trip) throw new Error('Trip not found.');
+
+    const effectiveDriverId = driverId || trip.driver_id;
+    if (effectiveDriverId) {
+      const driver = localStore.drivers.get(effectiveDriverId);
+      if (driver && driver.is_approved && driver.approval_status === 'APPROVED') {
+        driver.current_lat = Number(lat);
+        driver.current_lng = Number(lng);
+        if (heading !== undefined && Number.isFinite(heading)) {
+          driver.heading = Number(heading);
+        }
+        driver.updated_at = new Date().toISOString();
+        db.persistDriver(driver).catch(() => {});
+        broadcastDriverSnapshot(effectiveDriverId, 'fleet:telemetry_update');
+      }
+    }
+
+    const locPayload = {
+      tripId,
+      driverId: effectiveDriverId,
+      lat: Number(lat),
+      lng: Number(lng),
+      heading: Number(heading || 0),
+      timestamp: Date.now(),
+    };
+
+    emitToTrip(tripId, 'trip:driver_location', locPayload);
+    if (trip.customer_id) {
+      emitToUser(trip.customer_id, 'trip:driver_location', locPayload);
+    }
+
+    return { tripId, lat: Number(lat), lng: Number(lng), heading: Number(heading || 0) };
   }
 
   /**
@@ -197,38 +341,98 @@ export class TripService {
     return null;
   }
 
-
-  public static updateTripStatus(tripId: string, status: string, driverId?: string) {
+  public static updateTripStatus(
+    tripId: string,
+    status: string,
+    actorId?: string,
+    actorRole?: string
+  ) {
     const trip = localStore.trips.get(tripId);
     if (!trip) {
       throw new Error('Trip not found.');
     }
 
-    trip.status = status;
-    trip.updated_at = new Date().toISOString();
-
-    if (status === 'TRIP_COMPLETED') {
-      const driver = localStore.drivers.get(trip.driver_id);
-      if (driver) {
-        driver.today_earnings_ugx += trip.fare_ugx;
-        driver.is_available = true;
-      }
-      const customer = localStore.users.get(trip.customer_id);
-      if (customer) {
-        customer.total_trips += 1;
+    // Authorization check
+    if (actorId && actorRole !== 'admin') {
+      const isAssignedDriver = trip.driver_id === actorId;
+      const isTripCustomer = trip.customer_id === actorId;
+      if (!isAssignedDriver && !(isTripCustomer && status === 'CANCELLED')) {
+        throw new Error('You are not authorized to update the status of this trip.');
       }
     }
 
-    // Emit live update to both customer and driver
-    emitToRoom(`trip:${tripId}`, 'trip:status_change', {
+    // Validate status transition
+    const allowedNext = VALID_TRANSITIONS[trip.status] || [];
+    if (trip.status !== status && !allowedNext.includes(status) && actorRole !== 'admin') {
+      throw new Error(
+        `Invalid trip status transition from ${trip.status} to ${status}.`
+      );
+    }
+
+    const previousStatus = trip.status;
+    trip.status = status;
+    trip.updated_at = new Date().toISOString();
+
+    if (status === 'TRIP_COMPLETED' && previousStatus !== 'TRIP_COMPLETED') {
+      const driver = trip.driver_id ? localStore.drivers.get(trip.driver_id) : null;
+      if (driver) {
+        driver.today_earnings_ugx =
+          Number(driver.today_earnings_ugx || 0) + Number(trip.fare_ugx || 0);
+        driver.is_available = Boolean(driver.is_online);
+        driver.updated_at = new Date().toISOString();
+        db.persistDriver(driver).catch(() => {});
+      }
+      const driverUser = trip.driver_id ? localStore.users.get(trip.driver_id) : null;
+      if (driverUser) {
+        driverUser.total_trips = Number(driverUser.total_trips || 0) + 1;
+        db.persistUser(driverUser).catch(() => {});
+      }
+      const customer = trip.customer_id ? localStore.users.get(trip.customer_id) : null;
+      if (customer) {
+        customer.total_trips = Number(customer.total_trips || 0) + 1;
+        db.persistUser(customer).catch(() => {});
+      }
+    } else if (status === 'CANCELLED' && previousStatus !== 'CANCELLED') {
+      if (trip.driver_id) {
+        const driver = localStore.drivers.get(trip.driver_id);
+        if (driver) {
+          driver.is_available = Boolean(driver.is_online);
+          driver.updated_at = new Date().toISOString();
+          db.persistDriver(driver).catch(() => {});
+        }
+      } else {
+        // Close searching request for all online drivers
+        for (const d of localStore.drivers.values()) {
+          if (d.is_online) {
+            emitToUser(d.id, 'trip:request_closed', { tripId, cancelled: true });
+          }
+        }
+      }
+    }
+
+    db.persistTrip(trip).catch((err) =>
+      console.error('[TripService.updateTripStatus persistTrip error]', err)
+    );
+
+    const enrichedTrip = this.getTrip(tripId);
+    const statusPayload = {
       tripId,
       status,
-    });
+      trip: enrichedTrip,
+    };
+
+    // Emit live update to trip room, customer, driver, and admin fleet
+    emitToTrip(tripId, 'trip:status_change', statusPayload);
+    broadcastToFleet(statusPayload, 'trip:status_change');
+
+    if (trip.driver_id) {
+      broadcastDriverSnapshot(trip.driver_id, 'fleet:status_update');
+      emitToUser(trip.driver_id, 'trip:status_change', statusPayload);
+    }
 
     if (trip.customer_id) {
-      emitToUser(trip.customer_id, 'trip:status_change', { tripId, status });
+      emitToUser(trip.customer_id, 'trip:status_change', statusPayload);
 
-      // Direct database notification based on status
       let notifTitle = '';
       let notifMessage = '';
       if (status === 'DRIVER_ARRIVING') {
@@ -242,7 +446,7 @@ export class TripService {
         notifMessage = `Your journey to ${trip.dest_title} has started. Enjoy your ride!`;
       } else if (status === 'TRIP_COMPLETED') {
         notifTitle = 'Trip Completed';
-        notifMessage = `You arrived safely at ${trip.dest_title}. Total fare: UGX ${trip.fare_ugx?.toLocaleString()}.`;
+        notifMessage = `You arrived safely at ${trip.dest_title}. Total fare: UGX ${Number(trip.fare_ugx || 0).toLocaleString()}.`;
       } else if (status === 'CANCELLED') {
         notifTitle = 'Trip Cancelled';
         notifMessage = 'Your trip request has been cancelled.';
@@ -258,11 +462,8 @@ export class TripService {
         }).catch((err) => console.error('[TripStatusNotification Error]', err));
       }
     }
-    if (trip.driver_id) {
-      emitToUser(trip.driver_id, 'trip:status_change', { tripId, status });
-    }
 
-    return trip;
+    return enrichedTrip;
   }
 
   public static rateTrip(tripId: string, rating: number, tipUGX = 0, compliments: string[] = []) {
@@ -271,18 +472,21 @@ export class TripService {
       throw new Error('Trip not found.');
     }
 
-    trip.tip_ugx = tipUGX;
-    if (tipUGX > 0 && trip.driver_id) {
+    trip.tip_ugx = Number(tipUGX || 0);
+    trip.updated_at = new Date().toISOString();
+    if (trip.tip_ugx > 0 && trip.driver_id) {
       const driver = localStore.drivers.get(trip.driver_id);
       if (driver) {
-        driver.today_earnings_ugx += tipUGX;
+        driver.today_earnings_ugx = Number(driver.today_earnings_ugx || 0) + trip.tip_ugx;
+        db.persistDriver(driver).catch(() => {});
       }
     }
+    db.persistTrip(trip).catch(() => {});
 
     return {
       tripId,
       rating,
-      tipUGX,
+      tipUGX: trip.tip_ugx,
       compliments,
       message: 'Thank you for rating your SAFARIS driver.',
     };
@@ -294,6 +498,7 @@ export class TripService {
       throw new Error('Trip not found.');
     }
 
+    const customer = trip.customer_id ? localStore.users.get(trip.customer_id) : null;
     let driverDetails = null;
     if (trip.driver_id) {
       const driverUser = localStore.users.get(trip.driver_id);
@@ -304,23 +509,35 @@ export class TripService {
         driverId: trip.driver_id,
         fullName: driverUser ? driverUser.full_name : 'Assigned Driver',
         phone: driverUser ? driverUser.phone : '',
-        rating: driverUser ? (driverUser.rating || 5.0) : 5.0,
-        vehicleModel: vehicle ? `${vehicle.make} ${vehicle.model}` : 'Vehicle',
+        rating: Number(driverUser?.rating ?? 5.0),
+        totalTrips: Number(driverUser?.total_trips ?? 0),
+        vehicleModel: vehicle ? `${vehicle.make} ${vehicle.model}` : 'Safari Vehicle',
         licensePlate: vehicle ? vehicle.registration_plate : '',
         vehicleColor: vehicle ? vehicle.color : '',
+        tier: vehicle ? vehicle.tier : trip.vehicle_tier,
+        lat: Number(driver?.current_lat ?? trip.pickup_lat),
+        lng: Number(driver?.current_lng ?? trip.pickup_lng),
+        heading: Number(driver?.heading ?? 0),
       };
     }
 
-    return { ...trip, driver: driverDetails };
+    return {
+      ...trip,
+      customer_name: customer?.full_name || trip.customer_name || 'Safaris Customer',
+      customer_phone: customer?.phone || trip.customer_phone || '',
+      driver: driverDetails,
+    };
   }
 
   public static getUserTrips(userId: string) {
     const userTrips: any[] = [];
     for (const trip of localStore.trips.values()) {
       if (trip.customer_id === userId || trip.driver_id === userId) {
-        userTrips.push(trip);
+        userTrips.push(this.getTrip(trip.id));
       }
     }
-    return userTrips.reverse();
+    return userTrips.sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
   }
 }

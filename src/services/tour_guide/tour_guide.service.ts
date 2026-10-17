@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { localStore, db } from '../../config/database';
+import { broadcastToFleet, emitToUser } from '../../realtime/socket_server';
 
 const PERSISTENT_GUIDES_FILES = [
   path.resolve(__dirname, '../../database/persistent_tour_guides.json'),
@@ -30,7 +31,6 @@ export class TourGuideService {
                  COALESCE(tg.rating, u.rating, 4.95) as rating
           FROM tour_guides tg
           LEFT JOIN users u ON tg.id = u.id
-          WHERE tg.is_approved = true AND tg.approval_status = 'APPROVED'
           ORDER BY tg.created_at ASC
         `);
 
@@ -50,8 +50,11 @@ export class TourGuideService {
               daily_rate_ugx: Number(row.daily_rate_ugx || 150000),
               is_uwa_certified: row.is_uwa_certified !== false,
               is_available: row.is_available !== false,
-              is_approved: true,
-              approval_status: 'APPROVED',
+              is_approved: row.is_approved === true,
+              approval_status: row.approval_status || 'PENDING_APPROVAL',
+              application_id: row.application_id || null,
+              national_id: row.national_id || '',
+              uwa_license_number: row.uwa_license_number || '',
               expeditions_count: Number(row.expeditions_count || 0),
               avatar_url: avatarUrl,
               full_name: fullName,
@@ -60,7 +63,7 @@ export class TourGuideService {
               updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
             });
           }
-          console.log(`🧭 [TourGuideService] Loaded ${res.rows.length} approved tour guides from PostgreSQL.`);
+          console.log(`🧭 [TourGuideService] Loaded ${res.rows.length} tour guides from PostgreSQL.`);
         }
       } catch (err) {
         console.warn('[TourGuideService] Notice: PostgreSQL query error during init:', err);
@@ -81,7 +84,7 @@ export class TourGuideService {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
             for (const g of parsed) {
-              if (g && g.id && g.is_approved === true && g.approval_status === 'APPROVED') {
+              if (g && g.id) {
                 const id = g.id;
                 const fullName = g.full_name || 'Safari Guide';
                 const avatarUrl = g.avatar_url || '';
@@ -96,14 +99,14 @@ export class TourGuideService {
                   daily_rate_ugx: Number(g.daily_rate_ugx || 150000),
                   is_uwa_certified: g.is_uwa_certified !== false,
                   is_available: g.is_available !== false,
-                  is_approved: true,
-                  approval_status: 'APPROVED',
+                  is_approved: g.is_approved === true,
+                  approval_status: g.approval_status || 'PENDING_APPROVAL',
                   expeditions_count: Number(g.expeditions_count || 0),
                   avatar_url: avatarUrl,
                   full_name: fullName,
                   rating,
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
+                  created_at: g.created_at || new Date().toISOString(),
+                  updated_at: g.updated_at || new Date().toISOString(),
                 });
               }
             }
@@ -116,7 +119,7 @@ export class TourGuideService {
 
   public static saveToDisk(): void {
     try {
-      const guideList = this.getAllGuides();
+      const guideList = Array.from(localStore.tour_guides.values());
       for (const f of PERSISTENT_GUIDES_FILES) {
         try {
           const dir = path.dirname(f);
@@ -138,8 +141,9 @@ export class TourGuideService {
         ...guide,
         full_name: user?.full_name || guide.full_name || 'Safari Guide',
         phone: user?.phone || guide.phone || '+256 772 000000',
-        avatar_url: guide.avatar_url || user?.avatar_url || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&q=80',
-        avatarUrl: guide.avatar_url || user?.avatar_url || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&q=80',
+        email: user?.email || guide.email || '',
+        avatar_url: guide.avatar_url || user?.avatar_url || '',
+        avatarUrl: guide.avatar_url || user?.avatar_url || '',
         rating: Number(user?.rating || guide.rating || 4.98),
       };
     });
@@ -162,26 +166,129 @@ export class TourGuideService {
       ...guide,
       full_name: user?.full_name || guide.full_name || 'Safari Guide',
       phone: user?.phone || guide.phone || '+256 772 000000',
-      avatar_url: guide.avatar_url || user?.avatar_url || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&q=80',
-      avatarUrl: guide.avatar_url || user?.avatar_url || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&q=80',
+      email: user?.email || guide.email || '',
+      avatar_url: guide.avatar_url || user?.avatar_url || '',
+      avatarUrl: guide.avatar_url || user?.avatar_url || '',
       rating: Number(user?.rating || guide.rating || 4.98),
     };
   }
 
   public static toggleAvailability(guideId: string, isAvailable: boolean) {
     const guide = localStore.tour_guides.get(guideId);
-    if (!guide) throw new Error('Tour guide not found.');
+    if (!guide) throw new Error('Tour guide profile not found.');
 
-    if (isAvailable && (!guide.is_approved || guide.approval_status !== 'APPROVED')) {
-      throw new Error('Tour guide account is pending admin approval or has been suspended.');
+    if (!guide.is_approved || guide.approval_status !== 'APPROVED') {
+      throw new Error(
+        `Tour guide account is not approved for active operations (status: ${guide.approval_status || 'PENDING_APPROVAL'}).`
+      );
     }
 
-    guide.is_available = isAvailable;
-    if (db.isPostgresConnected) {
-      db.query('UPDATE tour_guides SET is_available = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [isAvailable, guideId]).catch(() => {});
-    }
-    this.saveToDisk();
+    guide.is_available = Boolean(isAvailable);
+    guide.updated_at = new Date().toISOString();
+
+    db.persistTourGuide(guide).catch((err) =>
+      console.error('[TourGuideService.toggleAvailability persist error]', err)
+    );
+
+    const payload = {
+      guideId,
+      isAvailable: guide.is_available,
+      approvalStatus: guide.approval_status,
+      updatedAt: guide.updated_at,
+    };
+    emitToUser(guideId, 'guide:availability_updated', payload);
+    broadcastToFleet(payload, 'guide:availability_updated');
+
     return guide;
+  }
+
+  public static getGuideDashboard(guideId: string) {
+    const user = localStore.users.get(guideId);
+    const guide = localStore.tour_guides.get(guideId);
+
+    const isApproved = Boolean(guide?.is_approved && guide?.approval_status === 'APPROVED');
+    const approvalStatus = guide?.approval_status || user?.approval_status || 'PENDING_APPROVAL';
+
+    const assignedBookings: any[] = [];
+    const completedBookings: any[] = [];
+    let activeBooking: any = null;
+    let totalEarningsUGX = 0;
+
+    for (const b of localStore.tour_bookings.values()) {
+      const assignedGuideId = b.tour_guide_id || b.guide_id || null;
+      if (assignedGuideId !== guideId) continue;
+
+      const dest = b.destination_id ? localStore.destinations.get(b.destination_id) : null;
+      const pkg = b.package_id ? localStore.tour_packages.get(b.package_id) : null;
+      const pkgDest = !dest && pkg?.destination_id ? localStore.destinations.get(pkg.destination_id) : dest;
+      const customer = b.customer_id ? localStore.users.get(b.customer_id) : null;
+      const status = b.booking_status || b.status || 'CONFIRMED';
+
+      const enriched = {
+        ...b,
+        booking_status: status,
+        status,
+        travel_date: b.travel_date || b.start_date || new Date().toISOString().slice(0, 10),
+        guests_count: Number(b.guests_count ?? b.travelers_count ?? 1),
+        total_ugx: Number(b.total_ugx ?? 0),
+        destination_title: pkgDest?.title || pkgDest?.name || 'Uganda Safari Expedition',
+        destination_region: pkgDest?.region || 'Uganda',
+        destination_lat: Number(pkgDest?.latitude ?? 0.3136),
+        destination_lng: Number(pkgDest?.longitude ?? 32.5811),
+        package_title: pkg?.title || 'Custom Guided Expedition',
+        duration_days: Number(pkg?.duration_days ?? 1),
+        inclusions: Array.isArray(pkg?.inclusions) ? pkg.inclusions : [],
+        itinerary_summary: Array.isArray(pkg?.itinerary_summary) ? pkg.itinerary_summary : [],
+        customer_name: customer?.full_name || 'Guest Explorer',
+        customer_phone: customer?.phone || '',
+        customer_email: customer?.email || '',
+      };
+
+      if (['COMPLETED', 'CANCELLED'].includes(status)) {
+        completedBookings.push(enriched);
+        if (status === 'COMPLETED') {
+          totalEarningsUGX += Number(enriched.total_ugx || 0);
+        }
+      } else {
+        assignedBookings.push(enriched);
+        if (!activeBooking || status === 'IN_PROGRESS') {
+          activeBooking = enriched;
+        }
+      }
+    }
+
+    assignedBookings.sort(
+      (a, b) => new Date(a.travel_date || a.created_at).getTime() - new Date(b.travel_date || b.created_at).getTime()
+    );
+    completedBookings.sort(
+      (a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()
+    );
+
+    const completedCount = completedBookings.filter((b) => b.booking_status === 'COMPLETED').length;
+
+    return {
+      guideId,
+      name: user?.full_name || guide?.full_name || 'Tour Guide',
+      email: user?.email || '',
+      phone: user?.phone || '',
+      title: guide?.title || 'Uganda Wildlife Guide',
+      bio: guide?.bio || '',
+      languages: Array.isArray(guide?.languages) ? guide.languages : ['English'],
+      specialties: Array.isArray(guide?.specialties) ? guide.specialties : ['Uganda Safaris'],
+      dailyRateUGX: Number(guide?.daily_rate_ugx ?? 150000),
+      isUwaCertified: guide ? Boolean(guide.is_uwa_certified) : false,
+      isAvailable: guide ? Boolean(guide.is_available && isApproved) : false,
+      isApproved,
+      approvalStatus,
+      rating: Number(user?.rating ?? guide?.rating ?? 5.0),
+      expeditionsCount: Math.max(Number(guide?.expeditions_count ?? 0), completedCount),
+      completedToursCount: completedCount,
+      totalEarningsUGX,
+      walletBalanceUGX: Number(user?.wallet_balance_ugx ?? 0),
+      activeBooking,
+      assignedBookings,
+      completedBookings,
+    };
   }
 
   public static async createGuide(data: any) {

@@ -224,6 +224,7 @@ export default function MapboxFleetMap({
         if (markersRef.current[id]) {
           markersRef.current[id].setLngLat([lng, lat]);
           const el = markersRef.current[id].getElement();
+          el.__driverData = driver;
           const markerIcon = el.querySelector('.marker-heading-icon') as HTMLElement;
           if (markerIcon) {
             markerIcon.style.transform = 'rotate(' + heading + 'deg)';
@@ -235,7 +236,8 @@ export default function MapboxFleetMap({
             container.style.backgroundColor = isLight ? '#ffffff' : '#141518';
           }
         } else {
-          const el = document.createElement('div');
+          const el = document.createElement('div') as any;
+          el.__driverData = driver;
           el.className = 'safaris-mapbox-marker cursor-pointer group relative';
           el.style.width = '36px';
           el.style.height = '36px';
@@ -258,7 +260,7 @@ export default function MapboxFleetMap({
           ].join('');
 
           el.addEventListener('click', () => {
-            onSelectDriver(driver);
+            onSelectDriver(el.__driverData || driver);
           });
 
           const marker = new mapboxgl.Marker({ element: el })
@@ -278,7 +280,8 @@ export default function MapboxFleetMap({
     });
   }, [drivers, isMapLoaded, selectedDriver, onSelectDriver, isLight]);
 
-  // Smoothly fly camera to selected driver
+  // Smoothly fly camera when a different driver is selected
+  const selectedDriverId = selectedDriver?.id || null;
   useEffect(() => {
     if (!mapRef.current || !selectedDriver || !isMapLoaded) return;
     const lat = parseFloat(String(selectedDriver.current_lat || '0.3136'));
@@ -293,7 +296,7 @@ export default function MapboxFleetMap({
         essential: true,
       });
     }
-  }, [selectedDriver, isMapLoaded]);
+  }, [selectedDriverId, isMapLoaded]);
 
   // Update historical trail layer if provided
   useEffect(() => {

@@ -190,10 +190,20 @@ export default function TourismPage() {
 
   const handleUpdateBookingStatus = async (id: string, status: string) => {
     try {
-      await api.updateBookingStatus(id, status);
+      await api.updateBookingStatus(id, status.toUpperCase());
       loadData();
     } catch (err: any) {
       alert(`Failed to update booking status: ${err.message}`);
+    }
+  };
+
+  const handleAssignGuide = async (bookingId: string, guideId: string) => {
+    if (!guideId) return;
+    try {
+      await api.assignGuideToBooking(bookingId, guideId);
+      loadData();
+    } catch (err: any) {
+      alert(`Failed to assign tour guide: ${err.message}`);
     }
   };
 
@@ -613,53 +623,83 @@ export default function TourismPage() {
                   <th className="px-5 py-3">Booking ID</th>
                   <th className="px-5 py-3">Customer</th>
                   <th className="px-5 py-3">Destination / Package</th>
-                  <th className="px-5 py-3">Dates</th>
+                  <th className="px-5 py-3">Assigned Tour Guide</th>
+                  <th className="px-5 py-3">Travel Date</th>
                   <th className="px-5 py-3">Price</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 text-white/80">
-                {bookings.map((b) => (
+                {bookings.map((b) => {
+                  const statusVal = String(b.bookingStatus || b.booking_status || b.status || 'PENDING_PAYMENT').toUpperCase();
+                  const assignedGuideId = b.tourGuideId || b.tour_guide_id || '';
+                  const assignedGuide = guides.find((g) => g.id === assignedGuideId);
+                  const amount = b.totalAmountUGX || b.total_amount_ugx || b.totalPriceUgx || 0;
+                  const guests = b.guestsCount || b.guests_count || b.peopleCount || 1;
+                  const travelDate = b.travelDate || b.travel_date || b.startDate;
+                  return (
                   <tr key={b.id} className="hover:bg-white/[0.02] transition-colors">
                     <td className="px-5 py-4 font-mono text-[11px] text-white/50">{b.id?.slice(0, 8)}...</td>
                     <td className="px-5 py-4">
-                      <p className="font-medium text-white">{b.user?.name || b.contactName || 'Guest User'}</p>
-                      <p className="text-[11px] text-white/40 font-mono">{b.contactPhone || b.user?.phoneNumber || '-'}</p>
+                      <p className="font-medium text-white">{b.customer?.fullName || b.user?.name || b.contactName || 'Safari Guest'}</p>
+                      <p className="text-[11px] text-white/40 font-mono">{b.customer?.phone || b.contactPhone || b.user?.phoneNumber || '-'}</p>
                     </td>
                     <td className="px-5 py-4">
                       <p className="font-medium text-white">{b.package?.title || b.destination?.name || 'Custom Safari'}</p>
-                      <p className="text-[11px] text-white/40">{b.peopleCount || 2} People</p>
+                      <p className="text-[11px] text-white/40">{guests} Guest{guests > 1 ? 's' : ''}</p>
+                    </td>
+                    <td className="px-5 py-4">
+                      <select
+                        value={assignedGuideId}
+                        onChange={(e) => handleAssignGuide(b.id, e.target.value)}
+                        className="bg-black border border-white/20 rounded px-2.5 py-1.5 text-[11px] text-white focus:outline-none focus:border-white min-w-[160px]"
+                      >
+                        <option value="">-- Assign Approved Guide --</option>
+                        {guides.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.fullName || g.name} {g.isAvailable === false ? '(Busy)' : '(Available)'}
+                          </option>
+                        ))}
+                      </select>
+                      {assignedGuide && (
+                        <p className="text-[10px] text-emerald-400 font-mono mt-1">
+                          Assigned: {assignedGuide.fullName || assignedGuide.name}
+                        </p>
+                      )}
                     </td>
                     <td className="px-5 py-4 font-mono text-white/60">
-                      {b.startDate ? new Date(b.startDate).toLocaleDateString() : 'Immediate'}
+                      {travelDate ? new Date(travelDate).toLocaleDateString() : 'Scheduled'}
                     </td>
                     <td className="px-5 py-4 font-mono font-semibold text-white">
-                      UGX {b.totalPriceUgx?.toLocaleString() || '1,200,000'}
+                      UGX {Number(amount).toLocaleString()}
                     </td>
                     <td className="px-5 py-4">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                        b.status === 'confirmed' ? 'bg-white text-black' :
-                        b.status === 'pending' ? 'border border-white/40 text-white' :
-                        'bg-white/10 text-white/40'
+                        statusVal === 'CONFIRMED' || statusVal === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                        statusVal === 'IN_PROGRESS' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                        statusVal === 'CANCELLED' ? 'bg-red-500/20 text-red-300 border border-red-500/30' :
+                        'border border-white/40 text-white'
                       }`}>
-                        {b.status || 'pending'}
+                        {statusVal}
                       </span>
                     </td>
                     <td className="px-5 py-4 text-right">
                       <select
-                        value={b.status || 'pending'}
+                        value={statusVal}
                         onChange={(e) => handleUpdateBookingStatus(b.id, e.target.value)}
                         className="bg-black border border-white/20 rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-white"
                       >
-                        <option value="pending">Pending</option>
-                        <option value="confirmed">Confirm</option>
-                        <option value="completed">Complete</option>
-                        <option value="cancelled">Cancel</option>
+                        <option value="PENDING_PAYMENT">Pending Payment</option>
+                        <option value="CONFIRMED">Confirmed</option>
+                        <option value="IN_PROGRESS">In Progress</option>
+                        <option value="COMPLETED">Completed</option>
+                        <option value="CANCELLED">Cancelled</option>
                       </select>
                     </td>
                   </tr>
-                ))}
+                );
+                })}
               </tbody>
             </table>
           </div>

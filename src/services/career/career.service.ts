@@ -6,6 +6,7 @@ import { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
 import { StorageService } from '../storage/storage.service';
 import { normalizeUgandaPhone } from '../../shared/phone';
+import { emitToUser, broadcastToFleet, broadcastDriverSnapshot } from '../../realtime/socket_server';
 
 export interface CareerApplicationData {
   applicant_type: 'driver' | 'tour_guide';
@@ -219,6 +220,7 @@ export class CareerService {
     return {
       success: true,
       applicationId,
+      userId,
       status: 'PENDING_APPROVAL',
       message: 'Application successfully received. Mumwe Safaris recruitment team will verify your credentials shortly.',
     };
@@ -352,6 +354,17 @@ export class CareerService {
         type: 'ACCOUNT',
         metadata: { applicationId, applicantType: app.applicant_type, status: 'APPROVED', otpCode },
       }).catch((err) => console.error('[Notification Error]', err));
+
+      emitToUser(userId, 'account:approval_updated', {
+        userId,
+        applicationId,
+        applicantType: app.applicant_type,
+        approvalStatus: 'APPROVED',
+        isApproved: true,
+      });
+      if (app.applicant_type === 'driver') {
+        broadcastDriverSnapshot(userId, 'fleet:status_update');
+      }
     }
 
     // 7. Record Admin Audit Log
@@ -387,6 +400,7 @@ export class CareerService {
     return {
       success: true,
       applicationId,
+      userId,
       status: 'APPROVED',
       otpCode: generatedOtp,
       message: `${app.full_name} (${app.applicant_type}) has been approved and activated for operations. An activation email with one-time login OTP has been dispatched to ${app.email}.`,
@@ -427,6 +441,7 @@ export class CareerService {
           driver.rejection_reason = reason.trim();
           await db.persistDriver(driver);
         }
+        broadcastToFleet({ driverId: userId, approvalStatus: 'REJECTED' }, 'fleet:driver_removed');
       }
 
       if (app.applicant_type === 'tour_guide') {
@@ -439,6 +454,15 @@ export class CareerService {
           await db.persistTourGuide(guide);
         }
       }
+
+      emitToUser(userId, 'account:approval_updated', {
+        userId,
+        applicationId,
+        applicantType: app.applicant_type,
+        approvalStatus: 'REJECTED',
+        isApproved: false,
+        reason: reason.trim(),
+      });
 
       NotificationService.createNotification({
         userId,
@@ -475,6 +499,7 @@ export class CareerService {
       driver.approval_status = 'SUSPENDED';
       driver.rejection_reason = reason;
       await db.persistDriver(driver);
+      broadcastToFleet({ driverId: userId, approvalStatus: 'SUSPENDED' }, 'fleet:driver_removed');
     }
 
     const guide = localStore.tour_guides.get(userId);
@@ -496,6 +521,13 @@ export class CareerService {
         await db.persistCareerApplication(app);
       }
     }
+
+    emitToUser(userId, 'account:approval_updated', {
+      userId,
+      approvalStatus: 'SUSPENDED',
+      isApproved: false,
+      reason,
+    });
 
     return {
       success: true,

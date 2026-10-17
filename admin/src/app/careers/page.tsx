@@ -54,8 +54,10 @@ export default function CareersPage() {
 
   // Partner Portal & Dashboard State
   const [portalStep, setPortalStep] = useState<PortalStep>('login');
+  const [loginMode, setLoginMode] = useState<'otp' | 'password'>('otp');
   const [portalEmail, setPortalEmail] = useState('');
   const [portalOtp, setPortalOtp] = useState('');
+  const [portalPassword, setPortalPassword] = useState('');
   const [portalLoading, setPortalLoading] = useState(false);
   const [portalError, setPortalError] = useState<string | null>(null);
 
@@ -68,16 +70,78 @@ export default function CareersPage() {
   const [portalUser, setPortalUser] = useState<any | null>(null);
   const [portalAuthToken, setPortalAuthToken] = useState<string>('');
   const [isOnline, setIsOnline] = useState<boolean>(false);
+  const [isAvailable, setIsAvailable] = useState<boolean>(false);
   const [statusUpdating, setStatusUpdating] = useState<boolean>(false);
+  const [streamConnected, setStreamConnected] = useState<boolean>(false);
+
+  // Real Backend Dashboard Data (Driver & Tour Guide)
+  const [dashboardLoading, setDashboardLoading] = useState<boolean>(false);
+  const [driverDashboard, setDriverDashboard] = useState<any | null>(null);
+  const [guideDashboard, setGuideDashboard] = useState<any | null>(null);
+  const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
+  const [activeTrip, setActiveTrip] = useState<any | null>(null);
+  const [completedTrips, setCompletedTrips] = useState<any[]>([]);
+  const [guideBookings, setGuideBookings] = useState<any[]>([]);
+  const [partnerNotifications, setPartnerNotifications] = useState<any[]>([]);
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+  const [operationalFeedback, setOperationalFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Location Telemetry State
   const [currentLat, setCurrentLat] = useState<number>(0.3136);
   const [currentLng, setCurrentLng] = useState<number>(32.5811);
   const [heading, setHeading] = useState<number>(90);
-  const [speed, setSpeed] = useState<number>(25);
+  const [speed, setSpeed] = useState<number>(0);
   const [lastLocationPing, setLastLocationPing] = useState<string | null>(null);
   const [transmittingGps, setTransmittingGps] = useState<boolean>(false);
   const [gpsFeedback, setGpsFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  const loadPartnerDashboard = async (token: string, role?: string) => {
+    if (!token) return;
+    setDashboardLoading(true);
+    try {
+      const effectiveRole = role || portalUser?.role || 'driver';
+      if (effectiveRole === 'tour_guide') {
+        const data = await api.getGuideDashboard(token);
+        setGuideDashboard(data);
+        if (data?.guide) {
+          setIsOnline(Boolean(data.guide.isAvailable));
+          setIsAvailable(Boolean(data.guide.isAvailable));
+          setPortalUser((prev: any) => ({
+            ...prev,
+            full_name: data.guide.fullName || prev?.full_name,
+            email: data.guide.email || prev?.email,
+            phone: data.guide.phone || prev?.phone,
+            role: 'tour_guide',
+            is_approved: data.guide.isApproved,
+            approval_status: data.guide.approvalStatus,
+            guide_details: data.guide,
+          }));
+        }
+        setGuideBookings(data?.assignedBookings || []);
+        setPartnerNotifications(data?.notifications || []);
+      } else {
+        const data = await api.getDriverDashboard(token);
+        setDriverDashboard(data);
+        setIsOnline(Boolean(data?.isOnline));
+        setIsAvailable(Boolean(data?.isAvailable));
+        if (data?.currentLat != null && data?.currentLng != null) {
+          setCurrentLat(Number(data.currentLat));
+          setCurrentLng(Number(data.currentLng));
+        }
+        setActiveTrip(data?.activeTrip || null);
+        setIncomingRequests(data?.incomingRequests || []);
+        setCompletedTrips(data?.completedTrips || []);
+        if (data?.driverId) {
+          const notifs = await api.getUserNotifications(data.driverId, token).catch(() => []);
+          setPartnerNotifications(Array.isArray(notifs) ? notifs : []);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Partner Dashboard] Failed to load dashboard:', err?.message);
+    } finally {
+      setDashboardLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -88,16 +152,140 @@ export default function CareersPage() {
           const parsed = JSON.parse(savedUser);
           setPortalUser(parsed);
           setPortalAuthToken(savedToken);
-          setIsOnline(parsed.driver_details?.is_online || false);
+          setIsOnline(parsed.driver_details?.is_online || parsed.guide_details?.isAvailable || false);
           if (parsed.driver_details?.current_lat) {
             setCurrentLat(parsed.driver_details.current_lat);
             setCurrentLng(parsed.driver_details.current_lng);
           }
           setPortalStep('dashboard');
+          loadPartnerDashboard(savedToken, parsed.role);
         } catch (_) {}
       }
     }
   }, []);
+
+  // Real-time SSE connection for authenticated Driver or Tour Guide
+  useEffect(() => {
+    if (portalStep !== 'dashboard' || !portalAuthToken) return;
+
+    let es: EventSource | null = null;
+    let reconnectTimer: NodeJS.Timeout | null = null;
+
+    const connectPartnerStream = () => {
+      try {
+        const streamUrl = api.getPartnerStreamUrl(portalAuthToken);
+        es = new EventSource(streamUrl);
+
+        es.onopen = () => {
+          setStreamConnected(true);
+        };
+
+        es.addEventListener('connected', () => {
+          setStreamConnected(true);
+        });
+
+        es.addEventListener('trip:incoming_request', (e: MessageEvent) => {
+          try {
+            const req = JSON.parse(e.data);
+            setIncomingRequests((prev) => {
+              const id = req.tripId || req.id;
+              if (prev.some((r) => (r.tripId || r.id) === id)) return prev;
+              return [{ ...req, id }, ...prev];
+            });
+          } catch {}
+        });
+
+        es.addEventListener('trip:request_closed', (e: MessageEvent) => {
+          try {
+            const payload = JSON.parse(e.data);
+            if (payload?.tripId) {
+              setIncomingRequests((prev) => prev.filter((r) => (r.tripId || r.id) !== payload.tripId));
+            }
+          } catch {}
+        });
+
+        es.addEventListener('trip:driver_assigned', () => {
+          loadPartnerDashboard(portalAuthToken, portalUser?.role);
+        });
+
+        es.addEventListener('trip:status_changed', () => {
+          loadPartnerDashboard(portalAuthToken, portalUser?.role);
+        });
+
+        es.addEventListener('tour:booking_assigned', () => {
+          loadPartnerDashboard(portalAuthToken, 'tour_guide');
+        });
+
+        es.addEventListener('tour:booking_updated', () => {
+          loadPartnerDashboard(portalAuthToken, 'tour_guide');
+        });
+
+        es.addEventListener('account:approval_updated', () => {
+          loadPartnerDashboard(portalAuthToken, portalUser?.role);
+        });
+
+        es.addEventListener('notification:new', (e: MessageEvent) => {
+          try {
+            const notif = JSON.parse(e.data);
+            setPartnerNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)]);
+          } catch {}
+        });
+
+        es.onerror = () => {
+          setStreamConnected(false);
+          if (es) {
+            es.close();
+            es = null;
+          }
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connectPartnerStream, 4000);
+        };
+      } catch {
+        setStreamConnected(false);
+      }
+    };
+
+    connectPartnerStream();
+
+    return () => {
+      if (es) es.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
+  }, [portalStep, portalAuthToken, portalUser?.role]);
+
+  // Continuous live GPS watch when an approved driver is online
+  useEffect(() => {
+    if (portalStep !== 'dashboard' || !portalAuthToken || portalUser?.role === 'tour_guide' || !isOnline) {
+      return;
+    }
+
+    let watchId: number | null = null;
+    if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const lat = parseFloat(pos.coords.latitude.toFixed(6));
+          const lng = parseFloat(pos.coords.longitude.toFixed(6));
+          const hdg = pos.coords.heading || heading;
+          const spd = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 0;
+          setCurrentLat(lat);
+          setCurrentLng(lng);
+          setHeading(hdg);
+          setSpeed(spd);
+          api.updateDriverLocation(lat, lng, hdg, portalAuthToken).then(() => {
+            setLastLocationPing(new Date().toLocaleTimeString());
+          }).catch(() => {});
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+      );
+    }
+
+    return () => {
+      if (watchId != null && typeof window !== 'undefined' && 'geolocation' in navigator) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [portalStep, portalAuthToken, portalUser?.role, isOnline]);
 
   const availableLanguages = [
     'English', 'Swahili', 'Luganda', 'French', 'German', 'Spanish', 'Italian', 'Chinese'
@@ -220,6 +408,32 @@ export default function CareersPage() {
     e.preventDefault();
     setPortalError(null);
 
+    if (loginMode === 'password') {
+      if (!portalEmail.trim() || !portalPassword.trim()) {
+        setPortalError('Please enter both your email/phone and password.');
+        return;
+      }
+      setPortalLoading(true);
+      try {
+        const res = await api.loginPartner(portalEmail.trim(), portalPassword);
+        if (res && res.accessToken) {
+          setPortalAuthToken(res.accessToken);
+          setPortalUser(res.user);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('safaris_partner_token', res.accessToken);
+            localStorage.setItem('safaris_partner_user', JSON.stringify(res.user));
+          }
+          setPortalStep('dashboard');
+          await loadPartnerDashboard(res.accessToken, res.user?.role);
+        }
+      } catch (err: any) {
+        setPortalError(err.message || 'Invalid credentials. Please verify your email and password.');
+      } finally {
+        setPortalLoading(false);
+      }
+      return;
+    }
+
     if (!portalEmail.trim() || !portalOtp.trim()) {
       setPortalError('Please enter both your email address and 6-digit OTP code.');
       return;
@@ -240,6 +454,7 @@ export default function CareersPage() {
           localStorage.setItem('safaris_partner_user', JSON.stringify(res.user));
         }
         setPortalStep('dashboard');
+        await loadPartnerDashboard(res.accessToken, res.user?.role);
       }
     } catch (err: any) {
       setPortalError(err.message || 'Invalid OTP or email. Please check your approval email.');
@@ -274,6 +489,7 @@ export default function CareersPage() {
           localStorage.setItem('safaris_partner_user', JSON.stringify(res.user));
         }
         setPortalStep('dashboard');
+        await loadPartnerDashboard(res.accessToken, res.user?.role);
       }
     } catch (err: any) {
       setSetupError(err.message || 'Could not set password. Please try again.');
@@ -285,17 +501,115 @@ export default function CareersPage() {
   const handleToggleOnline = async () => {
     if (!portalAuthToken) return;
     setStatusUpdating(true);
+    setOperationalFeedback(null);
     try {
       const nextState = !isOnline;
-      await api.setDriverAvailability(nextState, portalAuthToken);
-      setIsOnline(nextState);
-      if (nextState) {
-        await sendLocationToBackend(currentLat, currentLng, heading);
+      if (portalUser?.role === 'tour_guide') {
+        const res = await api.setGuideAvailability(nextState, portalAuthToken);
+        setIsOnline(Boolean(res?.isAvailable ?? nextState));
+        setIsAvailable(Boolean(res?.isAvailable ?? nextState));
+        setOperationalFeedback({
+          text: `Tour guide availability updated to ${nextState ? 'AVAILABLE' : 'UNAVAILABLE'}.`,
+          type: 'success',
+        });
+      } else {
+        const res = await api.setDriverAvailability(nextState, portalAuthToken);
+        setIsOnline(Boolean(res?.isOnline ?? nextState));
+        setIsAvailable(Boolean(res?.isAvailable ?? nextState));
+        if (nextState) {
+          await sendLocationToBackend(currentLat, currentLng, heading);
+        }
+        setOperationalFeedback({
+          text: `Driver operational status updated to ${nextState ? 'ONLINE & AVAILABLE' : 'OFFLINE'}. Admin map synchronized.`,
+          type: 'success',
+        });
       }
+      await loadPartnerDashboard(portalAuthToken, portalUser?.role);
     } catch (err: any) {
-      setGpsFeedback({ text: err.message || 'Failed to update availability.', type: 'error' });
+      setOperationalFeedback({ text: err.message || 'Failed to update availability.', type: 'error' });
     } finally {
       setStatusUpdating(false);
+    }
+  };
+
+  const handleAcceptRideRequest = async (tripId: string) => {
+    if (!portalAuthToken || !tripId) return;
+    setActionBusyId(tripId);
+    setOperationalFeedback(null);
+    try {
+      await api.acceptTrip(tripId, portalAuthToken);
+      setOperationalFeedback({ text: 'Ride request accepted! Customer and Admin Map updated in real time.', type: 'success' });
+      await loadPartnerDashboard(portalAuthToken, 'driver');
+    } catch (err: any) {
+      setOperationalFeedback({ text: err.message || 'Could not accept ride request.', type: 'error' });
+      await loadPartnerDashboard(portalAuthToken, 'driver');
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleRejectRideRequest = async (tripId: string) => {
+    if (!portalAuthToken || !tripId) return;
+    setActionBusyId(tripId);
+    setOperationalFeedback(null);
+    try {
+      await api.rejectTrip(tripId, 'Declined by driver', portalAuthToken);
+      setIncomingRequests((prev) => prev.filter((r) => (r.tripId || r.id) !== tripId));
+      setOperationalFeedback({ text: 'Ride request declined.', type: 'success' });
+    } catch (err: any) {
+      setOperationalFeedback({ text: err.message || 'Could not decline ride request.', type: 'error' });
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleUpdateActiveTripStatus = async (tripId: string, nextStatus: string) => {
+    if (!portalAuthToken || !tripId) return;
+    setActionBusyId(tripId);
+    setOperationalFeedback(null);
+    try {
+      await api.updateTripStatus(tripId, nextStatus, portalAuthToken);
+      setOperationalFeedback({ text: `Trip status updated to ${nextStatus}.`, type: 'success' });
+      await loadPartnerDashboard(portalAuthToken, 'driver');
+    } catch (err: any) {
+      setOperationalFeedback({ text: err.message || 'Failed to update trip status.', type: 'error' });
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleUpdateGuideBookingStatus = async (bookingId: string, nextStatus: string) => {
+    if (!portalAuthToken || !bookingId) return;
+    setActionBusyId(bookingId);
+    setOperationalFeedback(null);
+    try {
+      await api.updateGuideBookingStatus(bookingId, nextStatus, portalAuthToken);
+      setOperationalFeedback({ text: `Safari booking status updated to ${nextStatus}. Customer notified in real time.`, type: 'success' });
+      await loadPartnerDashboard(portalAuthToken, 'tour_guide');
+    } catch (err: any) {
+      setOperationalFeedback({ text: err.message || 'Failed to update booking status.', type: 'error' });
+    } finally {
+      setActionBusyId(null);
+    }
+  };
+
+  const handleCashoutWallet = async () => {
+    if (!portalAuthToken) return;
+    const balance = driverDashboard?.walletBalanceUGX || 0;
+    if (balance <= 0) {
+      setOperationalFeedback({ text: 'No wallet balance available for withdrawal.', type: 'error' });
+      return;
+    }
+    setActionBusyId('cashout');
+    setOperationalFeedback(null);
+    try {
+      const res = await api.cashoutDriverEarnings(balance, portalUser?.phone || '', portalAuthToken);
+      setOperationalFeedback({ text: res.message || 'Withdrawal completed.', type: 'success' });
+      await loadPartnerDashboard(portalAuthToken, 'driver');
+    } catch (err: any) {
+      setOperationalFeedback({ text: err.message || 'Cashout failed.', type: 'error' });
+    } finally {
+      setActionBusyId(null);
     }
   };
 
@@ -352,9 +666,16 @@ export default function CareersPage() {
     }
     setPortalUser(null);
     setPortalAuthToken('');
+    setDriverDashboard(null);
+    setGuideDashboard(null);
+    setActiveTrip(null);
+    setIncomingRequests([]);
+    setGuideBookings([]);
+    setPartnerNotifications([]);
     setPortalStep('login');
     setPortalEmail('');
     setPortalOtp('');
+    setPortalPassword('');
   };
 
   // Theme-consistent classic styles
@@ -1079,19 +1400,50 @@ export default function CareersPage() {
         )}
 
         {/* ================================================================= */}
-        {/* TAB 3: PARTNER & DRIVER PORTAL (OTP LOGIN -> PASSWORD -> DASHBOARD) */}
+        {/* TAB 3: PARTNER & DRIVER PORTAL (OTP/PASSWORD LOGIN -> DASHBOARD)  */}
         {/* ================================================================= */}
         {activeTab === 'portal' && (
-          <div className="max-w-4xl mx-auto">
-            {/* STEP 1: OTP LOGIN */}
+          <div className="max-w-5xl mx-auto">
+            {/* STEP 1: OTP OR PASSWORD LOGIN */}
             {portalStep === 'login' && (
               <div className={`max-w-lg mx-auto rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
                 <div className={`px-6 py-4 border-b ${sectionHeaderBg}`}>
                   <h2 className="text-[19px] font-extrabold">Approved Partner &amp; Driver Login</h2>
                 </div>
                 <div className="p-6 sm:p-8 space-y-5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setLoginMode('otp'); setPortalError(null); }}
+                      className={`py-2.5 px-3 rounded-[4px] text-[13px] font-bold border transition-colors ${
+                        loginMode === 'otp'
+                          ? isLight
+                            ? 'bg-[#1e3a8a] text-white border-[#172554]'
+                            : 'bg-[#2563eb] text-white border-[#1d4ed8]'
+                          : secondaryBtnClass
+                      }`}
+                    >
+                      First-Time OTP Login
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLoginMode('password'); setPortalError(null); }}
+                      className={`py-2.5 px-3 rounded-[4px] text-[13px] font-bold border transition-colors ${
+                        loginMode === 'password'
+                          ? isLight
+                            ? 'bg-[#1e3a8a] text-white border-[#172554]'
+                            : 'bg-[#2563eb] text-white border-[#1d4ed8]'
+                          : secondaryBtnClass
+                      }`}
+                    >
+                      Password Login
+                    </button>
+                  </div>
+
                   <p className="text-[14px] font-medium leading-relaxed">
-                    Enter your approved email address and the 6-digit One-Time Passcode (OTP) sent to your email upon administrator approval.
+                    {loginMode === 'otp'
+                      ? 'Enter your approved email address and the 6-digit One-Time Passcode (OTP) sent to your email upon administrator approval.'
+                      : 'Sign in using your registered email address (or phone number) and your permanent account password.'}
                   </p>
 
                   {portalError && (
@@ -1102,36 +1454,56 @@ export default function CareersPage() {
 
                   <form onSubmit={handleOtpLogin} className="space-y-5">
                     <div>
-                      <label className={labelClass}>Registered Email Address *</label>
+                      <label className={labelClass}>
+                        {loginMode === 'otp' ? 'Registered Email Address *' : 'Email Address or Phone Number *'}
+                      </label>
                       <input
-                        type="email"
+                        type={loginMode === 'otp' ? 'email' : 'text'}
                         required
-                        placeholder="driver@example.com"
+                        placeholder={loginMode === 'otp' ? 'driver@example.com' : 'driver@example.com or +256...'}
                         value={portalEmail}
                         onChange={(e) => setPortalEmail(e.target.value)}
                         className={inputClass}
                       />
                     </div>
 
-                    <div>
-                      <label className={labelClass}>6-Digit Activation OTP *</label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={6}
-                        placeholder="123456"
-                        value={portalOtp}
-                        onChange={(e) => setPortalOtp(e.target.value.trim())}
-                        className={`${inputClass} tracking-widest text-center text-[18px] font-extrabold`}
-                      />
-                    </div>
+                    {loginMode === 'otp' ? (
+                      <div>
+                        <label className={labelClass}>6-Digit Activation OTP *</label>
+                        <input
+                          type="text"
+                          required
+                          maxLength={6}
+                          placeholder="123456"
+                          value={portalOtp}
+                          onChange={(e) => setPortalOtp(e.target.value.trim())}
+                          className={`${inputClass} tracking-widest text-center text-[18px] font-extrabold`}
+                        />
+                      </div>
+                    ) : (
+                      <div>
+                        <label className={labelClass}>Account Password *</label>
+                        <input
+                          type="password"
+                          required
+                          placeholder="Enter your password"
+                          value={portalPassword}
+                          onChange={(e) => setPortalPassword(e.target.value)}
+                          className={inputClass}
+                        />
+                      </div>
+                    )}
 
                     <button
                       type="submit"
                       disabled={portalLoading}
                       className={`${primaryBtnClass} w-full`}
                     >
-                      {portalLoading ? 'Verifying OTP...' : 'Verify OTP & Continue'}
+                      {portalLoading
+                        ? 'Authenticating...'
+                        : loginMode === 'otp'
+                        ? 'Verify OTP & Continue'
+                        : 'Sign In to Partner Dashboard'}
                     </button>
                   </form>
                 </div>
@@ -1190,30 +1562,67 @@ export default function CareersPage() {
               </div>
             )}
 
-            {/* STEP 3: DRIVER & GUIDE DASHBOARD */}
+            {/* STEP 3: REAL-TIME DRIVER & TOUR GUIDE DASHBOARDS */}
             {portalStep === 'dashboard' && portalUser && (
               <div className="space-y-6">
-                <div className={`rounded-[4px] border ${panelBg} p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4`}>
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <h2 className="text-[22px] font-extrabold">{portalUser.full_name}</h2>
+                {/* Dashboard Top Header & Operational Availability Controls */}
+                <div className={`rounded-[4px] border ${panelBg} p-6 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4`}>
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h2 className="text-[22px] font-extrabold">
+                        {driverDashboard?.fullName || guideDashboard?.guide?.fullName || portalUser.full_name}
+                      </h2>
                       <span className="px-2.5 py-0.5 rounded-[4px] text-[12px] font-extrabold border border-current/25 uppercase">
-                        {portalUser.role === 'driver' ? 'Approved Driver' : 'Approved Tour Guide'}
+                        {portalUser.role === 'tour_guide' ? 'Certified Tour Guide' : 'Approved Safari Driver'}
+                      </span>
+                      <span className={`px-2.5 py-0.5 rounded-[4px] text-[12px] font-extrabold uppercase ${
+                        isOnline
+                          ? activeTrip
+                            ? 'bg-[#2563eb] text-white'
+                            : 'bg-[#10b981] text-white'
+                          : 'bg-slate-500/20 text-slate-500'
+                      }`}>
+                        {portalUser.role === 'tour_guide'
+                          ? isOnline ? 'AVAILABLE FOR TOURS' : 'UNAVAILABLE'
+                          : !isOnline
+                          ? 'OFFLINE'
+                          : activeTrip
+                          ? 'ASSIGNED / ON TRIP'
+                          : 'ONLINE & AVAILABLE'}
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-[4px] text-[11px] font-mono font-bold border border-current/20">
+                        {streamConnected ? 'LIVE STREAM CONNECTED' : 'RECONNECTING...'}
                       </span>
                     </div>
-                    <p className="text-[14px] font-semibold opacity-75 mt-1">
-                      {portalUser.email} • {portalUser.phone}
+                    <p className="text-[14px] font-semibold opacity-75">
+                      {driverDashboard?.email || guideDashboard?.guide?.email || portalUser.email} • {driverDashboard?.phone || guideDashboard?.guide?.phone || portalUser.phone}
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
                     <button
                       type="button"
                       onClick={handleToggleOnline}
                       disabled={statusUpdating}
-                      className={primaryBtnClass}
+                      className={`px-5 py-2.5 rounded-[4px] font-bold text-[14px] transition-colors disabled:opacity-50 ${
+                        isOnline
+                          ? 'bg-emerald-700 hover:bg-emerald-800 text-white border border-emerald-900'
+                          : primaryBtnClass
+                      }`}
                     >
-                      {statusUpdating ? 'Updating...' : isOnline ? 'Status: Online (Active)' : 'Go Online'}
+                      {statusUpdating
+                        ? 'Updating...'
+                        : portalUser.role === 'tour_guide'
+                        ? isOnline ? 'Status: Available (Set Unavailable)' : 'Set Available for Tours'
+                        : isOnline ? 'Status: Online (Go Offline)' : 'Go Online & Available'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => loadPartnerDashboard(portalAuthToken, portalUser.role)}
+                      disabled={dashboardLoading}
+                      className={secondaryBtnClass}
+                    >
+                      {dashboardLoading ? 'Syncing...' : 'Sync Now'}
                     </button>
                     <button
                       type="button"
@@ -1225,104 +1634,576 @@ export default function CareersPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {/* Card 1: Credentials */}
-                  <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
-                    <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
-                      <h3 className="text-[14px] font-extrabold uppercase">Accreditation Details</h3>
-                    </div>
-                    <div className="p-5 space-y-3 text-[14px]">
-                      {portalUser.role === 'driver' ? (
-                        <>
+                {operationalFeedback && (
+                  <div className={`p-4 rounded-[4px] border text-[14px] font-bold ${
+                    operationalFeedback.type === 'success'
+                      ? 'bg-[#ecfdf5] border-[#34d399] text-[#065f46]'
+                      : 'bg-[#fef2f2] border-[#f87171] text-[#991b1b]'
+                  }`}>
+                    {operationalFeedback.text}
+                  </div>
+                )}
+
+                {/* ========================================================= */}
+                {/* ROLE A: DRIVER OPERATIONAL DASHBOARD                      */}
+                {/* ========================================================= */}
+                {portalUser.role !== 'tour_guide' ? (
+                  <>
+                    {/* Row 1: Vehicle Credentials, Earnings & Wallet, Live GPS Feed */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {/* Card 1: Accreditation & Vehicle */}
+                      <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                          <h3 className="text-[14px] font-extrabold uppercase">Vehicle &amp; Accreditation</h3>
+                        </div>
+                        <div className="p-5 space-y-3 text-[14px]">
                           <div>
                             <span className="block text-[12px] font-bold uppercase opacity-60">Assigned Vehicle</span>
                             <span className="font-extrabold">
-                              {portalUser.vehicle_details?.make || 'Toyota'} {portalUser.vehicle_details?.model || 'Safari 4x4'}
+                              {driverDashboard?.vehicle?.make || portalUser.vehicle_details?.make || 'Toyota'}{' '}
+                              {driverDashboard?.vehicle?.model || portalUser.vehicle_details?.model || 'Safari 4x4'}
                             </span>
                           </div>
                           <div>
                             <span className="block text-[12px] font-bold uppercase opacity-60">Registration Plate</span>
-                            <span className="font-extrabold">
-                              {portalUser.vehicle_details?.registration_plate || portalUser.driver_details?.license_number || 'REGISTERED'}
+                            <span className="font-extrabold font-mono">
+                              {driverDashboard?.vehicle?.registration_plate || portalUser.vehicle_details?.registration_plate || portalUser.driver_details?.license_number || 'REGISTERED'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between pt-1 border-t border-current/10">
+                            <span className="text-[12px] font-bold uppercase opacity-60">Tier / Permit</span>
+                            <span className="font-extrabold uppercase">
+                              {driverDashboard?.vehicle?.tier || portalUser.vehicle_details?.tier || 'safari_4x4'} • {driverDashboard?.licenseNumber || 'VERIFIED'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card 2: Real Earnings & Trip Metrics */}
+                      <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                          <h3 className="text-[14px] font-extrabold uppercase">Earnings &amp; Performance</h3>
+                        </div>
+                        <div className="p-5 space-y-3 text-[14px]">
+                          <div className="flex justify-between border-b border-current/10 pb-2">
+                            <span className="font-semibold">Today&apos;s Earnings:</span>
+                            <span className="font-extrabold font-mono">
+                              UGX {Number(driverDashboard?.todayEarningsUGX || 0).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="flex justify-between border-b border-current/10 pb-2">
+                            <span className="font-semibold">Wallet Balance:</span>
+                            <span className="font-extrabold font-mono text-emerald-700 dark:text-emerald-400">
+                              UGX {Number(driverDashboard?.walletBalanceUGX || 0).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="flex justify-between border-b border-current/10 pb-2">
+                            <span className="font-semibold">Completed Trips:</span>
+                            <span className="font-extrabold font-mono">
+                              {driverDashboard?.totalTrips ?? completedTrips.length} (Today: {driverDashboard?.completedTripsToday ?? 0})
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center pt-1">
+                            <span className="font-semibold">Rating: ★ {driverDashboard?.rating || 5.0}</span>
+                            <button
+                              type="button"
+                              onClick={handleCashoutWallet}
+                              disabled={actionBusyId === 'cashout' || !(driverDashboard?.walletBalanceUGX > 0)}
+                              className={secondaryBtnClass}
+                            >
+                              {actionBusyId === 'cashout' ? 'Processing...' : 'Withdraw Funds'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card 3: Live GPS Telemetry */}
+                      <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                          <h3 className="text-[14px] font-extrabold uppercase">Live GPS Telemetry</h3>
+                        </div>
+                        <div className="p-5 space-y-2.5 text-[14px]">
+                          <div className="flex justify-between">
+                            <span className="font-semibold">Coordinates:</span>
+                            <span className="font-extrabold font-mono">{currentLat.toFixed(5)}, {currentLng.toFixed(5)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="font-semibold">Speed / Heading:</span>
+                            <span className="font-extrabold font-mono">{speed} km/h • {Math.round(heading)}°</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="font-semibold">Last Dispatch Sync:</span>
+                            <span className="font-extrabold font-mono">{lastLocationPing || 'Live Ready'}</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleTransmitGps}
+                            disabled={transmittingGps}
+                            className={`${primaryBtnClass} w-full mt-2`}
+                          >
+                            {transmittingGps ? 'Transmitting GPS...' : 'Transmit Current GPS Location'}
+                          </button>
+
+                          {gpsFeedback && (
+                            <p className={`text-[12px] font-bold pt-1 ${
+                              gpsFeedback.type === 'error' ? 'text-red-600' : 'text-emerald-700 dark:text-emerald-400'
+                            }`}>
+                              {gpsFeedback.text}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Row 2: Active Assigned Trip (if any) */}
+                    {activeTrip && (
+                      <div className={`rounded-[4px] border-2 border-[#2563eb] ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className="px-6 py-3.5 bg-[#2563eb] text-white flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="text-[15px] font-extrabold uppercase tracking-wide">
+                            Active Assigned Trip • Status: {activeTrip.status}
+                          </h3>
+                          <span className="text-[13px] font-mono font-bold">
+                            Fare: UGX {Number(activeTrip.estimatedPriceUGX || activeTrip.finalPriceUGX || 0).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="p-6 space-y-5">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[14px]">
+                            <div>
+                              <span className="block text-[12px] font-bold uppercase opacity-60">Customer</span>
+                              <span className="font-extrabold">{activeTrip.customerName || 'Mumwe Safaris Passenger'}</span>
+                              {activeTrip.customerPhone && (
+                                <span className="block text-[13px] font-mono opacity-80">{activeTrip.customerPhone}</span>
+                              )}
+                            </div>
+                            <div>
+                              <span className="block text-[12px] font-bold uppercase opacity-60">Pickup Location</span>
+                              <span className="font-extrabold">{activeTrip.pickupAddress}</span>
+                              <span className="block text-[12px] font-mono opacity-70">
+                                ({Number(activeTrip.pickupLat).toFixed(4)}, {Number(activeTrip.pickupLng).toFixed(4)})
+                              </span>
+                            </div>
+                            <div>
+                              <span className="block text-[12px] font-bold uppercase opacity-60">Destination</span>
+                              <span className="font-extrabold">{activeTrip.dropoffAddress}</span>
+                              <span className="block text-[12px] font-mono opacity-70">
+                                {activeTrip.distanceKm} km • ({Number(activeTrip.dropoffLat).toFixed(4)}, {Number(activeTrip.dropoffLng).toFixed(4)})
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-current/10">
+                            {activeTrip.status === 'DRIVER_ASSIGNED' && (
+                              <button
+                                type="button"
+                                disabled={actionBusyId === activeTrip.id}
+                                onClick={() => handleUpdateActiveTripStatus(activeTrip.id, 'DRIVER_ARRIVING')}
+                                className={primaryBtnClass}
+                              >
+                                En Route to Pickup (DRIVER_ARRIVING)
+                              </button>
+                            )}
+                            {(activeTrip.status === 'DRIVER_ASSIGNED' || activeTrip.status === 'DRIVER_ARRIVING') && (
+                              <button
+                                type="button"
+                                disabled={actionBusyId === activeTrip.id}
+                                onClick={() => handleUpdateActiveTripStatus(activeTrip.id, 'DRIVER_ARRIVED')}
+                                className={primaryBtnClass}
+                              >
+                                Mark Arrived at Pickup (DRIVER_ARRIVED)
+                              </button>
+                            )}
+                            {(activeTrip.status === 'DRIVER_ARRIVED' || activeTrip.status === 'DRIVER_ASSIGNED' || activeTrip.status === 'DRIVER_ARRIVING') && (
+                              <button
+                                type="button"
+                                disabled={actionBusyId === activeTrip.id}
+                                onClick={() => handleUpdateActiveTripStatus(activeTrip.id, 'TRIP_STARTED')}
+                                className="px-5 py-2.5 rounded-[4px] font-bold text-[14px] bg-emerald-700 hover:bg-emerald-800 text-white"
+                              >
+                                Start Trip (TRIP_STARTED)
+                              </button>
+                            )}
+                            {activeTrip.status === 'TRIP_STARTED' && (
+                              <button
+                                type="button"
+                                disabled={actionBusyId === activeTrip.id}
+                                onClick={() => handleUpdateActiveTripStatus(activeTrip.id, 'TRIP_COMPLETED')}
+                                className="px-6 py-2.5 rounded-[4px] font-bold text-[14px] bg-emerald-700 hover:bg-emerald-800 text-white"
+                              >
+                                Complete Trip &amp; Record Fare (TRIP_COMPLETED)
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              disabled={actionBusyId === activeTrip.id}
+                              onClick={() => handleUpdateActiveTripStatus(activeTrip.id, 'CANCELLED')}
+                              className="px-4 py-2.5 rounded-[4px] font-bold text-[13px] border border-red-500 text-red-600 hover:bg-red-50"
+                            >
+                              Cancel Trip
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Row 3: Incoming Ride Requests (Real-Time) */}
+                    <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                      <div className={`px-6 py-3.5 border-b flex items-center justify-between ${sectionHeaderBg}`}>
+                        <h3 className="text-[15px] font-extrabold uppercase">
+                          Incoming Ride Requests ({incomingRequests.length})
+                        </h3>
+                        <span className="text-[12px] font-mono font-bold opacity-75">
+                          Real-Time Dispatch Queue
+                        </span>
+                      </div>
+                      <div className="p-6">
+                        {!isOnline ? (
+                          <p className="text-[14px] font-semibold opacity-75">
+                            You are currently Offline. Switch your status to Online &amp; Available above to receive real-time customer ride requests.
+                          </p>
+                        ) : incomingRequests.length === 0 ? (
+                          <p className="text-[14px] font-semibold opacity-75">
+                            Listening for incoming customer ride requests in your area... New requests will appear here automatically without refreshing.
+                          </p>
+                        ) : (
+                          <div className="space-y-4">
+                            {incomingRequests.map((req) => {
+                              const reqId = req.tripId || req.id;
+                              return (
+                                <div
+                                  key={reqId}
+                                  className={`p-4 rounded-[4px] border flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                                    isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'
+                                  }`}
+                                >
+                                  <div className="space-y-1 text-[14px]">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-extrabold text-[16px]">
+                                        {req.pickupAddress} → {req.dropoffAddress}
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded-[4px] text-[11px] font-mono font-bold border border-current/20 uppercase">
+                                        {req.vehicleTier || 'safari_4x4'}
+                                      </span>
+                                    </div>
+                                    <p className="text-[13px] font-semibold opacity-80">
+                                      Customer: {req.customerName || 'Customer'} {req.customerPhone ? `(${req.customerPhone})` : ''} • Distance: {req.distanceKm || '-'} km
+                                    </p>
+                                    <p className="text-[14px] font-extrabold font-mono text-emerald-700 dark:text-emerald-400">
+                                      Estimated Fare: UGX {Number(req.estimatedPriceUGX || 0).toLocaleString()}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-2.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      disabled={actionBusyId === reqId || Boolean(activeTrip)}
+                                      onClick={() => handleAcceptRideRequest(reqId)}
+                                      className="px-5 py-2.5 rounded-[4px] font-bold text-[14px] bg-emerald-700 hover:bg-emerald-800 text-white disabled:opacity-50"
+                                    >
+                                      {actionBusyId === reqId ? 'Accepting...' : 'Accept Ride'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={actionBusyId === reqId}
+                                      onClick={() => handleRejectRideRequest(reqId)}
+                                      className={secondaryBtnClass}
+                                    >
+                                      Decline
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Row 4: Completed Rides & Notifications */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                          <h3 className="text-[14px] font-extrabold uppercase">
+                            Completed Rides History ({completedTrips.length})
+                          </h3>
+                        </div>
+                        <div className="p-5 max-h-[320px] overflow-y-auto space-y-3 text-[13px]">
+                          {completedTrips.length === 0 ? (
+                            <p className="opacity-70 font-medium">No completed trips recorded yet.</p>
+                          ) : (
+                            completedTrips.map((t) => (
+                              <div key={t.id} className="pb-3 border-b border-current/10 last:border-b-0">
+                                <div className="flex justify-between font-extrabold">
+                                  <span>{t.pickupAddress} → {t.dropoffAddress}</span>
+                                  <span className="font-mono">UGX {Number(t.finalPriceUGX || t.estimatedPriceUGX || 0).toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between text-[12px] opacity-70 mt-0.5">
+                                  <span>{t.distanceKm} km • {t.status}</span>
+                                  <span>{t.completedAt ? new Date(t.completedAt).toLocaleString() : ''}</span>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                          <h3 className="text-[14px] font-extrabold uppercase">
+                            Operational Notifications ({partnerNotifications.length})
+                          </h3>
+                        </div>
+                        <div className="p-5 max-h-[320px] overflow-y-auto space-y-3 text-[13px]">
+                          {partnerNotifications.length === 0 ? (
+                            <p className="opacity-70 font-medium">No notifications yet.</p>
+                          ) : (
+                            partnerNotifications.slice(0, 15).map((n) => (
+                              <div key={n.id} className="pb-3 border-b border-current/10 last:border-b-0">
+                                <p className="font-extrabold">{n.title}</p>
+                                <p className="opacity-80 mt-0.5">{n.body}</p>
+                                <span className="block text-[11px] font-mono opacity-60 mt-1">
+                                  {n.createdAt ? new Date(n.createdAt).toLocaleString() : ''}
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* ========================================================= */
+                  /* ROLE B: TOUR GUIDE OPERATIONAL DASHBOARD                  */
+                  /* ========================================================= */
+                  <>
+                    {/* Row 1: Guide Profile, Specialties & Earnings */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                          <h3 className="text-[14px] font-extrabold uppercase">UWA Guide Accreditation</h3>
+                        </div>
+                        <div className="p-5 space-y-3 text-[14px]">
+                          <div>
+                            <span className="block text-[12px] font-bold uppercase opacity-60">License Number</span>
+                            <span className="font-extrabold font-mono">
+                              {guideDashboard?.guide?.licenseNumber || portalUser.guide_details?.license_number || 'UWA CERTIFIED'}
                             </span>
                           </div>
                           <div>
-                            <span className="block text-[12px] font-bold uppercase opacity-60">Service Tier</span>
-                            <span className="font-extrabold uppercase">{portalUser.vehicle_details?.tier || 'safari_4x4'}</span>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div>
-                            <span className="block text-[12px] font-bold uppercase opacity-60">UWA Accreditation</span>
-                            <span className="font-extrabold">{portalUser.guide_details?.license_number || 'UWA CERTIFIED'}</span>
+                            <span className="block text-[12px] font-bold uppercase opacity-60">Languages</span>
+                            <span className="font-extrabold">
+                              {(guideDashboard?.guide?.languages || ['English']).join(', ')}
+                            </span>
                           </div>
                           <div>
-                            <span className="block text-[12px] font-bold uppercase opacity-60">Status</span>
-                            <span className="font-extrabold">Approved &amp; Active</span>
+                            <span className="block text-[12px] font-bold uppercase opacity-60">Specialties</span>
+                            <span className="font-extrabold">
+                              {(guideDashboard?.guide?.specialties || ['Wildlife Safari']).join(', ')}
+                            </span>
                           </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Card 2: Account Summary */}
-                  <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
-                    <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
-                      <h3 className="text-[14px] font-extrabold uppercase">Operations Summary</h3>
-                    </div>
-                    <div className="p-5 space-y-3 text-[14px]">
-                      <div className="flex justify-between border-b border-current/10 pb-2">
-                        <span className="font-semibold">Completed Trips:</span>
-                        <span className="font-extrabold">0</span>
-                      </div>
-                      <div className="flex justify-between border-b border-current/10 pb-2">
-                        <span className="font-semibold">Partner Rating:</span>
-                        <span className="font-extrabold">5.0</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold">Wallet Balance:</span>
-                        <span className="font-extrabold">UGX 0</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Card 3: Live GPS Telemetry */}
-                  <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
-                    <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
-                      <h3 className="text-[14px] font-extrabold uppercase">Live GPS Location Feed</h3>
-                    </div>
-                    <div className="p-5 space-y-3 text-[14px]">
-                      <div className="flex justify-between">
-                        <span className="font-semibold">Latitude:</span>
-                        <span className="font-extrabold">{currentLat}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold">Longitude:</span>
-                        <span className="font-extrabold">{currentLng}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="font-semibold">Last Update:</span>
-                        <span className="font-extrabold">{lastLocationPing || 'Ready'}</span>
+                        </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={handleTransmitGps}
-                        disabled={transmittingGps}
-                        className={`${primaryBtnClass} w-full mt-2`}
-                      >
-                        {transmittingGps ? 'Sending Location...' : 'Transmit Current GPS Location'}
-                      </button>
+                      <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                          <h3 className="text-[14px] font-extrabold uppercase">Safari Assignments Summary</h3>
+                        </div>
+                        <div className="p-5 space-y-3 text-[14px]">
+                          <div className="flex justify-between border-b border-current/10 pb-2">
+                            <span className="font-semibold">Active Assigned Tours:</span>
+                            <span className="font-extrabold font-mono">
+                              {guideDashboard?.activeBookings?.length ?? guideBookings.filter((b) => b.bookingStatus !== 'COMPLETED' && b.bookingStatus !== 'CANCELLED').length}
+                            </span>
+                          </div>
+                          <div className="flex justify-between border-b border-current/10 pb-2">
+                            <span className="font-semibold">Completed Tours:</span>
+                            <span className="font-extrabold font-mono">
+                              {guideDashboard?.completedToursCount ?? 0}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="font-semibold">Guide Rating:</span>
+                            <span className="font-extrabold font-mono">★ {guideDashboard?.guide?.rating || 5.0}</span>
+                          </div>
+                        </div>
+                      </div>
 
-                      {gpsFeedback && (
-                        <p className="text-[13px] font-bold pt-1">
-                          {gpsFeedback.text}
-                        </p>
-                      )}
+                      <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                        <div className={`px-5 py-3 border-b ${sectionHeaderBg}`}>
+                          <h3 className="text-[14px] font-extrabold uppercase">Earnings &amp; Daily Rate</h3>
+                        </div>
+                        <div className="p-5 space-y-3 text-[14px]">
+                          <div className="flex justify-between border-b border-current/10 pb-2">
+                            <span className="font-semibold">Daily Guide Fee:</span>
+                            <span className="font-extrabold font-mono">
+                              UGX {Number(guideDashboard?.guide?.dailyRateUGX || 150000).toLocaleString()} / day
+                            </span>
+                          </div>
+                          <div className="flex justify-between border-b border-current/10 pb-2">
+                            <span className="font-semibold">Completed Tour Earnings:</span>
+                            <span className="font-extrabold font-mono text-emerald-700 dark:text-emerald-400">
+                              UGX {Number(guideDashboard?.totalEarningsUGX || 0).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="font-semibold">Approval Status:</span>
+                            <span className="font-extrabold uppercase">
+                              {guideDashboard?.guide?.approvalStatus || 'APPROVED'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+
+                    {/* Row 2: Assigned Safari Bookings */}
+                    <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                      <div className={`px-6 py-3.5 border-b flex items-center justify-between ${sectionHeaderBg}`}>
+                        <h3 className="text-[15px] font-extrabold uppercase">
+                          Assigned Safari Tours &amp; Customer Bookings ({guideBookings.length})
+                        </h3>
+                        <span className="text-[12px] font-mono font-bold opacity-75">
+                          Real-Time Assignment Feed
+                        </span>
+                      </div>
+                      <div className="p-6">
+                        {guideBookings.length === 0 ? (
+                          <p className="text-[14px] font-semibold opacity-75">
+                            No safari tours are currently assigned to your account. When a customer books a tour with you or an administrator assigns a safari booking to you, it will appear here immediately in real time.
+                          </p>
+                        ) : (
+                          <div className="space-y-4">
+                            {guideBookings.map((b) => {
+                              const status = String(b.bookingStatus || 'CONFIRMED').toUpperCase();
+                              return (
+                                <div
+                                  key={b.id}
+                                  className={`p-5 rounded-[4px] border space-y-4 ${
+                                    isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'
+                                  }`}
+                                >
+                                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-current/10 pb-3">
+                                    <div>
+                                      <h4 className="text-[17px] font-extrabold">
+                                        {b.package?.title || b.destination?.name || 'Custom Uganda Safari Expedition'}
+                                      </h4>
+                                      <p className="text-[13px] font-semibold opacity-80 mt-0.5">
+                                        Destination: {b.destination?.name || b.package?.parkLocation || 'Uganda National Park'} • Duration: {b.package?.durationDays || 1} Days • Guests: {b.guestsCount || 1}
+                                      </p>
+                                    </div>
+                                    <span className="px-3 py-1 rounded-[4px] text-[12px] font-mono font-extrabold border border-current/25 uppercase">
+                                      {status}
+                                    </span>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[14px]">
+                                    <div>
+                                      <span className="block text-[12px] font-bold uppercase opacity-60">Customer Details</span>
+                                      <span className="font-extrabold">{b.customer?.fullName || 'Safari Guest'}</span>
+                                      <span className="block text-[13px] font-mono opacity-80">
+                                        {b.customer?.phone || '-'} {b.customer?.email ? `• ${b.customer.email}` : ''}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="block text-[12px] font-bold uppercase opacity-60">Travel Date &amp; Coordinates</span>
+                                      <span className="font-extrabold">
+                                        {b.travelDate ? new Date(b.travelDate).toLocaleDateString() : 'Scheduled'}
+                                      </span>
+                                      {b.destination?.lat != null && (
+                                        <span className="block text-[12px] font-mono opacity-75">
+                                          Park GPS: {b.destination.lat}, {b.destination.lng}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <span className="block text-[12px] font-bold uppercase opacity-60">Booking Value</span>
+                                      <span className="font-extrabold font-mono">
+                                        UGX {Number(b.totalAmountUGX || 0).toLocaleString()}
+                                      </span>
+                                      {b.specialRequests && (
+                                        <span className="block text-[12px] opacity-80 mt-0.5">
+                                          Notes: {b.specialRequests}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {Array.isArray(b.package?.itinerary) && b.package.itinerary.length > 0 && (
+                                    <div className="pt-2 border-t border-current/10 text-[13px]">
+                                      <span className="block text-[11px] font-bold uppercase opacity-60 mb-1">Itinerary Highlights</span>
+                                      <ul className="list-disc pl-5 space-y-0.5">
+                                        {b.package.itinerary.map((step: string, i: number) => (
+                                          <li key={i} className="font-medium">{step}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+
+                                  {status !== 'COMPLETED' && status !== 'CANCELLED' && (
+                                    <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-current/10">
+                                      {status === 'PENDING_PAYMENT' && (
+                                        <button
+                                          type="button"
+                                          disabled={actionBusyId === b.id}
+                                          onClick={() => handleUpdateGuideBookingStatus(b.id, 'CONFIRMED')}
+                                          className={primaryBtnClass}
+                                        >
+                                          Confirm Assignment (CONFIRMED)
+                                        </button>
+                                      )}
+                                      {(status === 'CONFIRMED' || status === 'PENDING_PAYMENT') && (
+                                        <button
+                                          type="button"
+                                          disabled={actionBusyId === b.id}
+                                          onClick={() => handleUpdateGuideBookingStatus(b.id, 'IN_PROGRESS')}
+                                          className="px-5 py-2.5 rounded-[4px] font-bold text-[14px] bg-[#2563eb] hover:bg-[#1d4ed8] text-white"
+                                        >
+                                          Start Safari Expedition (IN_PROGRESS)
+                                        </button>
+                                      )}
+                                      {status === 'IN_PROGRESS' && (
+                                        <button
+                                          type="button"
+                                          disabled={actionBusyId === b.id}
+                                          onClick={() => handleUpdateGuideBookingStatus(b.id, 'COMPLETED')}
+                                          className="px-5 py-2.5 rounded-[4px] font-bold text-[14px] bg-emerald-700 hover:bg-emerald-800 text-white"
+                                        >
+                                          Mark Safari Completed (COMPLETED)
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Row 3: Guide Notifications */}
+                    <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
+                      <div className={`px-6 py-3.5 border-b ${sectionHeaderBg}`}>
+                        <h3 className="text-[14px] font-extrabold uppercase">
+                          Guide Notifications ({partnerNotifications.length})
+                        </h3>
+                      </div>
+                      <div className="p-6 max-h-[300px] overflow-y-auto space-y-3 text-[13px]">
+                        {partnerNotifications.length === 0 ? (
+                          <p className="opacity-70 font-medium">No notifications yet.</p>
+                        ) : (
+                          partnerNotifications.map((n) => (
+                            <div key={n.id} className="pb-3 border-b border-current/10 last:border-b-0">
+                              <p className="font-extrabold">{n.title}</p>
+                              <p className="opacity-80 mt-0.5">{n.body}</p>
+                              <span className="block text-[11px] font-mono opacity-60 mt-1">
+                                {n.createdAt ? new Date(n.createdAt).toLocaleString() : ''}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>

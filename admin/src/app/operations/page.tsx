@@ -235,19 +235,84 @@ export default function OperationsPage() {
     }
   };
 
+  const [streamStatus, setStreamStatus] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
+
+  const isDriverStale = (driver: LiveDriver) => {
+    if (!driver.last_ping) return false;
+    const ageMs = Date.now() - new Date(driver.last_ping).getTime();
+    return !Number.isNaN(ageMs) && ageMs > 15 * 60 * 1000;
+  };
+
   useEffect(() => {
     loadOperations();
-    const fleetTimer = setInterval(() => {
-      api.getLiveFleet().then((lf) => {
-        if (Array.isArray(lf)) {
-          setLiveFleet(lf);
-        }
-      }).catch(() => {});
-    }, 3500);
 
-    const fullTimer = setInterval(loadOperations, 15000);
+    let es: EventSource | null = null;
+    let reconnectTimer: NodeJS.Timeout | null = null;
+
+    const connectStream = () => {
+      try {
+        setStreamStatus('connecting');
+        const streamUrl = api.getLiveFleetStreamUrl();
+        es = new EventSource(streamUrl);
+
+        es.onopen = () => {
+          setStreamStatus('connected');
+        };
+
+        const handleDriverSnapshot = (e: MessageEvent) => {
+          try {
+            const snapshot: LiveDriver = JSON.parse(e.data);
+            if (!snapshot || !snapshot.id) return;
+            setStreamStatus('connected');
+            setLiveFleet((prev) => {
+              const idx = prev.findIndex((d) => d.id === snapshot.id);
+              if (idx >= 0) {
+                const next = [...prev];
+                next[idx] = { ...next[idx], ...snapshot };
+                return next;
+              }
+              return [snapshot, ...prev];
+            });
+            setSelectedDriver((prev) => (prev && prev.id === snapshot.id ? { ...prev, ...snapshot } : prev));
+          } catch (err) {
+            console.warn('[LiveFleet SSE] Failed to parse snapshot', err);
+          }
+        };
+
+        es.addEventListener('connected', () => setStreamStatus('connected'));
+        es.addEventListener('fleet:telemetry_update', handleDriverSnapshot);
+        es.addEventListener('fleet:status_update', handleDriverSnapshot);
+        es.addEventListener('fleet:driver_removed', (e: MessageEvent) => {
+          try {
+            const payload = JSON.parse(e.data);
+            if (payload && payload.driverId) {
+              setLiveFleet((prev) => prev.filter((d) => d.id !== payload.driverId));
+              setSelectedDriver((prev) => (prev && prev.id === payload.driverId ? null : prev));
+            }
+          } catch {}
+        });
+
+        es.onerror = () => {
+          setStreamStatus('reconnecting');
+          if (es) {
+            es.close();
+            es = null;
+          }
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connectStream, 4000);
+        };
+      } catch (err) {
+        setStreamStatus('reconnecting');
+      }
+    };
+
+    connectStream();
+
+    // Lightweight fallback sync every 30s for non-stream tabs (approvals, trips, users)
+    const fullTimer = setInterval(loadOperations, 30000);
     return () => {
-      clearInterval(fleetTimer);
+      if (es) es.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       clearInterval(fullTimer);
     };
   }, []);
@@ -263,14 +328,21 @@ export default function OperationsPage() {
 
       if (!matchesSearch) return false;
 
+      const stale = isDriverStale(driver);
+      const isInTrip = Boolean(
+        driver.active_trip_id ||
+        (driver.active_trip_status && ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(driver.active_trip_status)) ||
+        (driver. is_online && !driver.is_available)
+      );
+
       if (statusFilter === 'in_trip') {
-        return driver.is_online && (driver.active_trip_status === 'TRIP_STARTED' || driver.active_trip_status === 'DRIVER_ARRIVED');
+        return driver.is_online && !stale && isInTrip;
       }
       if (statusFilter === 'available') {
-        return driver.is_online && driver.is_available;
+        return driver.is_online && !stale && driver.is_available && !isInTrip;
       }
       if (statusFilter === 'offline') {
-        return !driver.is_online;
+        return !driver.is_online || stale;
       }
       if (statusFilter === 'guides') {
         return driver.role === 'tour_guide';
@@ -366,8 +438,20 @@ export default function OperationsPage() {
           <div className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border shadow-sm ${
             isLight ? 'bg-white border-slate-300 text-slate-800' : 'border-white/20 bg-white/[0.02] text-white/70'
           }`}>
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs font-mono font-bold">Live Telemetry (3.5s)</span>
+            <span className={`w-2.5 h-2.5 rounded-full ${
+              streamStatus === 'connected'
+                ? 'bg-emerald-500 animate-pulse'
+                : streamStatus === 'connecting'
+                ? 'bg-amber-500 animate-pulse'
+                : 'bg-red-500 animate-pulse'
+            }`} />
+            <span className="text-xs font-mono font-bold">
+              {streamStatus === 'connected'
+                ? 'Real-Time Stream Connected'
+                : streamStatus === 'connecting'
+                ? 'Connecting Stream...'
+                : 'Reconnecting Stream...'}
+            </span>
           </div>
           <button
             onClick={loadOperations}
@@ -667,16 +751,16 @@ export default function OperationsPage() {
                 isLight ? 'bg-white/95 border-slate-300 text-slate-700' : 'bg-black/80 border-white/15 text-white/70'
               }`}>
                 <div className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#E5A93C]" />
-                  <span>Safari / In Trip</span>
-                </div>
-                <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
                   <span>Available</span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#2563EB]" />
+                  <span>Assigned / In Trip</span>
+                </div>
+                <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
-                  <span>Offline</span>
+                  <span>Offline / Stale</span>
                 </div>
               </div>
 
@@ -787,8 +871,13 @@ export default function OperationsPage() {
                   {filteredFleet.map((driver) => {
                     const pt = projectGeoToSvg(driver.current_lat, driver.current_lng);
                     const isSelected = selectedDriver?.id === driver.id;
-                    const isInTrip = driver.active_trip_id || driver.active_trip_status === 'TRIP_STARTED';
-                    const markerColor = !driver.is_online ? '#64748b' : isInTrip ? '#E5A93C' : '#10B981';
+                    const stale = isDriverStale(driver);
+                    const isInTrip = Boolean(
+                      driver.active_trip_id ||
+                      (driver.active_trip_status && ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(driver.active_trip_status)) ||
+                      (driver.is_online && !driver.is_available)
+                    );
+                    const markerColor = (!driver.is_online || stale) ? '#64748b' : isInTrip ? '#2563EB' : '#10B981';
 
                     return (
                       <g
@@ -972,21 +1061,30 @@ export default function OperationsPage() {
                         isLight ? 'text-slate-500' : 'text-white/40'
                       }`}>
                         <MapPin className="w-3.5 h-3.5 text-blue-600" />
-                        <span>GPS Accuracy</span>
+                        <span>GPS Coordinates</span>
                       </div>
-                      <p className={`text-sm font-bold font-mono mt-1 ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                        ± {selectedDriver.accuracy || 4.5} m
+                      <p className={`text-xs font-bold font-mono mt-1 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                        {Number(selectedDriver.current_lat).toFixed(4)}, {Number(selectedDriver.current_lng).toFixed(4)}
                       </p>
                     </div>
 
                     <div className={`border rounded-xl p-3 ${
                       isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/40 border-white/10'
                     }`}>
-                      <div className={`flex items-center gap-1.5 text-[11px] font-medium ${
+                      <div className={`flex items-center justify-between text-[11px] font-medium ${
                         isLight ? 'text-slate-500' : 'text-white/40'
                       }`}>
-                        <Clock className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Last Telemetry</span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Last Telemetry</span>
+                        </span>
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase font-bold ${
+                          !selectedDriver.is_online || isDriverStale(selectedDriver)
+                            ? 'bg-slate-500/20 text-slate-400'
+                            : 'bg-emerald-500/20 text-emerald-500'
+                        }`}>
+                          {!selectedDriver.is_online ? 'OFFLINE' : isDriverStale(selectedDriver) ? 'STALE >15M' : 'LIVE'}
+                        </span>
                       </div>
                       <p className={`text-xs font-bold font-mono mt-1 ${isLight ? 'text-slate-900' : 'text-white/80'}`}>
                         {selectedDriver.last_ping ? new Date(selectedDriver.last_ping).toLocaleTimeString() : 'Just now'}
@@ -1053,8 +1151,8 @@ export default function OperationsPage() {
                       <span className="text-xs font-extrabold font-mono text-emerald-600">{liveFleet.filter(d => d.is_online).length}</span>
                     </div>
                     <div className={`p-2 rounded-lg ${isLight ? 'bg-slate-50' : 'bg-white/[0.02]'}`}>
-                      <span className={`block text-[10px] font-mono uppercase ${isLight ? 'text-slate-500' : 'text-white/40'}`}>Sync Rate</span>
-                      <span className={`text-xs font-extrabold font-mono ${isLight ? 'text-slate-900' : 'text-white'}`}>3.5s</span>
+                      <span className={`block text-[10px] font-mono uppercase ${isLight ? 'text-slate-500' : 'text-white/40'}`}>Sync Mode</span>
+                      <span className={`text-xs font-extrabold font-mono ${isLight ? 'text-slate-900' : 'text-white'}`}>Live SSE</span>
                     </div>
                   </div>
                 </div>
@@ -1084,7 +1182,12 @@ export default function OperationsPage() {
                   {filteredFleet.length > 0 ? (
                     filteredFleet.map((driver) => {
                       const isSelected = selectedDriver?.id === driver.id;
-                      const isInTrip = driver.active_trip_id || driver.active_trip_status === 'TRIP_STARTED';
+                      const stale = isDriverStale(driver);
+                      const isInTrip = Boolean(
+                        driver.active_trip_id ||
+                        (driver.active_trip_status && ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(driver.active_trip_status)) ||
+                        (driver.is_online && !driver.is_available)
+                      );
 
                       return (
                         <div
@@ -1119,15 +1222,15 @@ export default function OperationsPage() {
                           </div>
                           <div className="text-right">
                             <span className={`px-2 py-0.5 rounded text-[9px] font-mono uppercase font-bold ${
-                              !driver.is_online
+                              !driver.is_online || stale
                                 ? isLight ? 'bg-slate-200 text-slate-600' : 'bg-white/10 text-white/40'
                                 : isInTrip
-                                ? 'bg-[#E5A93C] text-black'
+                                ? 'bg-[#2563EB] text-white'
                                 : isLight
                                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                                 : 'bg-[#10B981]/20 text-[#10B981]'
                             }`}>
-                              {!driver.is_online ? 'OFFLINE' : isInTrip ? 'EXPEDITION' : 'ONLINE'}
+                              {!driver.is_online ? 'OFFLINE' : stale ? 'STALE' : isInTrip ? 'IN TRIP' : 'AVAILABLE'}
                             </span>
                           </div>
                         </div>

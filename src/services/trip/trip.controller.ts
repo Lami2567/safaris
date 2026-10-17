@@ -31,11 +31,13 @@ export class TripController {
     try {
       const { tripId } = req.params;
       const { status } = req.body;
-      const driverId = req.user?.userId;
-      const updated = TripService.updateTripStatus(tripId, status, driverId);
+      const actorId = req.user?.userId;
+      const actorRole = req.user?.role;
+      const updated = TripService.updateTripStatus(tripId, status, actorId, actorRole);
       return sendSuccess(res, updated);
     } catch (err: any) {
-      return sendError(res, 'STATUS_UPDATE_FAILED', err.message);
+      const code = err.message?.includes('not authorized') ? 403 : 400;
+      return sendError(res, 'STATUS_UPDATE_FAILED', err.message, code);
     }
   }
 
@@ -67,7 +69,23 @@ export class TripController {
       const result = TripService.acceptTrip(tripId, driverId);
       return sendSuccess(res, result);
     } catch (err: any) {
-      return sendError(res, 'ACCEPT_FAILED', err.message, 400);
+      const code = err.message?.includes('no longer searching') || err.message?.includes('already have an active trip')
+        ? 409
+        : err.message?.includes('must be approved')
+          ? 403
+          : 400;
+      return sendError(res, 'ACCEPT_FAILED', err.message, code);
+    }
+  }
+
+  public static rejectTrip(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { tripId } = req.params;
+      const driverId = req.user!.userId;
+      const result = TripService.rejectTrip(tripId, driverId);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'REJECT_FAILED', err.message, 400);
     }
   }
 
@@ -75,7 +93,14 @@ export class TripController {
     try {
       const { tripId } = req.params;
       const { lat, lng, heading } = req.body;
-      const result = TripService.updateDriverLocation(tripId, Number(lat), Number(lng), heading ? Number(heading) : undefined);
+      const driverId = req.user?.userId;
+      const result = TripService.updateDriverLocation(
+        tripId,
+        Number(lat),
+        Number(lng),
+        heading !== undefined ? Number(heading) : undefined,
+        driverId
+      );
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'LOCATION_UPDATE_FAILED', err.message, 400);

@@ -1,5 +1,5 @@
 import { db, localStore } from '../../config/database';
-import { FleetMovementEngine } from './fleet_movement_engine';
+import { broadcastDriverSnapshot, emitToTrip, emitToUser } from '../../realtime/socket_server';
 
 export class DriverService {
   public static setAvailability(driverId: string, isOnline: boolean) {
@@ -9,24 +9,57 @@ export class DriverService {
     }
 
     if (driver.approval_status !== 'APPROVED' || !driver.is_approved) {
-      throw new Error('Driver account is pending admin approval or has been suspended. Please contact Mumwe Safaris dispatch.');
+      throw new Error(
+        `Driver account is not approved for active operations (status: ${driver.approval_status || 'PENDING_APPROVAL'}).`
+      );
     }
 
-    driver.is_online = isOnline;
-    driver.is_available = isOnline;
+    // Check if driver currently has an active trip
+    let hasActiveTrip = false;
+    for (const t of localStore.trips.values()) {
+      if (
+        t.driver_id === driverId &&
+        ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(t.status)
+      ) {
+        hasActiveTrip = true;
+        break;
+      }
+    }
+
+    driver.is_online = Boolean(isOnline);
+    driver.is_available = Boolean(isOnline) && !hasActiveTrip;
     driver.updated_at = new Date().toISOString();
 
-    db.persistDriver(driver).catch((err) => console.error('[DriverService.setAvailability persist error]', err));
+    db.persistDriver(driver).catch((err) =>
+      console.error('[DriverService.setAvailability persist error]', err)
+    );
+
+    // Immediately broadcast status change to Admin Map & Fleet stream
+    const snapshot = broadcastDriverSnapshot(driverId, 'fleet:status_update');
 
     return {
       driverId,
       isOnline: driver.is_online,
       isAvailable: driver.is_available,
       approvalStatus: driver.approval_status,
+      updatedAt: driver.updated_at,
+      snapshot,
     };
   }
 
-  public static updateLocation(driverId: string, lat: number, lng: number, heading = 0) {
+  public static updateLocation(
+    driverId: string,
+    lat: number,
+    lng: number,
+    heading = 0,
+    speed = 0,
+    accuracy = 5,
+    batteryLevel?: number
+  ) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      throw new Error('Invalid GPS coordinates. Latitude must be [-90, 90] and longitude [-180, 180].');
+    }
+
     const driver = localStore.drivers.get(driverId);
     if (!driver) {
       throw new Error('Driver not found.');
@@ -36,14 +69,100 @@ export class DriverService {
       throw new Error('Driver account is not approved to transmit live telemetry.');
     }
 
-    driver.current_lat = lat;
-    driver.current_lng = lng;
-    driver.heading = heading;
-    driver.updated_at = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    driver.current_lat = Number(lat);
+    driver.current_lng = Number(lng);
+    driver.heading = Number.isFinite(heading) ? Number(heading) : 0;
+    driver.speed = Number.isFinite(speed) ? Number(speed) : 0;
+    if (batteryLevel !== undefined && Number.isFinite(batteryLevel)) {
+      driver.battery_level = Number(batteryLevel);
+    }
+    driver.updated_at = nowIso;
 
-    db.persistDriver(driver).catch((err) => console.error('[DriverService.updateLocation persist error]', err));
+    db.persistDriver(driver).catch((err) =>
+      console.error('[DriverService.updateLocation persist error]', err)
+    );
 
-    return { driverId, lat, lng, heading };
+    // Check if driver is currently on an active trip
+    let activeTrip: any = null;
+    for (const t of localStore.trips.values()) {
+      if (
+        t.driver_id === driverId &&
+        ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(t.status)
+      ) {
+        activeTrip = t;
+        break;
+      }
+    }
+
+    // Record breadcrumb point in location_points
+    const ptId = `loc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const pointRecord = {
+      id: ptId,
+      driver_id: driverId,
+      trip_id: activeTrip?.id || null,
+      safari_leg_id: null,
+      lat: driver.current_lat,
+      lng: driver.current_lng,
+      speed: driver.speed,
+      heading: driver.heading,
+      accuracy: Number.isFinite(accuracy) ? Number(accuracy) : 5.0,
+      battery_level: driver.battery_level ?? null,
+      is_offline_queued: false,
+      recorded_at: nowIso,
+      created_at: nowIso,
+    };
+    localStore.location_points.set(ptId, pointRecord);
+    if (db.isPostgresConnected) {
+      db.query(
+        `INSERT INTO location_points (id, driver_id, trip_id, safari_leg_id, lat, lng, speed, heading, accuracy, battery_level, is_offline_queued, recorded_at)
+         VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8, $9, false, $10)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          ptId,
+          driverId,
+          activeTrip?.id || null,
+          driver.current_lat,
+          driver.current_lng,
+          driver.speed,
+          driver.heading,
+          pointRecord.accuracy,
+          driver.battery_level ?? null,
+          nowIso,
+        ]
+      ).catch(() => {});
+    }
+
+    // If on an active trip, push live coordinates to trip room & customer immediately
+    if (activeTrip) {
+      const locPayload = {
+        tripId: activeTrip.id,
+        driverId,
+        lat: driver.current_lat,
+        lng: driver.current_lng,
+        heading: driver.heading,
+        speed: driver.speed,
+        timestamp: Date.now(),
+      };
+      emitToTrip(activeTrip.id, 'trip:driver_location', locPayload);
+      if (activeTrip.customer_id) {
+        emitToUser(activeTrip.customer_id, 'trip:driver_location', locPayload);
+      }
+    }
+
+    // Immediately broadcast single-driver telemetry snapshot to Admin Map (Socket.IO + SSE)
+    const snapshot = broadcastDriverSnapshot(driverId, 'fleet:telemetry_update');
+
+    return {
+      driverId,
+      lat: driver.current_lat,
+      lng: driver.current_lng,
+      heading: driver.heading,
+      speed: driver.speed,
+      updatedAt: nowIso,
+      activeTripId: activeTrip?.id || null,
+      snapshot,
+    };
   }
 
   public static async getNearbyDrivers(lat = 0.3136, lng = 32.5811, radiusKm = 10) {
@@ -75,7 +194,6 @@ export class DriverService {
       }
     }
 
-    // Genuine drivers registered, approved, online and available in localStore
     const activeDrivers: any[] = [];
     for (const d of localStore.drivers.values()) {
       if (d.is_online && d.is_available && d.is_approved && d.approval_status === 'APPROVED') {
@@ -92,7 +210,7 @@ export class DriverService {
           heading: d.heading || 0,
           vehicle: vehicle ? `${vehicle.make} ${vehicle.model}` : 'Safari Vehicle',
           tier: vehicle ? vehicle.tier : 'go',
-          plate: vehicle ? vehicle.registration_plate : 'UBM 714K',
+          plate: vehicle ? vehicle.registration_plate : '',
         });
       }
     }
@@ -105,17 +223,81 @@ export class DriverService {
     const driver = localStore.drivers.get(driverId);
     const vehicle = driver?.vehicle_id ? localStore.vehicles.get(driver.vehicle_id) : null;
 
+    const isApproved = Boolean(driver?.is_approved && driver?.approval_status === 'APPROVED');
+    const approvalStatus = driver?.approval_status || user?.approval_status || 'PENDING_APPROVAL';
+
+    let activeTrip: any = null;
+    const incomingRequests: any[] = [];
+    const completedTrips: any[] = [];
+    let calculatedCompletedEarnings = 0;
+
+    for (const t of localStore.trips.values()) {
+      const customer = t.customer_id ? localStore.users.get(t.customer_id) : null;
+      const enrichedTrip = {
+        ...t,
+        customer_name: customer?.full_name || 'Safaris Customer',
+        customer_phone: customer?.phone || '',
+        customer_rating: Number(customer?.rating ?? 5.0),
+      };
+
+      if (t.driver_id === driverId) {
+        if (['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(t.status)) {
+          activeTrip = enrichedTrip;
+        } else if (['TRIP_COMPLETED', 'CANCELLED'].includes(t.status)) {
+          completedTrips.push(enrichedTrip);
+          if (t.status === 'TRIP_COMPLETED') {
+            calculatedCompletedEarnings += Number(t.fare_ugx || 0) + Number(t.tip_ugx || 0);
+          }
+        }
+      } else if (
+        t.status === 'SEARCHING' &&
+        !t.driver_id &&
+        isApproved &&
+        driver?.is_online
+      ) {
+        const declinedBy: string[] = Array.isArray(t.declined_by) ? t.declined_by : [];
+        if (!declinedBy.includes(driverId)) {
+          incomingRequests.push(enrichedTrip);
+        }
+      }
+    }
+
+    completedTrips.sort(
+      (a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()
+    );
+    incomingRequests.sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    const completedCount = completedTrips.filter((t) => t.status === 'TRIP_COMPLETED').length;
+    const todayEarningsUGX = Math.max(
+      Number(driver?.today_earnings_ugx ?? 0),
+      calculatedCompletedEarnings
+    );
+
     return {
       driverId,
       name: user ? user.full_name : 'Driver',
+      email: user ? user.email : '',
       phone: user ? user.phone : '',
-      rating: user ? user.rating : 4.96,
-      totalTrips: user ? user.total_trips : 0,
-      isOnline: driver ? driver.is_online : false,
-      todayEarningsUGX: driver ? driver.today_earnings_ugx : 0,
-      acceptanceRate: driver ? driver.acceptance_rate : 98.0,
+      rating: Number(user?.rating ?? 5.0),
+      totalTrips: Math.max(Number(user?.total_trips ?? 0), completedCount),
+      completedTripsCount: completedCount,
+      completedTripsToday: completedCount,
+      walletBalanceUGX: Number(user?.wallet_balance_ugx ?? 0),
+      isApproved,
+      approvalStatus,
+      isOnline: driver ? Boolean(driver.is_online) : false,
+      isAvailable: driver ? Boolean(driver.is_online && !activeTrip && driver.is_available !== false) : false,
+      currentLat: Number(driver?.current_lat ?? 0.3136),
+      currentLng: Number(driver?.current_lng ?? 32.5811),
+      heading: Number(driver?.heading ?? 0),
+      lastPing: driver?.updated_at || null,
+      todayEarningsUGX,
+      acceptanceRate: Number(driver?.acceptance_rate ?? 98.0),
       vehicle: vehicle
         ? {
+            id: vehicle.id,
             tier: vehicle.tier,
             make: vehicle.make,
             model: vehicle.model,
@@ -123,6 +305,9 @@ export class DriverService {
             color: vehicle.color,
           }
         : null,
+      activeTrip,
+      incomingRequests: activeTrip ? [] : incomingRequests,
+      completedTrips: completedTrips.slice(0, 50),
     };
   }
 
@@ -133,13 +318,16 @@ export class DriverService {
       throw new Error('Driver not found.');
     }
 
-    const payoutAmount = driver.today_earnings_ugx;
+    const payoutAmount = Number(driver.today_earnings_ugx || 0);
     if (payoutAmount <= 0) {
       throw new Error('No earnings available for cashout.');
     }
 
     driver.today_earnings_ugx = 0;
-    user.wallet_balance_ugx += payoutAmount;
+    user.wallet_balance_ugx = Number(user.wallet_balance_ugx || 0) + payoutAmount;
+
+    db.persistDriver(driver).catch(() => {});
+    db.persistUser(user).catch(() => {});
 
     return {
       success: true,

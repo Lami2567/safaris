@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { localStore, db } from '../../config/database';
 import { v4 as uuidv4 } from 'uuid';
+import { emitToUser, broadcastToFleet } from '../../realtime/socket_server';
+import { NotificationService } from '../notification/notification.service';
 
 export interface CreateBookingRequest {
   customerId: string;
@@ -199,55 +201,113 @@ export class TourismService {
   }
 
   public static createBooking(data: CreateBookingRequest) {
+    if (data.tourGuideId) {
+      const guide = localStore.tour_guides.get(data.tourGuideId);
+      if (!guide || !guide.is_approved || guide.approval_status !== 'APPROVED') {
+        throw new Error('Selected tour guide is not approved for active expeditions.');
+      }
+    }
+
     const bookingId = `tb_${uuidv4().substring(0, 8)}`;
-    const newBooking = {
+    const nowIso = new Date().toISOString();
+    const initialStatus = data.tourGuideId ? 'CONFIRMED' : 'PENDING_PAYMENT';
+    const newBooking: any = {
       id: bookingId,
       customer_id: data.customerId,
       destination_id: data.destinationId || null,
       package_id: data.packageId || null,
       tour_guide_id: data.tourGuideId || null,
-      booking_status: 'PENDING_PAYMENT',
-      travel_date: data.travelDate,
-      guests_count: data.guestsCount || 1,
-      total_ugx: data.totalUgx,
+      guide_id: data.tourGuideId || null,
+      booking_status: initialStatus,
+      status: initialStatus,
+      travel_date: data.travelDate || nowIso.slice(0, 10),
+      start_date: data.travelDate || nowIso.slice(0, 10),
+      guests_count: Number(data.guestsCount || 1),
+      travelers_count: Number(data.guestsCount || 1),
+      total_ugx: Number(data.totalUgx || 0),
       special_requests: data.specialRequests || '',
       payment_method: data.paymentMethod || 'MTN Mobile Money',
       payment_status: 'PENDING',
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: nowIso,
+      updated_at: nowIso,
     };
 
     localStore.tour_bookings.set(bookingId, newBooking);
+    db.persistTourBooking(newBooking).catch((err) =>
+      console.error('[TourismService.createBooking persist error]', err)
+    );
+
+    const enriched = this.getBookingById(bookingId);
+    broadcastToFleet(enriched, 'tour:booking_created');
 
     if (data.tourGuideId) {
-      const guide = localStore.tour_guides.get(data.tourGuideId);
-      if (guide) {
-        guide.total_expeditions = (guide.total_expeditions || 0) + 1;
-      }
+      emitToUser(data.tourGuideId, 'tour:booking_assigned', {
+        bookingId,
+        booking: enriched,
+      });
+      NotificationService.createNotification({
+        userId: data.tourGuideId,
+        title: 'New Safari Tour Assigned',
+        message: `You have been assigned to lead "${enriched.package_title || enriched.destination_title}" on ${newBooking.travel_date} for ${newBooking.guests_count} guest(s).`,
+        type: 'SYSTEM',
+        metadata: { bookingId, travelDate: newBooking.travel_date },
+      }).catch(() => {});
     }
 
-    return newBooking;
+    if (data.customerId) {
+      emitToUser(data.customerId, 'tour:booking_updated', {
+        bookingId,
+        booking: enriched,
+      });
+    }
+
+    return enriched;
   }
 
   public static getUserBookings(customerId: string) {
-    return Array.from(localStore.tour_bookings.values()).filter(
-      (b: any) => b.customer_id === customerId
-    );
+    return Array.from(localStore.tour_bookings.values())
+      .filter((b: any) => b.customer_id === customerId || b.tour_guide_id === customerId || b.guide_id === customerId)
+      .map((b: any) => this.getBookingById(b.id))
+      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
   public static getBookingById(bookingId: string) {
     const booking = localStore.tour_bookings.get(bookingId);
     if (!booking) throw new Error('Tour booking not found.');
-    
-    const dest = booking.destination_id ? localStore.destinations.get(booking.destination_id) : null;
+
+    const guideId = booking.tour_guide_id || booking.guide_id || null;
     const pkg = booking.package_id ? localStore.tour_packages.get(booking.package_id) : null;
-    const guide = booking.tour_guide_id ? localStore.tour_guides.get(booking.tour_guide_id) : null;
+    const destId = booking.destination_id || pkg?.destination_id || null;
+    const dest = destId ? localStore.destinations.get(destId) : null;
+    const guide = guideId ? localStore.tour_guides.get(guideId) : null;
+    const guideUser = guideId ? localStore.users.get(guideId) : null;
+    const customer = booking.customer_id ? localStore.users.get(booking.customer_id) : null;
+    const status = booking.booking_status || booking.status || 'CONFIRMED';
 
     return {
       ...booking,
+      tour_guide_id: guideId,
+      guide_id: guideId,
+      booking_status: status,
+      bookingStatus: status,
+      status,
+      destination_title: dest?.title || dest?.name || 'Uganda Safari',
+      package_title: pkg?.title || 'Custom Guided Safari',
+      guide_name: guideUser?.full_name || guide?.full_name || (guideId ? 'Assigned Guide' : 'Unassigned'),
+      guide_phone: guideUser?.phone || guide?.phone || '',
+      customer_name: customer?.full_name || 'Guest Explorer',
+      customer_phone: customer?.phone || '',
+      customer_email: customer?.email || '',
       destination: dest,
       package: pkg,
-      guide: guide,
+      guide: guide
+        ? {
+            ...guide,
+            full_name: guideUser?.full_name || guide.full_name || 'Safari Guide',
+            phone: guideUser?.phone || guide.phone || '',
+            email: guideUser?.email || '',
+          }
+        : null,
     };
   }
 
@@ -599,30 +659,151 @@ export class TourismService {
   }
 
   // -----------------------------------------------------------
-  // Admin Bookings Management
+  // Admin & Partner Bookings Management
   // -----------------------------------------------------------
   public static getAllBookings() {
-    return Array.from(localStore.tour_bookings.values()).map((b: any) => {
-      const dest = b.destination_id ? localStore.destinations.get(b.destination_id) : null;
-      const pkg = b.package_id ? localStore.tour_packages.get(b.package_id) : null;
-      const guide = b.tour_guide_id ? localStore.tour_guides.get(b.tour_guide_id) : null;
-      const customer = b.customer_id ? localStore.users.get(b.customer_id) : null;
-      return {
-        ...b,
-        destination_title: dest?.title || 'Uganda Safari',
-        package_title: pkg?.title || 'Custom Tour',
-        guide_name: guide?.full_name || 'Assigned Guide',
-        customer_name: customer?.full_name || 'Guest Explorer',
-        customer_phone: customer?.phone || '+256 700 000000',
-      };
-    });
+    return Array.from(localStore.tour_bookings.values())
+      .map((b: any) => this.getBookingById(b.id))
+      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
 
-  public static updateBookingStatus(bookingId: string, status: string) {
+  public static assignGuideToBooking(bookingId: string, guideId: string) {
     const booking = localStore.tour_bookings.get(bookingId);
     if (!booking) throw new Error('Tour booking not found.');
-    booking.booking_status = status;
+
+    const guide = localStore.tour_guides.get(guideId);
+    if (!guide) throw new Error('Tour guide not found.');
+    if (!guide.is_approved || guide.approval_status !== 'APPROVED') {
+      throw new Error('Only approved tour guides can be assigned to customer bookings.');
+    }
+
+    booking.tour_guide_id = guideId;
+    booking.guide_id = guideId;
+    if (!booking.booking_status || booking.booking_status === 'PENDING_PAYMENT' || booking.booking_status === 'PENDING') {
+      booking.booking_status = 'CONFIRMED';
+      booking.status = 'CONFIRMED';
+    }
     booking.updated_at = new Date().toISOString();
-    return booking;
+
+    db.persistTourBooking(booking).catch((err) =>
+      console.error('[TourismService.assignGuideToBooking persist error]', err)
+    );
+
+    const enriched = this.getBookingById(bookingId);
+    const payload = {
+      bookingId,
+      guideId,
+      booking: enriched,
+      status: enriched.booking_status,
+    };
+
+    emitToUser(guideId, 'tour:booking_assigned', payload);
+    emitToUser(guideId, 'tour:booking_updated', payload);
+    if (booking.customer_id) {
+      emitToUser(booking.customer_id, 'tour:booking_assigned', payload);
+      emitToUser(booking.customer_id, 'tour:booking_updated', payload);
+    }
+    broadcastToFleet(payload, 'tour:booking_updated');
+
+    // Persist notifications for both guide and customer
+    NotificationService.createNotification({
+      userId: guideId,
+      title: 'Safari Booking Assigned to You',
+      message: `You have been assigned to "${enriched.package_title}" (${enriched.destination_title}) on ${enriched.travel_date} for ${enriched.guests_count} guest(s).`,
+      type: 'SYSTEM',
+      metadata: { bookingId, guideId, travelDate: enriched.travel_date },
+    }).catch(() => {});
+
+    if (booking.customer_id) {
+      NotificationService.createNotification({
+        userId: booking.customer_id,
+        title: 'Tour Guide Assigned',
+        message: `${enriched.guide_name} has been assigned as your certified guide for "${enriched.package_title}".`,
+        type: 'SYSTEM',
+        metadata: { bookingId, guideId, guideName: enriched.guide_name },
+      }).catch(() => {});
+    }
+
+    return enriched;
+  }
+
+  public static updateBookingStatus(
+    bookingId: string,
+    status: string,
+    actorId?: string,
+    actorRole?: string
+  ) {
+    const booking = localStore.tour_bookings.get(bookingId);
+    if (!booking) throw new Error('Tour booking not found.');
+
+    const assignedGuideId = booking.tour_guide_id || booking.guide_id || null;
+
+    // Authorization check for non-admin callers
+    if (actorId && actorRole !== 'admin') {
+      const isAssignedGuide = assignedGuideId === actorId;
+      const isBookingCustomer = booking.customer_id === actorId;
+      if (!isAssignedGuide && !(isBookingCustomer && status === 'CANCELLED')) {
+        throw new Error('You are not authorized to update this tour booking.');
+      }
+    }
+
+    const prevStatus = booking.booking_status || booking.status;
+    booking.booking_status = status;
+    booking.status = status;
+    booking.updated_at = new Date().toISOString();
+
+    if (status === 'COMPLETED' && prevStatus !== 'COMPLETED' && assignedGuideId) {
+      const guide = localStore.tour_guides.get(assignedGuideId);
+      if (guide) {
+        guide.expeditions_count = Number(guide.expeditions_count || 0) + 1;
+        guide.updated_at = new Date().toISOString();
+        db.persistTourGuide(guide).catch(() => {});
+      }
+    }
+
+    db.persistTourBooking(booking).catch((err) =>
+      console.error('[TourismService.updateBookingStatus persist error]', err)
+    );
+
+    const enriched = this.getBookingById(bookingId);
+    const payload = {
+      bookingId,
+      status,
+      booking: enriched,
+    };
+
+    if (assignedGuideId) {
+      emitToUser(assignedGuideId, 'tour:booking_updated', payload);
+    }
+    if (booking.customer_id) {
+      emitToUser(booking.customer_id, 'tour:booking_updated', payload);
+
+      let title = 'Tour Booking Updated';
+      let msg = `Your booking for "${enriched.package_title}" is now ${status.replace('_', ' ')}.`;
+      if (status === 'CONFIRMED') {
+        title = 'Safari Booking Confirmed';
+        msg = `Your safari booking for "${enriched.package_title}" on ${enriched.travel_date} has been confirmed by ${enriched.guide_name}.`;
+      } else if (status === 'IN_PROGRESS') {
+        title = 'Safari Expedition Started';
+        msg = `Your safari expedition "${enriched.package_title}" with ${enriched.guide_name} is now in progress!`;
+      } else if (status === 'COMPLETED') {
+        title = 'Safari Expedition Completed';
+        msg = `Thank you for exploring Uganda with Mumwe Safaris! Your "${enriched.package_title}" expedition is complete.`;
+      } else if (status === 'CANCELLED') {
+        title = 'Safari Booking Cancelled';
+        msg = `Your booking for "${enriched.package_title}" has been cancelled.`;
+      }
+
+      NotificationService.createNotification({
+        userId: booking.customer_id,
+        title,
+        message: msg,
+        type: 'SYSTEM',
+        metadata: { bookingId, status },
+      }).catch(() => {});
+    }
+    broadcastToFleet(payload, 'tour:booking_updated');
+
+    return enriched;
   }
 }

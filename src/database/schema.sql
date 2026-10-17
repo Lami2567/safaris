@@ -213,16 +213,33 @@ CREATE INDEX IF NOT EXISTS idx_trips_status ON trips(status);
 CREATE TABLE IF NOT EXISTS tour_bookings (
     id VARCHAR(64) PRIMARY KEY,
     customer_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
-    package_id VARCHAR(64) REFERENCES tour_packages(id) ON DELETE CASCADE,
-    guide_id VARCHAR(64) REFERENCES tour_guides(id) ON DELETE SET NULL,
+    destination_id VARCHAR(64),
+    package_id VARCHAR(64),
+    guide_id VARCHAR(64),
+    tour_guide_id VARCHAR(64),
     travelers_count INT NOT NULL DEFAULT 1,
-    start_date DATE NOT NULL,
-    pickup_location TEXT NOT NULL,
-    total_ugx NUMERIC(14, 2) NOT NULL,
+    guests_count INT NOT NULL DEFAULT 1,
+    start_date VARCHAR(64),
+    travel_date VARCHAR(64),
+    pickup_location TEXT DEFAULT 'Kampala',
+    special_requests TEXT DEFAULT '',
+    total_ugx NUMERIC(14, 2) NOT NULL DEFAULT 0,
     status VARCHAR(32) DEFAULT 'CONFIRMED',
-    payment_status payment_status DEFAULT 'COMPLETED',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    booking_status VARCHAR(32) DEFAULT 'CONFIRMED',
+    payment_method VARCHAR(64) DEFAULT 'MTN Mobile Money',
+    payment_status VARCHAR(32) DEFAULT 'PENDING',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS destination_id VARCHAR(64);
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS tour_guide_id VARCHAR(64);
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS guests_count INT DEFAULT 1;
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS travel_date VARCHAR(64);
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS special_requests TEXT DEFAULT '';
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS booking_status VARCHAR(32) DEFAULT 'CONFIRMED';
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS payment_method VARCHAR(64) DEFAULT 'MTN Mobile Money';
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 
 -- 10. DELIVERIES TABLE
 CREATE TABLE IF NOT EXISTS deliveries (

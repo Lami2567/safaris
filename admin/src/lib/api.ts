@@ -85,7 +85,13 @@ export const api = {
 
   // Bookings
   getBookings: () => fetcher<any[]>('/tourism/bookings'),
-  updateBookingStatus: (id: string, status: string) => fetcher<any>(`/tourism/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  updateBookingStatus: (id: string, status: string) =>
+    fetcher<any>(`/tourism/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  assignGuideToBooking: (bookingId: string, guideId: string) =>
+    fetcher<any>(`/tourism/bookings/${bookingId}/assign-guide`, {
+      method: 'PUT',
+      body: JSON.stringify({ guideId }),
+    }),
 
   // Pricing Matrix
   getPricing: () => fetcher<any>('/admin/pricing'),
@@ -99,6 +105,21 @@ export const api = {
 
   // Real-Time Fleet Telemetry & Audit Logs
   getLiveFleet: () => fetcher<any[]>('/admin/live-fleet'),
+  getLiveFleetStreamUrl: () => {
+    const apiBase = getApiBase();
+    const token = typeof window !== 'undefined' ? localStorage.getItem('safaris_admin_token') : null;
+    if (token) {
+      return `${apiBase}/admin/live-fleet/stream?token=${encodeURIComponent(token)}`;
+    }
+    const adminKey = process.env.NEXT_PUBLIC_ADMIN_KEY || 'mumwe_safaris_secret_jwt_2026';
+    return `${apiBase}/admin/live-fleet/stream?adminKey=${encodeURIComponent(adminKey)}`;
+  },
+  getPartnerStreamUrl: (token: string, tripId?: string) => {
+    const apiBase = getApiBase();
+    const qs = new URLSearchParams({ token });
+    if (tripId) qs.set('tripId', tripId);
+    return `${apiBase}/realtime/stream?${qs.toString()}`;
+  },
   getDriverHistory: (driverId: string, date?: string) =>
     fetcher<any>(`/telemetry/drivers/${driverId}/history${date ? `?date=${date}` : ''}`),
   getTripHistory: (tripId: string) => fetcher<any>(`/telemetry/trips/${tripId}/history`),
@@ -128,15 +149,17 @@ export const api = {
   changeAdminPassword: (data: { currentPassword: string; newPassword: string }) =>
     fetcher<any>('/admin/change-password', { method: 'POST', body: JSON.stringify(data) }),
 
-  // Partner & Driver OTP Login and Live Dashboard
+  // Partner & Driver / Tour Guide Login and Live Dashboard
+  loginPartner: (identifier: string, password: string) =>
+    fetcher<any>('/auth/login', { method: 'POST', body: JSON.stringify({ identifier, password }) }),
   loginWithOtp: (email: string, otpCode: string) =>
     fetcher<any>('/auth/login-with-otp', { method: 'POST', body: JSON.stringify({ email, otpCode }) }),
   setupPassword: (email: string, setupToken: string, newPassword: string) =>
     fetcher<any>('/auth/setup-password', { method: 'POST', body: JSON.stringify({ email, setupToken, newPassword }) }),
-  updateDriverLocation: (lat: number, lng: number, heading = 0, token?: string) =>
+  updateDriverLocation: (lat: number, lng: number, heading = 0, token?: string, speed = 0, accuracy = 5) =>
     fetcher<any>('/drivers/location', {
       method: 'POST',
-      body: JSON.stringify({ lat, lng, heading }),
+      body: JSON.stringify({ lat, lng, heading, speed, accuracy }),
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     }),
   setDriverAvailability: (isOnline: boolean, token?: string) =>
@@ -147,6 +170,57 @@ export const api = {
     }),
   getDriverDashboard: (token?: string) =>
     fetcher<any>('/drivers/dashboard', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  driverCashOut: (token?: string) =>
+    fetcher<any>('/drivers/cashout', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  acceptTrip: (tripId: string, token?: string) =>
+    fetcher<any>(`/trips/${tripId}/accept`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  rejectTrip: (tripId: string, token?: string) =>
+    fetcher<any>(`/trips/${tripId}/reject`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  updateTripStatus: (tripId: string, status: string, token?: string) =>
+    fetcher<any>(`/trips/${tripId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  getGuideDashboard: (token?: string) =>
+    fetcher<any>('/guides/me/dashboard', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  setGuideAvailability: (isAvailable: boolean, token?: string) =>
+    fetcher<any>('/guides/me/availability', {
+      method: 'PUT',
+      body: JSON.stringify({ isAvailable }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  updatePartnerBookingStatus: (bookingId: string, status: string, token?: string) =>
+    fetcher<any>(`/tourism/bookings/${bookingId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  getPartnerNotifications: (userId: string, token?: string) =>
+    fetcher<any[]>(`/notifications/user/${userId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  markPartnerNotificationRead: (notifId: string, token?: string) =>
+    fetcher<any>(`/notifications/${notifId}/read`, {
+      method: 'PUT',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  markAllPartnerNotificationsRead: (userId: string, token?: string) =>
+    fetcher<any>(`/notifications/user/${userId}/read-all`, {
+      method: 'PUT',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     }),
 };
