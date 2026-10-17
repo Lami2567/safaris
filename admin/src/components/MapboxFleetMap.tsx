@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Navigation, Compass, Layers, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useTheme } from '@/components/ThemeProvider';
 
 export interface LiveDriver {
   id: string;
@@ -37,6 +38,8 @@ interface MapboxFleetMapProps {
   height?: string;
 }
 
+type MapStyleOption = 'streets-v12' | 'light-v11' | 'dark-v11' | 'navigation-night-v1' | 'satellite-streets-v12';
+
 export default function MapboxFleetMap({
   drivers,
   selectedDriver,
@@ -44,6 +47,9 @@ export default function MapboxFleetMap({
   historicalTrail,
   height = '540px',
 }: MapboxFleetMapProps) {
+  const { theme } = useTheme();
+  const isLight = theme === 'light';
+
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<{ [key: string]: any }>({});
@@ -51,11 +57,23 @@ export default function MapboxFleetMap({
   const [tokenInput, setTokenInput] = useState('');
   const [activeToken, setActiveToken] = useState<string>('');
   const [showTokenPrompt, setShowTokenPrompt] = useState(false);
-  const [mapStyle, setMapStyle] = useState<'dark-v11' | 'navigation-night-v1' | 'satellite-streets-v12'>('dark-v11');
+  const [mapStyle, setMapStyle] = useState<MapStyleOption>(isLight ? 'streets-v12' : 'dark-v11');
+
+  // Sync map style automatically when theme toggles between light and dark
+  useEffect(() => {
+    setMapStyle((prev) => {
+      if (isLight && (prev === 'dark-v11' || prev === 'navigation-night-v1')) {
+        return 'streets-v12';
+      }
+      if (!isLight && (prev === 'streets-v12' || prev === 'light-v11')) {
+        return 'dark-v11';
+      }
+      return prev;
+    });
+  }, [isLight]);
 
   // Fetch master Mapbox token from backend database on mount
   useEffect(() => {
-    // Purge browser local storage token so admin exclusively relies on the database
     if (typeof window !== 'undefined') {
       localStorage.removeItem('safaris_mapbox_token');
     }
@@ -63,11 +81,7 @@ export default function MapboxFleetMap({
     api.getConfig().then((config) => {
       if (config && config.mapboxAccessToken) {
         const token = String(config.mapboxAccessToken).trim();
-        if (token) {
-          setActiveToken(token);
-        } else {
-          setActiveToken('');
-        }
+        setActiveToken(token || '');
       } else {
         setActiveToken('');
       }
@@ -86,7 +100,6 @@ export default function MapboxFleetMap({
       try {
         const mapboxgl = (await import('mapbox-gl')).default;
         
-        // Dynamic import Mapbox CSS
         if (!document.getElementById('mapbox-gl-css')) {
           const link = document.createElement('link');
           link.id = 'mapbox-gl-css';
@@ -119,7 +132,6 @@ export default function MapboxFleetMap({
           mapRef.current = map;
           setIsMapLoaded(true);
 
-          // Add Historical Trail Source and Layer
           map.addSource('route-trail', {
             type: 'geojson',
             data: {
@@ -141,9 +153,9 @@ export default function MapboxFleetMap({
               'line-cap': 'round',
             },
             paint: {
-              'line-color': '#000000',
+              'line-color': isLight ? '#0f172a' : '#000000',
               'line-width': 6,
-              'line-opacity': 0.8,
+              'line-opacity': 0.75,
             },
           });
 
@@ -180,7 +192,7 @@ export default function MapboxFleetMap({
         mapRef.current = null;
       }
     };
-  }, [activeToken, mapStyle]);
+  }, [activeToken, mapStyle, isLight]);
 
   // Update vehicle markers whenever drivers change
   useEffect(() => {
@@ -200,23 +212,16 @@ export default function MapboxFleetMap({
         const hasActiveTrip = Boolean(driver.active_trip_id);
         const isStale = Boolean(driver.is_stale);
 
-        // Marker Color Rules:
-        // - Green marker (#10B981): Available driver (approved, online, available, recent ping < 15m)
-        // - Blue marker (#3B82F6): Driver in field (approved, active trip)
-        // - Gray marker (#6B7280): Offline / stale driver
-        let pinColor = '#6B7280';
+        let pinColor = '#64748B';
         if (isOnline && !isStale) {
           if (hasActiveTrip) {
-            pinColor = '#3B82F6';
+            pinColor = '#2563EB';
           } else if (isAvailable) {
             pinColor = '#10B981';
           }
         }
 
-        const isSelected = selectedDriver?.id === id;
-
         if (markersRef.current[id]) {
-          // Update position and rotation smoothly
           markersRef.current[id].setLngLat([lng, lat]);
           const el = markersRef.current[id].getElement();
           const markerIcon = el.querySelector('.marker-heading-icon') as HTMLElement;
@@ -227,23 +232,27 @@ export default function MapboxFleetMap({
           const container = el.querySelector('.marker-container') as HTMLElement;
           if (container) {
             container.style.borderColor = pinColor;
+            container.style.backgroundColor = isLight ? '#ffffff' : '#141518';
           }
         } else {
-          // Create custom dark safari marker DOM element
           const el = document.createElement('div');
           el.className = 'safaris-mapbox-marker cursor-pointer group relative';
           el.style.width = '36px';
           el.style.height = '36px';
 
           const label = driver.vehicle_plate || driver.registration_plate || driver.full_name || driver.name || 'SAFARI';
+          const pinBg = isLight ? '#ffffff' : '#141518';
+          const tagBg = isLight ? 'rgba(255,255,255,0.95)' : 'rgba(15,23,42,0.9)';
+          const tagText = isLight ? '#0f172a' : '#ffffff';
+          const tagBorder = isLight ? '#cbd5e1' : 'rgba(255,255,255,0.2)';
 
           el.innerHTML = [
-            '<div style="width:32px;height:32px;background-color:#141518;border:2px solid ' + pinColor + ';border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,0.6);transition:transform 0.2s ease;" class="marker-container">',
+            '<div style="width:32px;height:32px;background-color:' + pinBg + ';border:2.5px solid ' + pinColor + ';border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(15,23,42,0.28);transition:transform 0.2s ease;" class="marker-container">',
             '  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="' + pinColor + '" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="marker-heading-icon" style="transform: rotate(' + heading + 'deg); transition: transform 0.3s ease;">',
             '    <polygon points="12 2 19 21 12 17 5 21 12 2"></polygon>',
             '  </svg>',
             '</div>',
-            '<div style="position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:1px 4px;font-family:monospace;font-size:8px;color:white;white-space:nowrap;">',
+            '<div style="position:absolute;bottom:-19px;left:50%;transform:translateX(-50%);background:' + tagBg + ';border:1px solid ' + tagBorder + ';border-radius:4px;padding:1px 5px;font-family:monospace;font-weight:700;font-size:8.5px;color:' + tagText + ';white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.12);">',
             '  ' + label,
             '</div>',
           ].join('');
@@ -260,7 +269,6 @@ export default function MapboxFleetMap({
         }
       });
 
-      // Remove markers of deleted/missing drivers
       Object.keys(markersRef.current).forEach((id) => {
         if (!currentIds.has(id)) {
           markersRef.current[id].remove();
@@ -268,7 +276,7 @@ export default function MapboxFleetMap({
         }
       });
     });
-  }, [drivers, isMapLoaded, selectedDriver, onSelectDriver]);
+  }, [drivers, isMapLoaded, selectedDriver, onSelectDriver, isLight]);
 
   // Smoothly fly camera to selected driver
   useEffect(() => {
@@ -304,7 +312,6 @@ export default function MapboxFleetMap({
         },
       });
 
-      // Fit bounds to trail
       import('mapbox-gl').then(({ default: mapboxgl }) => {
         const bounds = new mapboxgl.LngLatBounds();
         coordinates.forEach((coord) => bounds.extend(coord));
@@ -330,11 +337,9 @@ export default function MapboxFleetMap({
         if (typeof window !== 'undefined') {
           localStorage.removeItem('safaris_mapbox_token');
         }
-        // Save permanently to PostgreSQL database (AES-256 encrypted)
         const updated = await api.updateConfig({ mapboxAccessToken: clean });
         const savedToken = updated?.mapboxAccessToken || clean;
         setActiveToken(savedToken);
-        console.log('[MapboxFleetMap] Token saved encrypted to server database.');
       } catch (err) {
         console.error('[MapboxFleetMap] Failed to save token to database:', err);
       }
@@ -342,21 +347,39 @@ export default function MapboxFleetMap({
   };
 
   return (
-    <div className="relative w-full overflow-hidden rounded-2xl border border-white/15 bg-[#0C0D10]" style={{ height }}>
+    <div
+      className={`relative w-full overflow-hidden rounded-2xl border shadow-sm ${
+        isLight ? 'bg-slate-50 border-slate-300' : 'bg-[#0C0D10] border-white/15'
+      }`}
+      style={{ height }}
+    >
       {/* Mapbox Canvas Container */}
       <div ref={mapContainerRef} className="w-full h-full" />
 
       {/* When token is not configured yet */}
       {!activeToken && (
-        <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-6 text-center space-y-4 z-20">
-          <div className="w-12 h-12 rounded-2xl bg-white/[0.04] border border-white/15 flex items-center justify-center">
-            <Compass className="w-6 h-6 text-[#E5A93C]" />
+        <div
+          className={`absolute inset-0 flex flex-col items-center justify-center p-8 text-center space-y-5 z-20 ${
+            isLight
+              ? 'bg-gradient-to-b from-white via-slate-50 to-slate-100 text-slate-900'
+              : 'bg-[#0C0D10]/95 text-white'
+          }`}
+        >
+          <div
+            className={`w-14 h-14 rounded-2xl border flex items-center justify-center shadow-sm ${
+              isLight
+                ? 'bg-amber-50 border-amber-200 text-amber-600'
+                : 'bg-white/[0.04] border-white/15 text-[#E5A93C]'
+            }`}
+          >
+            <Compass className="w-7 h-7" />
           </div>
           <div className="max-w-md space-y-2">
-            <h3 className="text-sm font-semibold text-white">Connect Mapbox Token (Saved to Database)</h3>
-            <p className="text-xs text-white/50 leading-relaxed">
-              To activate real-time WebGL vector cartography, provide your Mapbox Public Access Token (<code className="text-white/80 font-mono">pk.xxx</code>). 
-              Your token is encrypted using AES-256 and stored permanently in the server database, shared across Admin and Mobile applications.
+            <h3 className={`text-base font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              Connect Mapbox GL Cartography
+            </h3>
+            <p className={`text-xs leading-relaxed ${isLight ? 'text-slate-600' : 'text-white/60'}`}>
+              Enter your Mapbox Public Access Token (<code className="font-mono font-bold">pk.xxx</code>) to activate real-time WebGL street &amp; terrain maps. Your token is AES-256 encrypted and stored permanently in PostgreSQL, or switch to <strong>Vector Radar</strong> in the toolbar above.
             </p>
           </div>
           <div className="flex w-full max-w-sm gap-2">
@@ -365,11 +388,19 @@ export default function MapboxFleetMap({
               placeholder="pk.eyJ1IjoibXVtd2VzYWZhcm..."
               value={tokenInput}
               onChange={(e) => setTokenInput(e.target.value)}
-              className="flex-1 bg-[#141518] border border-white/20 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/30 font-mono focus:outline-none focus:border-[#E5A93C]"
+              className={`flex-1 rounded-xl px-3.5 py-2.5 text-xs font-mono border focus:outline-none ${
+                isLight
+                  ? 'bg-white border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-slate-900'
+                  : 'bg-[#141518] border-white/20 text-white placeholder:text-white/30 focus:border-[#E5A93C]'
+              }`}
             />
             <button
               onClick={handleSaveToken}
-              className="px-4 py-2 bg-white text-black font-semibold text-xs rounded-xl hover:bg-white/90 transition-colors"
+              className={`px-5 py-2.5 font-bold text-xs rounded-xl transition-colors shadow-sm ${
+                isLight
+                  ? 'bg-slate-900 text-white hover:bg-slate-800'
+                  : 'bg-white text-black hover:bg-white/90'
+              }`}
             >
               Connect
             </button>
@@ -379,96 +410,110 @@ export default function MapboxFleetMap({
 
       {/* Floating Map Controls */}
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
-        <button
-          onClick={() => {
-            if (mapRef.current) {
-              mapRef.current.flyTo({ center: [32.5811, 0.3476], zoom: 7.2, curve: 1.2 });
-            }
-          }}
-          title="Reset View to Uganda"
-          className="w-8 h-8 rounded-lg bg-black/80 backdrop-blur-md border border-white/20 flex items-center justify-center text-white/70 hover:text-white hover:border-white/40 transition-colors"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-        </button>
-
-        <button
-          onClick={() => {
-            if (mapRef.current) {
-              mapRef.current.zoomIn();
-            }
-          }}
-          title="Zoom In"
-          className="w-8 h-8 rounded-lg bg-black/80 backdrop-blur-md border border-white/20 flex items-center justify-center text-white/70 hover:text-white hover:border-white/40 transition-colors"
-        >
-          <ZoomIn className="w-3.5 h-3.5" />
-        </button>
-
-        <button
-          onClick={() => {
-            if (mapRef.current) {
-              mapRef.current.zoomOut();
-            }
-          }}
-          title="Zoom Out"
-          className="w-8 h-8 rounded-lg bg-black/80 backdrop-blur-md border border-white/20 flex items-center justify-center text-white/70 hover:text-white hover:border-white/40 transition-colors"
-        >
-          <ZoomOut className="w-3.5 h-3.5" />
-        </button>
-
-        {/* Style Selector */}
-        <button
-          onClick={() => {
-            const nextStyle =
-              mapStyle === 'dark-v11'
-                ? 'navigation-night-v1'
-                : mapStyle === 'navigation-night-v1'
-                ? 'satellite-streets-v12'
-                : 'dark-v11';
-            setMapStyle(nextStyle);
-          }}
-          title="Toggle Map Style (Dark / Navigation / Satellite)"
-          className="w-8 h-8 rounded-lg bg-black/80 backdrop-blur-md border border-white/20 flex items-center justify-center text-white/70 hover:text-white hover:border-white/40 transition-colors"
-        >
-          <Layers className="w-3.5 h-3.5" />
-        </button>
+        {[
+          {
+            title: 'Reset View to Uganda',
+            icon: RotateCcw,
+            onClick: () => mapRef.current?.flyTo({ center: [32.5811, 0.3476], zoom: 7.2, curve: 1.2 }),
+          },
+          {
+            title: 'Zoom In',
+            icon: ZoomIn,
+            onClick: () => mapRef.current?.zoomIn(),
+          },
+          {
+            title: 'Zoom Out',
+            icon: ZoomOut,
+            onClick: () => mapRef.current?.zoomOut(),
+          },
+          {
+            title: 'Cycle Map Style (Streets / Light / Satellite / Dark)',
+            icon: Layers,
+            onClick: () => {
+              const order: MapStyleOption[] = ['streets-v12', 'light-v11', 'satellite-streets-v12', 'dark-v11'];
+              const idx = order.indexOf(mapStyle);
+              setMapStyle(order[(idx + 1) % order.length]);
+            },
+          },
+        ].map((btn, i) => {
+          const Icon = btn.icon;
+          return (
+            <button
+              key={i}
+              onClick={btn.onClick}
+              title={btn.title}
+              className={`w-9 h-9 rounded-xl backdrop-blur-md border flex items-center justify-center transition-all shadow-sm ${
+                isLight
+                  ? 'bg-white/95 border-slate-300 text-slate-700 hover:text-slate-950 hover:bg-white hover:border-slate-400'
+                  : 'bg-black/80 border-white/20 text-white/70 hover:text-white hover:border-white/40'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+            </button>
+          );
+        })}
       </div>
 
       {/* Map Header Status Badge */}
-      <div className="absolute top-4 left-4 z-10 bg-black/80 backdrop-blur-md border border-white/15 px-3 py-1.5 rounded-lg flex items-center gap-2">
-        <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
-        <span className="text-[11px] font-mono text-white/90">
+      <div
+        className={`absolute top-4 left-4 z-10 backdrop-blur-md border px-3.5 py-2 rounded-xl flex items-center gap-2.5 shadow-sm ${
+          isLight
+            ? 'bg-white/95 border-slate-300 text-slate-900'
+            : 'bg-black/80 border-white/15 text-white/90'
+        }`}
+      >
+        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="text-xs font-mono font-bold">
           Live Fleet Radar ({drivers.length} Approved Units)
         </span>
       </div>
 
       {/* Persistent On-Map Visual Legend Box */}
-      <div className="absolute top-14 left-4 z-10 bg-black/85 backdrop-blur-md border border-white/15 px-3 py-2.5 rounded-lg flex flex-col gap-1.5 shadow-lg select-none">
-        <div className="text-[9px] uppercase tracking-wider text-white/40 font-mono font-semibold pb-1 border-b border-white/10">
-          Fleet Legend
+      <div
+        className={`absolute top-16 left-4 z-10 backdrop-blur-md border px-3.5 py-3 rounded-xl flex flex-col gap-2 shadow-md select-none ${
+          isLight
+            ? 'bg-white/95 border-slate-300 text-slate-800'
+            : 'bg-black/85 border-white/15 text-white/90'
+        }`}
+      >
+        <div
+          className={`text-[10px] uppercase tracking-wider font-mono font-bold pb-1.5 border-b ${
+            isLight ? 'text-slate-500 border-slate-200' : 'text-white/40 border-white/10'
+          }`}
+        >
+          Fleet Status Legend
         </div>
-        <div className="flex items-center gap-2 text-[10px] text-white/90">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#10B981] shadow-[0_0_6px_#10B981]" />
+        <div className="flex items-center gap-2.5 text-[11px] font-semibold">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_6px_#10B981]" />
           <span>Available (Approved, Ready)</span>
         </div>
-        <div className="flex items-center gap-2 text-[10px] text-white/90">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#3B82F6] shadow-[0_0_6px_#3B82F6]" />
-          <span>In Field (Active Trip)</span>
+        <div className="flex items-center gap-2.5 text-[11px] font-semibold">
+          <span className="w-2.5 h-2.5 rounded-full bg-blue-600 shadow-[0_0_6px_#2563EB]" />
+          <span>In Field (Active Safari/Trip)</span>
         </div>
-        <div className="flex items-center gap-2 text-[10px] text-white/50">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#6B7280]" />
+        <div className={`flex items-center gap-2.5 text-[11px] font-medium ${isLight ? 'text-slate-500' : 'text-white/50'}`}>
+          <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
           <span>Offline / Stale (&gt;15m)</span>
         </div>
       </div>
 
       {/* Map Footer Bar */}
-      <div className="absolute bottom-0 left-0 right-0 bg-[#090A0D]/90 backdrop-blur-md border-t border-white/10 px-4 py-2 flex items-center justify-between text-[11px] text-white/50 z-10">
-        <div className="flex items-center gap-2">
-          <Navigation className="w-3 h-3 text-[#E5A93C]" />
-          <span>Style: Mapbox {mapStyle}</span>
+      <div
+        className={`absolute bottom-0 left-0 right-0 backdrop-blur-md border-t px-4 py-2.5 flex items-center justify-between text-xs z-10 ${
+          isLight
+            ? 'bg-white/95 border-slate-200 text-slate-600'
+            : 'bg-[#090A0D]/90 border-white/10 text-white/50'
+        }`}
+      >
+        <div className="flex items-center gap-2 font-medium">
+          <Navigation className="w-3.5 h-3.5 text-amber-600" />
+          <span>Cartography: Mapbox {mapStyle}</span>
         </div>
         <button
           onClick={() => setShowTokenPrompt(true)}
-          className="text-white/40 hover:text-white/70 underline underline-offset-2"
+          className={`font-semibold underline underline-offset-2 transition-colors ${
+            isLight ? 'text-slate-600 hover:text-slate-950' : 'text-white/50 hover:text-white'
+          }`}
         >
           Token Settings
         </button>
@@ -476,31 +521,45 @@ export default function MapboxFleetMap({
 
       {/* Token Modal when requested */}
       {showTokenPrompt && (
-        <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-30 flex items-center justify-center p-4">
-          <div className="bg-[#141518] border border-white/20 rounded-2xl p-5 max-w-sm w-full space-y-3">
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-30 flex items-center justify-center p-4">
+          <div
+            className={`border rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-xl ${
+              isLight ? 'bg-white border-slate-300 text-slate-900' : 'bg-[#141518] border-white/20 text-white'
+            }`}
+          >
             <div>
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider">Mapbox Access Token</h4>
-              <p className="text-[10px] text-white/50 mt-0.5">Encrypted with AES-256 and saved permanently to server database.</p>
+              <h4 className="text-xs font-bold uppercase tracking-wider">Mapbox Access Token</h4>
+              <p className={`text-[11px] mt-1 ${isLight ? 'text-slate-500' : 'text-white/50'}`}>
+                Encrypted with AES-256 and saved permanently to server database.
+              </p>
             </div>
             <input
               type="text"
               placeholder="pk.xxx"
               defaultValue={activeToken}
               onChange={(e) => setTokenInput(e.target.value)}
-              className="w-full bg-black border border-white/20 rounded-xl px-3 py-2 text-xs text-white font-mono"
+              className={`w-full border rounded-xl px-3.5 py-2 text-xs font-mono ${
+                isLight
+                  ? 'bg-slate-50 border-slate-300 text-slate-900'
+                  : 'bg-black border-white/20 text-white'
+              }`}
             />
             <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => setShowTokenPrompt(false)}
-                className="px-3 py-1.5 text-xs text-white/60 hover:text-white"
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg ${
+                  isLight ? 'text-slate-600 hover:bg-slate-100' : 'text-white/60 hover:text-white'
+                }`}
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveToken}
-                className="px-3 py-1.5 bg-white text-black font-semibold text-xs rounded-lg"
+                className={`px-4 py-1.5 font-bold text-xs rounded-lg ${
+                  isLight ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-white text-black'
+                }`}
               >
-                Save
+                Save Token
               </button>
             </div>
           </div>

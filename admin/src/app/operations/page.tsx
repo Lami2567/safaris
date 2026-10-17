@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import MapboxFleetMap from '@/components/MapboxFleetMap';
+import { useTheme } from '@/components/ThemeProvider';
 
 type OperationsTab = 'live_map' | 'approvals' | 'trips' | 'deliveries' | 'fleet' | 'users';
 
@@ -77,6 +78,9 @@ interface TelemetryPoint {
 }
 
 export default function OperationsPage() {
+  const { theme } = useTheme();
+  const isLight = theme === 'light';
+
   const [activeTab, setActiveTab] = useState<OperationsTab>('live_map');
   const [loading, setLoading] = useState(true);
 
@@ -233,7 +237,6 @@ export default function OperationsPage() {
 
   useEffect(() => {
     loadOperations();
-    // 3.5s dedicated live fleet telemetry polling for smooth continuous vehicle movement
     const fleetTimer = setInterval(() => {
       api.getLiveFleet().then((lf) => {
         if (Array.isArray(lf)) {
@@ -242,7 +245,7 @@ export default function OperationsPage() {
       }).catch(() => {});
     }, 3500);
 
-    const fullTimer = setInterval(loadOperations, 15000); // 15s full operations refresh
+    const fullTimer = setInterval(loadOperations, 15000);
     return () => {
       clearInterval(fleetTimer);
       clearInterval(fullTimer);
@@ -283,7 +286,6 @@ export default function OperationsPage() {
     setIsPlaying(false);
     setPlaybackIndex(0);
 
-    // Secure Audit Log
     try {
       await api.logAudit({
         action: 'INSPECT_DRIVER_LOCATION_HISTORY',
@@ -326,7 +328,6 @@ export default function OperationsPage() {
   }, [isPlaying, playbackPoints, playbackSpeed]);
 
   // Coordinate Conversion helper for Uganda Vector Map
-  // Uganda bounds roughly: Lat: -1.5 (South) to 4.2 (North), Lng: 29.5 (West) to 35.0 (East)
   const mapWidth = 800;
   const mapHeight = 520;
   const projectGeoToSvg = (lat: number, lng: number) => {
@@ -341,27 +342,41 @@ export default function OperationsPage() {
   };
 
   return (
-    <div className="p-6 sm:p-8 lg:p-10 space-y-8 min-w-0">
+    <div className="p-6 sm:p-8 lg:p-10 space-y-7 min-w-0">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-6">
+      <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-6 ${
+        isLight ? 'border-slate-300' : 'border-white/10'
+      }`}>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-3">
-            <Navigation className="w-7 h-7 text-white" />
-            Live Dispatch & Fleet Operations
+          <h1 className={`text-2xl font-extrabold tracking-tight flex items-center gap-3 ${
+            isLight ? 'text-slate-900' : 'text-white'
+          }`}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center border shadow-sm ${
+              isLight ? 'bg-slate-900 text-white border-slate-900' : 'bg-white/10 text-white border-white/15'
+            }`}>
+              <Navigation className="w-5 h-5" />
+            </div>
+            Live Dispatch &amp; Fleet Operations
           </h1>
-          <p className="text-sm text-white/50 mt-1">
-            Real-time GPS tracking, offline-synced telemetry, turn-by-turn navigation oversight, and route playback.
+          <p className={`text-sm mt-1.5 font-medium ${isLight ? 'text-slate-600' : 'text-white/50'}`}>
+            Real-time GPS tracking, driver &amp; tour guide approval workflow, telemetry inspection, and route playback.
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/20 bg-white/[0.02]">
-            <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
-            <span className="text-[11px] font-mono text-white/70">Live Telemetry (12s)</span>
+          <div className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border shadow-sm ${
+            isLight ? 'bg-white border-slate-300 text-slate-800' : 'border-white/20 bg-white/[0.02] text-white/70'
+          }`}>
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs font-mono font-bold">Live Telemetry (3.5s)</span>
           </div>
           <button
             onClick={loadOperations}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 text-xs border border-white/20 rounded-md hover:bg-white/10 text-white/80 transition-colors"
+            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold border rounded-xl transition-all shadow-sm ${
+              isLight
+                ? 'bg-white border-slate-300 text-slate-800 hover:bg-slate-100 hover:border-slate-400'
+                : 'border-white/20 hover:bg-white/10 text-white/80'
+            }`}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
@@ -370,65 +385,124 @@ export default function OperationsPage() {
       </div>
 
       {/* Primary KPI Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <div className="bg-[#111114] border border-white/10 rounded-xl p-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        {/* Card 1: Online Drivers */}
+        <div className={`rounded-2xl p-5 border shadow-sm transition-all ${
+          isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/10'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/50 font-medium">Online Drivers</span>
-            <span className="w-2 h-2 rounded-full bg-[#10B981]" />
+            <span className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-slate-600' : 'text-white/50'}`}>
+              Online Drivers
+            </span>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${
+              isLight ? 'bg-emerald-50 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/20'
+            }`}>
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">
+          <p className={`text-3xl font-extrabold mt-3 font-mono tracking-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
             {liveFleet.filter(d => d.is_online).length}
           </p>
-          <span className="text-[10px] text-white/40">Active in field</span>
+          <span className={`text-xs font-medium mt-1 block ${isLight ? 'text-emerald-700' : 'text-white/40'}`}>
+            Active in field
+          </span>
         </div>
 
-        <div className="bg-[#111114] border border-white/10 rounded-xl p-4">
+        {/* Card 2: Tour Guides */}
+        <div className={`rounded-2xl p-5 border shadow-sm transition-all ${
+          isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/10'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/50 font-medium">Tour Guides</span>
-            <Compass className="w-4 h-4 text-[#E5A93C]" />
+            <span className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-slate-600' : 'text-white/50'}`}>
+              Tour Guides
+            </span>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${
+              isLight ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-amber-500/10 border-amber-500/20 text-[#E5A93C]'
+            }`}>
+              <Compass className="w-4 h-4" />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">
+          <p className={`text-3xl font-extrabold mt-3 font-mono tracking-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
             {liveFleet.filter(d => d.role === 'tour_guide' && d.is_online).length}
           </p>
-          <span className="text-[10px] text-white/40">Guiding safari tours</span>
+          <span className={`text-xs font-medium mt-1 block ${isLight ? 'text-slate-500' : 'text-white/40'}`}>
+            Guiding safari tours
+          </span>
         </div>
 
-        <div className="bg-[#111114] border border-white/10 rounded-xl p-4">
+        {/* Card 3: Active Expeditions */}
+        <div className={`rounded-2xl p-5 border shadow-sm transition-all ${
+          isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/10'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/50 font-medium">Active Expeditions</span>
-            <Radio className="w-4 h-4 text-[#E5A93C] animate-pulse" />
+            <span className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-slate-600' : 'text-white/50'}`}>
+              Active Expeditions
+            </span>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${
+              isLight ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-amber-500/10 border-amber-500/20 text-[#E5A93C]'
+            }`}>
+              <Radio className="w-4 h-4 animate-pulse" />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-[#E5A93C] mt-2 font-mono">
+          <p className={`text-3xl font-extrabold mt-3 font-mono tracking-tight ${
+            isLight ? 'text-blue-700' : 'text-[#E5A93C]'
+          }`}>
             {liveFleet.filter(d => d.active_trip_id).length}
           </p>
-          <span className="text-[10px] text-white/40">In-transit & Safari legs</span>
+          <span className={`text-xs font-medium mt-1 block ${isLight ? 'text-slate-500' : 'text-white/40'}`}>
+            In-transit &amp; Safari legs
+          </span>
         </div>
 
-        <div className="bg-[#111114] border border-white/10 rounded-xl p-4">
+        {/* Card 4: Standby / Available */}
+        <div className={`rounded-2xl p-5 border shadow-sm transition-all ${
+          isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/10'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/50 font-medium">Standby / Available</span>
-            <span className="w-2 h-2 rounded-full bg-white/40" />
+            <span className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-slate-600' : 'text-white/50'}`}>
+              Standby Ready
+            </span>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${
+              isLight ? 'bg-slate-100 border-slate-200 text-slate-700' : 'bg-white/5 border-white/10 text-white/60'
+            }`}>
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-white mt-2 font-mono">
+          <p className={`text-3xl font-extrabold mt-3 font-mono tracking-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
             {liveFleet.filter(d => d.is_online && d.is_available).length}
           </p>
-          <span className="text-[10px] text-white/40">Ready for dispatch</span>
+          <span className={`text-xs font-medium mt-1 block ${isLight ? 'text-slate-500' : 'text-white/40'}`}>
+            Ready for dispatch
+          </span>
         </div>
 
-        <div className="bg-[#111114] border border-white/10 rounded-xl p-4 col-span-2 sm:col-span-1">
+        {/* Card 5: Offline / Rest */}
+        <div className={`rounded-2xl p-5 border shadow-sm transition-all col-span-2 sm:col-span-1 ${
+          isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/10'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/50 font-medium">Offline / Rest</span>
-            <Clock className="w-4 h-4 text-white/30" />
+            <span className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-slate-600' : 'text-white/50'}`}>
+              Offline / Rest
+            </span>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${
+              isLight ? 'bg-slate-100 border-slate-200 text-slate-500' : 'bg-white/5 border-white/10 text-white/40'
+            }`}>
+              <Clock className="w-4 h-4" />
+            </div>
           </div>
-          <p className="text-2xl font-bold text-white/60 mt-2 font-mono">
+          <p className={`text-3xl font-extrabold mt-3 font-mono tracking-tight ${isLight ? 'text-slate-600' : 'text-white/60'}`}>
             {liveFleet.filter(d => !d.is_online).length}
           </p>
-          <span className="text-[10px] text-white/40">Off-duty or resting</span>
+          <span className={`text-xs font-medium mt-1 block ${isLight ? 'text-slate-500' : 'text-white/40'}`}>
+            Off-duty or resting
+          </span>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-white/10">
+      <div className={`flex items-center gap-2 border-b overflow-x-auto ${
+        isLight ? 'border-slate-300' : 'border-white/10'
+      }`}>
         {[
           { id: 'live_map', label: 'Live Operations Map', icon: Radio, count: liveFleet.length },
           { id: 'approvals', label: 'Driver & Guide Approvals', icon: ShieldCheck, count: applicants.filter(a => a.status === 'PENDING_APPROVAL').length },
@@ -443,16 +517,26 @@ export default function OperationsPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as OperationsTab)}
-              className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-colors relative ${
+              className={`flex items-center gap-2 px-4 py-3.5 text-xs font-bold border-b-2 transition-colors relative whitespace-nowrap ${
                 isActive
-                  ? 'border-white text-white'
+                  ? isLight
+                    ? 'border-slate-900 text-slate-950 bg-white/60 rounded-t-lg'
+                    : 'border-white text-white'
+                  : isLight
+                  ? 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
                   : 'border-transparent text-white/40 hover:text-white/80 hover:border-white/20'
               }`}
             >
               <Icon className="w-4 h-4" />
               {tab.label}
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                isActive ? 'bg-white text-black font-semibold' : 'bg-white/10 text-white/60'
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+                isActive
+                  ? isLight
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-white text-black'
+                  : isLight
+                  ? 'bg-slate-200 text-slate-700'
+                  : 'bg-white/10 text-white/60'
               }`}>
                 {tab.count}
               </span>
@@ -467,7 +551,9 @@ export default function OperationsPage() {
       {activeTab === 'live_map' && (
         <div className="space-y-6">
           {/* Controls Bar: Filters & Search */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-[#111114] p-3 rounded-xl border border-white/10">
+          <div className={`flex flex-col md:flex-row md:items-center justify-between gap-3 p-3.5 rounded-2xl border shadow-sm ${
+            isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/10'
+          }`}>
             {/* Filter pills */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
               {[
@@ -476,29 +562,42 @@ export default function OperationsPage() {
                 { id: 'available', label: 'Available' },
                 { id: 'guides', label: 'Tour Guides' },
                 { id: 'offline', label: 'Offline' },
-              ].map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setStatusFilter(f.id as any)}
-                  className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors whitespace-nowrap ${
-                    statusFilter === f.id
-                      ? 'bg-white text-black font-semibold'
-                      : 'bg-white/[0.04] text-white/60 hover:bg-white/[0.08] hover:text-white'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
+              ].map((f) => {
+                const active = statusFilter === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => setStatusFilter(f.id as any)}
+                    className={`px-3.5 py-2 text-xs rounded-xl font-bold transition-all whitespace-nowrap ${
+                      active
+                        ? isLight
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : 'bg-white text-black'
+                        : isLight
+                        ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-950'
+                        : 'bg-white/[0.04] text-white/60 hover:bg-white/[0.08] hover:text-white'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Engine Selector & Search Input */}
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <div className="flex items-center bg-black p-0.5 rounded-lg border border-white/15">
+            <div className="flex items-center gap-2.5 w-full md:w-auto">
+              <div className={`flex items-center p-1 rounded-xl border ${
+                isLight ? 'bg-slate-100 border-slate-300' : 'bg-black border-white/15'
+              }`}>
                 <button
                   onClick={() => setMapEngine('mapbox')}
-                  className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition-colors ${
+                  className={`px-3 py-1.5 text-xs rounded-lg font-bold transition-all ${
                     mapEngine === 'mapbox'
-                      ? 'bg-[#E5A93C] text-black font-semibold'
+                      ? isLight
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'bg-[#E5A93C] text-black'
+                      : isLight
+                      ? 'text-slate-600 hover:text-slate-900'
                       : 'text-white/60 hover:text-white'
                   }`}
                 >
@@ -506,9 +605,13 @@ export default function OperationsPage() {
                 </button>
                 <button
                   onClick={() => setMapEngine('radar')}
-                  className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition-colors ${
+                  className={`px-3 py-1.5 text-xs rounded-lg font-bold transition-all ${
                     mapEngine === 'radar'
-                      ? 'bg-white text-black font-semibold'
+                      ? isLight
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'bg-white text-black'
+                      : isLight
+                      ? 'text-slate-600 hover:text-slate-900'
                       : 'text-white/60 hover:text-white'
                   }`}
                 >
@@ -517,13 +620,19 @@ export default function OperationsPage() {
               </div>
 
               <div className="relative w-full md:w-64">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
+                <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${
+                  isLight ? 'text-slate-400' : 'text-white/40'
+                }`} />
                 <input
                   type="text"
                   placeholder="Search driver, plate, park..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full bg-black border border-white/15 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/40"
+                  className={`w-full border rounded-xl pl-9 pr-3 py-2 text-xs font-medium focus:outline-none ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:bg-white'
+                      : 'bg-black border-white/15 text-white placeholder:text-white/30 focus:border-white/40'
+                  }`}
                 />
               </div>
             </div>
@@ -542,40 +651,48 @@ export default function OperationsPage() {
               </div>
             ) : (
             /* Left 8 Cols: Interactive Vector Map */
-            <div className="lg:col-span-8 bg-[#0C0D10] border border-white/15 rounded-2xl overflow-hidden shadow-2xl relative">
+            <div className={`lg:col-span-8 border rounded-2xl overflow-hidden shadow-sm relative ${
+              isLight ? 'bg-white border-slate-300' : 'bg-[#0C0D10] border-white/15'
+            }`}>
               {/* Map Title & Indicators */}
-              <div className="absolute top-4 left-4 z-10 bg-black/80 backdrop-blur-md border border-white/15 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#E5A93C] animate-pulse" />
-                <span className="text-[11px] font-mono text-white/90">Uganda Fleet Telemetry Radar</span>
+              <div className={`absolute top-4 left-4 z-10 backdrop-blur-md border px-3.5 py-2 rounded-xl flex items-center gap-2.5 shadow-sm ${
+                isLight ? 'bg-white/95 border-slate-300 text-slate-900' : 'bg-black/80 border-white/15 text-white/90'
+              }`}>
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                <span className="text-xs font-mono font-bold">Uganda Fleet Telemetry Radar</span>
               </div>
 
               {/* Map Legend */}
-              <div className="absolute top-4 right-4 z-10 bg-black/80 backdrop-blur-md border border-white/15 px-3 py-1.5 rounded-lg hidden sm:flex items-center gap-3 text-[10px] font-mono text-white/70">
+              <div className={`absolute top-4 right-4 z-10 backdrop-blur-md border px-3.5 py-2 rounded-xl hidden sm:flex items-center gap-3.5 text-[11px] font-mono font-semibold shadow-sm ${
+                isLight ? 'bg-white/95 border-slate-300 text-slate-700' : 'bg-black/80 border-white/15 text-white/70'
+              }`}>
                 <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-[#E5A93C]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#E5A93C]" />
                   <span>Safari / In Trip</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-[#10B981]" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
                   <span>Available</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-white/40" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
                   <span>Offline</span>
                 </div>
               </div>
 
               {/* SVG Vector Map of Uganda */}
-              <div className="w-full overflow-hidden flex items-center justify-center p-2 sm:p-4">
+              <div className={`w-full overflow-hidden flex items-center justify-center p-2 sm:p-4 ${
+                isLight ? 'bg-slate-50' : 'bg-[#090A0C]'
+              }`}>
                 <svg
                   viewBox={`0 0 ${mapWidth} ${mapHeight}`}
-                  className="w-full h-auto select-none"
+                  className="w-full h-auto select-none rounded-xl"
                   style={{ maxHeight: '540px' }}
                 >
                   <defs>
                     <radialGradient id="lakeVictoriaGradient" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stopColor="#142838" />
-                      <stop offset="100%" stopColor="#0B1520" />
+                      <stop offset="0%" stopColor={isLight ? '#bae6fd' : '#142838'} />
+                      <stop offset="100%" stopColor={isLight ? '#e0f2fe' : '#0B1520'} />
                     </radialGradient>
                     <filter id="glowEffect" x="-20%" y="-20%" width="140%" height="140%">
                       <feGaussianBlur stdDeviation="3" result="blur" />
@@ -583,11 +700,11 @@ export default function OperationsPage() {
                     </filter>
                   </defs>
 
-                  {/* Dark Map Base */}
-                  <rect width={mapWidth} height={mapHeight} fill="#090A0C" />
+                  {/* Map Base */}
+                  <rect width={mapWidth} height={mapHeight} fill={isLight ? '#f8fafc' : '#090A0C'} />
 
                   {/* Geographic Grid / Latitude-Longitude Lines */}
-                  <g stroke="#1A1C22" strokeWidth="0.5" strokeDasharray="3 3">
+                  <g stroke={isLight ? '#cbd5e1' : '#1A1C22'} strokeWidth="0.7" strokeDasharray="4 4">
                     <line x1="0" y1="130" x2={mapWidth} y2="130" />
                     <line x1="0" y1="260" x2={mapWidth} y2="260" />
                     <line x1="0" y1="390" x2={mapWidth} y2="390" />
@@ -600,35 +717,35 @@ export default function OperationsPage() {
                   <path
                     d="M 380 430 Q 420 370, 480 390 Q 560 380, 620 440 Q 640 520, 520 520 Q 360 520, 380 430 Z"
                     fill="url(#lakeVictoriaGradient)"
-                    stroke="#1E384D"
+                    stroke={isLight ? '#38bdf8' : '#1E384D'}
                     strokeWidth="1.5"
                   />
-                  <text x="500" y="470" fill="#2E4F69" fontSize="12" fontFamily="monospace" textAnchor="middle">
+                  <text x="500" y="470" fill={isLight ? '#0369a1' : '#2E4F69'} fontSize="12" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
                     LAKE VICTORIA
                   </text>
 
                   {/* Lake Kyoga */}
-                  <ellipse cx="450" cy="240" rx="60" ry="18" fill="#0E1E2B" stroke="#1E384D" strokeWidth="1" />
-                  <text x="450" y="244" fill="#2E4F69" fontSize="9" fontFamily="monospace" textAnchor="middle">
+                  <ellipse cx="450" cy="240" rx="60" ry="18" fill={isLight ? '#bae6fd' : '#0E1E2B'} stroke={isLight ? '#38bdf8' : '#1E384D'} strokeWidth="1.2" />
+                  <text x="450" y="244" fill={isLight ? '#0369a1' : '#2E4F69'} fontSize="9" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
                     LAKE KYOGA
                   </text>
 
                   {/* Lake Albert */}
-                  <ellipse cx="230" cy="200" rx="35" ry="90" fill="#0E1E2B" stroke="#1E384D" strokeWidth="1" transform="rotate(-30 230 200)" />
-                  <text x="210" y="200" fill="#2E4F69" fontSize="9" fontFamily="monospace" textAnchor="middle">
+                  <ellipse cx="230" cy="200" rx="35" ry="90" fill={isLight ? '#bae6fd' : '#0E1E2B'} stroke={isLight ? '#38bdf8' : '#1E384D'} strokeWidth="1.2" transform="rotate(-30 230 200)" />
+                  <text x="210" y="200" fill={isLight ? '#0369a1' : '#2E4F69'} fontSize="9" fontWeight="bold" fontFamily="monospace" textAnchor="middle">
                     LAKE ALBERT
                   </text>
 
                   {/* Key Uganda Highway Corridors */}
-                  <g stroke="#22252E" strokeWidth="2.5" fill="none" strokeLinecap="round">
+                  <g fill="none" strokeLinecap="round">
                     {/* Kampala -> Entebbe Expressway */}
-                    <path d="M 445 350 Q 440 375, 430 405" stroke="#3A3F4D" strokeWidth="3" />
+                    <path d="M 445 350 Q 440 375, 430 405" stroke={isLight ? '#94a3b8' : '#3A3F4D'} strokeWidth="3" />
                     {/* Kampala -> Jinja Highway */}
-                    <path d="M 445 350 Q 500 340, 560 335" stroke="#3A3F4D" strokeWidth="3" />
+                    <path d="M 445 350 Q 500 340, 560 335" stroke={isLight ? '#94a3b8' : '#3A3F4D'} strokeWidth="3" />
                     {/* Kampala -> Mbarara -> Bwindi Highway Corridor */}
-                    <path d="M 445 350 Q 380 380, 320 410 Q 260 440, 220 460" stroke="#3A3F4D" strokeWidth="2.5" />
+                    <path d="M 445 350 Q 380 380, 320 410 Q 260 440, 220 460" stroke={isLight ? '#94a3b8' : '#3A3F4D'} strokeWidth="2.5" />
                     {/* Kampala -> Murchison Falls Corridor */}
-                    <path d="M 445 350 Q 420 280, 380 180" stroke="#2B303C" strokeWidth="2.5" />
+                    <path d="M 445 350 Q 420 280, 380 180" stroke={isLight ? '#cbd5e1' : '#2B303C'} strokeWidth="2.5" />
                   </g>
 
                   {/* National Parks & Tourism Destinations Highlights */}
@@ -646,13 +763,18 @@ export default function OperationsPage() {
                     const isCapital = loc.name.includes('Kampala');
                     return (
                       <g key={i}>
-                        <circle cx={pt.x} cy={pt.y} r={isCapital ? 4.5 : 2.5} fill={isCapital ? '#FFFFFF' : '#666666'} />
+                        <circle
+                          cx={pt.x}
+                          cy={pt.y}
+                          r={isCapital ? 5 : 3}
+                          fill={isCapital ? (isLight ? '#0f172a' : '#FFFFFF') : (isLight ? '#475569' : '#666666')}
+                        />
                         <text
-                          x={pt.x + 6}
+                          x={pt.x + 7}
                           y={pt.y + 3}
-                          fill={isCapital ? '#FFFFFF' : '#888888'}
-                          fontSize={isCapital ? '10' : '8'}
-                          fontWeight={isCapital ? 'bold' : 'normal'}
+                          fill={isCapital ? (isLight ? '#0f172a' : '#FFFFFF') : (isLight ? '#334155' : '#888888')}
+                          fontSize={isCapital ? '10.5' : '8.5'}
+                          fontWeight={isCapital ? '800' : '600'}
                           fontFamily="sans-serif"
                         >
                           {loc.name}
@@ -666,7 +788,7 @@ export default function OperationsPage() {
                     const pt = projectGeoToSvg(driver.current_lat, driver.current_lng);
                     const isSelected = selectedDriver?.id === driver.id;
                     const isInTrip = driver.active_trip_id || driver.active_trip_status === 'TRIP_STARTED';
-                    const markerColor = !driver.is_online ? '#666666' : isInTrip ? '#E5A93C' : '#10B981';
+                    const markerColor = !driver.is_online ? '#64748b' : isInTrip ? '#E5A93C' : '#10B981';
 
                     return (
                       <g
@@ -674,21 +796,19 @@ export default function OperationsPage() {
                         className="cursor-pointer transition-transform duration-200"
                         onClick={() => setSelectedDriver(driver)}
                       >
-                        {/* Selected Ping Ring */}
                         {isSelected && (
                           <circle
                             cx={pt.x}
                             cy={pt.y}
                             r="18"
                             fill="none"
-                            stroke="#FFFFFF"
+                            stroke={isLight ? '#0f172a' : '#FFFFFF'}
                             strokeWidth="1.5"
                             strokeDasharray="4 2"
                             className="animate-spin"
                           />
                         )}
 
-                        {/* Pulse Glow for Active Vehicle */}
                         {driver.is_online && (
                           <circle
                             cx={pt.x}
@@ -700,20 +820,17 @@ export default function OperationsPage() {
                           />
                         )}
 
-                        {/* Outer Vehicle Circle */}
                         <circle
                           cx={pt.x}
                           cy={pt.y}
                           r={isSelected ? 9 : 7}
                           fill={markerColor}
-                          stroke="#0C0D10"
+                          stroke={isLight ? '#ffffff' : '#0C0D10'}
                           strokeWidth="2"
                         />
 
-                        {/* Inner Core */}
-                        <circle cx={pt.x} cy={pt.y} r="2.5" fill="#0C0D10" />
+                        <circle cx={pt.x} cy={pt.y} r="2.5" fill={isLight ? '#ffffff' : '#0C0D10'} />
 
-                        {/* Plate & Driver Tag */}
                         <g transform={`translate(${pt.x + 10}, ${pt.y - 4})`}>
                           <rect
                             x="0"
@@ -721,12 +838,12 @@ export default function OperationsPage() {
                             width="96"
                             height="16"
                             rx="3"
-                            fill="#0A0B0E"
-                            fillOpacity="0.85"
-                            stroke={isSelected ? '#FFFFFF' : '#22252E'}
-                            strokeWidth="0.8"
+                            fill={isLight ? '#ffffff' : '#0A0B0E'}
+                            fillOpacity="0.95"
+                            stroke={isSelected ? (isLight ? '#0f172a' : '#FFFFFF') : (isLight ? '#cbd5e1' : '#22252E')}
+                            strokeWidth="1"
                           />
-                          <text x="5" y="4" fill="#FFFFFF" fontSize="8" fontWeight="bold" fontFamily="monospace">
+                          <text x="5" y="4" fill={isLight ? '#0f172a' : '#FFFFFF'} fontSize="8" fontWeight="bold" fontFamily="monospace">
                             {driver.registration_plate || driver.full_name.split(' ')[0]}
                           </text>
                         </g>
@@ -737,13 +854,15 @@ export default function OperationsPage() {
               </div>
 
               {/* Bottom Quick Coordinates Bar */}
-              <div className="bg-[#090A0D] border-t border-white/10 px-4 py-2.5 flex items-center justify-between text-xs text-white/50">
+              <div className={`border-t px-4 py-2.5 flex items-center justify-between text-xs font-medium ${
+                isLight ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-[#090A0D] border-white/10 text-white/50'
+              }`}>
                 <div className="flex items-center gap-2">
-                  <Shield className="w-3.5 h-3.5 text-white/40" />
-                  <span>Active Monitoring: {filteredFleet.length} units</span>
+                  <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Active Monitoring: <strong>{filteredFleet.length}</strong> approved units</span>
                 </div>
                 <div className="font-mono text-[11px]">
-                  Projection: Uganda GRCh38 / Equirectangular
+                  Projection: Uganda WGS84 / Equirectangular
                 </div>
               </div>
             </div>
@@ -753,85 +872,123 @@ export default function OperationsPage() {
             <div className="lg:col-span-4 space-y-4">
               {/* If a driver is selected, show Telemetry Inspector Card */}
               {selectedDriver ? (
-                <div className="bg-[#111114] border border-white/20 rounded-2xl p-5 space-y-4 shadow-xl relative">
+                <div className={`border rounded-2xl p-5 space-y-4 shadow-sm relative ${
+                  isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/20'
+                }`}>
                   <button
                     onClick={() => setSelectedDriver(null)}
-                    className="absolute top-4 right-4 text-white/40 hover:text-white transition-colors"
+                    className={`absolute top-4 right-4 transition-colors ${
+                      isLight ? 'text-slate-400 hover:text-slate-900' : 'text-white/40 hover:text-white'
+                    }`}
                   >
                     <X className="w-4 h-4" />
                   </button>
 
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center font-bold text-white text-sm border border-white/15">
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-bold text-sm border ${
+                      isLight ? 'bg-slate-900 text-white border-slate-900' : 'bg-white/10 text-white border-white/15'
+                    }`}>
                       {selectedDriver.full_name.slice(0, 2).toUpperCase()}
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <h3 className={`text-sm font-extrabold flex items-center gap-2 ${
+                        isLight ? 'text-slate-900' : 'text-white'
+                      }`}>
                         {selectedDriver.full_name}
-                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase ${
-                          selectedDriver.role === 'tour_guide' ? 'bg-[#E5A93C] text-black font-bold' : 'bg-white/10 text-white/70'
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono uppercase font-bold ${
+                          selectedDriver.role === 'tour_guide'
+                            ? 'bg-[#E5A93C] text-black'
+                            : isLight
+                            ? 'bg-slate-100 text-slate-700 border border-slate-300'
+                            : 'bg-white/10 text-white/70'
                         }`}>
                           {selectedDriver.role === 'tour_guide' ? 'Tour Guide' : 'Driver'}
                         </span>
                       </h3>
-                      <p className="text-xs text-white/50 font-mono">{selectedDriver.phone}</p>
+                      <p className={`text-xs font-mono mt-0.5 ${isLight ? 'text-slate-500' : 'text-white/50'}`}>
+                        {selectedDriver.phone}
+                      </p>
                     </div>
                   </div>
 
                   {/* Vehicle Information */}
-                  <div className="bg-black/60 border border-white/10 rounded-xl p-3 space-y-1.5">
+                  <div className={`border rounded-xl p-3.5 space-y-2 ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/60 border-white/10'
+                  }`}>
                     <div className="flex justify-between text-xs">
-                      <span className="text-white/40">Vehicle</span>
-                      <span className="text-white font-medium">{selectedDriver.make} {selectedDriver.model}</span>
+                      <span className={isLight ? 'text-slate-500 font-medium' : 'text-white/40'}>Vehicle</span>
+                      <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                        {selectedDriver.make} {selectedDriver.model}
+                      </span>
                     </div>
                     <div className="flex justify-between text-xs font-mono">
-                      <span className="text-white/40">Registration</span>
-                      <span className="text-[#E5A93C] font-semibold">{selectedDriver.registration_plate}</span>
+                      <span className={isLight ? 'text-slate-500 font-sans font-medium' : 'text-white/40'}>Registration</span>
+                      <span className={`font-bold ${isLight ? 'text-amber-700' : 'text-[#E5A93C]'}`}>
+                        {selectedDriver.registration_plate}
+                      </span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-white/40">Tier Category</span>
-                      <span className="text-white/70 uppercase text-[10px] font-mono">{selectedDriver.tier}</span>
+                      <span className={isLight ? 'text-slate-500 font-medium' : 'text-white/40'}>Tier Category</span>
+                      <span className={`uppercase text-[10px] font-mono font-bold ${isLight ? 'text-slate-700' : 'text-white/70'}`}>
+                        {selectedDriver.tier}
+                      </span>
                     </div>
                   </div>
 
                   {/* Telemetry Metrics Grid */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-black/40 border border-white/10 rounded-lg p-2.5">
-                      <div className="flex items-center gap-1.5 text-white/40 text-[11px]">
-                        <Activity className="w-3 h-3 text-white/50" />
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className={`border rounded-xl p-3 ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/40 border-white/10'
+                    }`}>
+                      <div className={`flex items-center gap-1.5 text-[11px] font-medium ${
+                        isLight ? 'text-slate-500' : 'text-white/40'
+                      }`}>
+                        <Activity className="w-3.5 h-3.5 text-emerald-600" />
                         <span>Current Speed</span>
                       </div>
-                      <p className="text-base font-bold text-white font-mono mt-1">
+                      <p className={`text-base font-extrabold font-mono mt-1 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                         {selectedDriver.speed ? `${selectedDriver.speed} km/h` : '0 km/h'}
                       </p>
                     </div>
 
-                    <div className="bg-black/40 border border-white/10 rounded-lg p-2.5">
-                      <div className="flex items-center gap-1.5 text-white/40 text-[11px]">
-                        <Battery className="w-3 h-3 text-white/50" />
+                    <div className={`border rounded-xl p-3 ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/40 border-white/10'
+                    }`}>
+                      <div className={`flex items-center gap-1.5 text-[11px] font-medium ${
+                        isLight ? 'text-slate-500' : 'text-white/40'
+                      }`}>
+                        <Battery className="w-3.5 h-3.5 text-emerald-600" />
                         <span>Battery Level</span>
                       </div>
-                      <p className="text-base font-bold text-white font-mono mt-1">
+                      <p className={`text-base font-extrabold font-mono mt-1 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                         {selectedDriver.battery_level != null ? `${selectedDriver.battery_level}%` : '85%'}
                       </p>
                     </div>
 
-                    <div className="bg-black/40 border border-white/10 rounded-lg p-2.5">
-                      <div className="flex items-center gap-1.5 text-white/40 text-[11px]">
-                        <MapPin className="w-3 h-3 text-white/50" />
+                    <div className={`border rounded-xl p-3 ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/40 border-white/10'
+                    }`}>
+                      <div className={`flex items-center gap-1.5 text-[11px] font-medium ${
+                        isLight ? 'text-slate-500' : 'text-white/40'
+                      }`}>
+                        <MapPin className="w-3.5 h-3.5 text-blue-600" />
                         <span>GPS Accuracy</span>
                       </div>
-                      <p className="text-sm font-semibold text-white font-mono mt-1">
+                      <p className={`text-sm font-bold font-mono mt-1 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                         ± {selectedDriver.accuracy || 4.5} m
                       </p>
                     </div>
 
-                    <div className="bg-black/40 border border-white/10 rounded-lg p-2.5">
-                      <div className="flex items-center gap-1.5 text-white/40 text-[11px]">
-                        <Clock className="w-3 h-3 text-white/50" />
+                    <div className={`border rounded-xl p-3 ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-black/40 border-white/10'
+                    }`}>
+                      <div className={`flex items-center gap-1.5 text-[11px] font-medium ${
+                        isLight ? 'text-slate-500' : 'text-white/40'
+                      }`}>
+                        <Clock className="w-3.5 h-3.5 text-amber-600" />
                         <span>Last Telemetry</span>
                       </div>
-                      <p className="text-xs font-semibold text-white/80 font-mono mt-1">
+                      <p className={`text-xs font-bold font-mono mt-1 ${isLight ? 'text-slate-900' : 'text-white/80'}`}>
                         {selectedDriver.last_ping ? new Date(selectedDriver.last_ping).toLocaleTimeString() : 'Just now'}
                       </p>
                     </div>
@@ -839,12 +996,16 @@ export default function OperationsPage() {
 
                   {/* Active Expedition Leg if present */}
                   {(selectedDriver.safari_leg || selectedDriver.active_trip_dest) && (
-                    <div className="bg-black border border-[#E5A93C]/30 rounded-xl p-3">
-                      <div className="flex items-center gap-1.5 text-[10px] uppercase font-mono text-[#E5A93C] font-semibold">
-                        <Compass className="w-3 h-3" />
+                    <div className={`border rounded-xl p-3.5 ${
+                      isLight ? 'bg-amber-50 border-amber-300' : 'bg-black border-[#E5A93C]/30'
+                    }`}>
+                      <div className={`flex items-center gap-1.5 text-[10px] uppercase font-mono font-bold ${
+                        isLight ? 'text-amber-800' : 'text-[#E5A93C]'
+                      }`}>
+                        <Compass className="w-3.5 h-3.5" />
                         <span>Active Safari / Trip Route</span>
                       </div>
-                      <p className="text-xs font-medium text-white mt-1.5">
+                      <p className={`text-xs font-semibold mt-1.5 ${isLight ? 'text-slate-900' : 'text-white'}`}>
                         {selectedDriver.safari_leg || `${selectedDriver.active_trip_pickup} → ${selectedDriver.active_trip_dest}`}
                       </p>
                     </div>
@@ -853,67 +1014,136 @@ export default function OperationsPage() {
                   {/* Inspect Route History Button */}
                   <button
                     onClick={() => openPlayback(selectedDriver)}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-white text-black font-semibold text-xs rounded-xl hover:bg-white/90 transition-colors shadow-lg"
+                    className={`w-full flex items-center justify-center gap-2 py-3 px-4 font-bold text-xs rounded-xl transition-colors shadow-sm ${
+                      isLight
+                        ? 'bg-slate-900 text-white hover:bg-slate-800'
+                        : 'bg-white text-black hover:bg-white/90'
+                    }`}
                   >
                     <Eye className="w-4 h-4" />
-                    Inspect Movement History & Route Playback
+                    Inspect Movement History &amp; Route Playback
                   </button>
                 </div>
               ) : (
-                <div className="bg-[#111114] border border-white/10 rounded-2xl p-6 text-center text-white/40 space-y-2">
-                  <Navigation className="w-8 h-8 mx-auto text-white/20" />
-                  <p className="text-xs font-medium text-white/60">Select any driver on the map or list</p>
-                  <p className="text-[11px] text-white/40">Inspect live GPS coordinates, battery, speed, and past journey trails.</p>
+                <div className={`border rounded-2xl p-6 text-center space-y-4 shadow-sm ${
+                  isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/10'
+                }`}>
+                  <div className={`w-12 h-12 rounded-2xl mx-auto flex items-center justify-center border ${
+                    isLight ? 'bg-slate-100 border-slate-200 text-slate-700' : 'bg-white/5 border-white/10 text-white/40'
+                  }`}>
+                    <Navigation className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className={`text-sm font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                      Telemetry Inspector Standby
+                    </h3>
+                    <p className={`text-xs leading-relaxed ${isLight ? 'text-slate-600' : 'text-white/50'}`}>
+                      Select any approved driver or tour guide marker on the map or roster below to inspect real-time GPS coordinates, speed, battery, and route history.
+                    </p>
+                  </div>
+                  <div className={`grid grid-cols-3 gap-2 pt-2 border-t text-center ${
+                    isLight ? 'border-slate-200' : 'border-white/10'
+                  }`}>
+                    <div className={`p-2 rounded-lg ${isLight ? 'bg-slate-50' : 'bg-white/[0.02]'}`}>
+                      <span className={`block text-[10px] font-mono uppercase ${isLight ? 'text-slate-500' : 'text-white/40'}`}>Approved</span>
+                      <span className={`text-xs font-extrabold font-mono ${isLight ? 'text-slate-900' : 'text-white'}`}>{liveFleet.length}</span>
+                    </div>
+                    <div className={`p-2 rounded-lg ${isLight ? 'bg-slate-50' : 'bg-white/[0.02]'}`}>
+                      <span className={`block text-[10px] font-mono uppercase ${isLight ? 'text-slate-500' : 'text-white/40'}`}>Online</span>
+                      <span className="text-xs font-extrabold font-mono text-emerald-600">{liveFleet.filter(d => d.is_online).length}</span>
+                    </div>
+                    <div className={`p-2 rounded-lg ${isLight ? 'bg-slate-50' : 'bg-white/[0.02]'}`}>
+                      <span className={`block text-[10px] font-mono uppercase ${isLight ? 'text-slate-500' : 'text-white/40'}`}>Sync Rate</span>
+                      <span className={`text-xs font-extrabold font-mono ${isLight ? 'text-slate-900' : 'text-white'}`}>3.5s</span>
+                    </div>
+                  </div>
                 </div>
               )}
 
               {/* Quick Fleet Roster List */}
-              <div className="bg-[#111114] border border-white/10 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                  <span className="text-xs font-bold text-white">Live Fleet Units</span>
-                  <span className="text-[10px] font-mono text-white/40">{filteredFleet.length} units</span>
+              <div className={`border rounded-2xl p-5 space-y-3.5 shadow-sm ${
+                isLight ? 'bg-white border-slate-300' : 'bg-[#111114] border-white/10'
+              }`}>
+                <div className={`flex items-center justify-between pb-3 border-b ${
+                  isLight ? 'border-slate-200' : 'border-white/10'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <Car className={`w-4 h-4 ${isLight ? 'text-slate-700' : 'text-white/70'}`} />
+                    <span className={`text-xs font-extrabold uppercase tracking-wider ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                      Live Fleet Units
+                    </span>
+                  </div>
+                  <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded-md ${
+                    isLight ? 'bg-slate-100 text-slate-700 border border-slate-200' : 'bg-white/10 text-white/60'
+                  }`}>
+                    {filteredFleet.length} units
+                  </span>
                 </div>
 
                 <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
-                  {filteredFleet.map((driver) => {
-                    const isSelected = selectedDriver?.id === driver.id;
-                    const isInTrip = driver.active_trip_id || driver.active_trip_status === 'TRIP_STARTED';
+                  {filteredFleet.length > 0 ? (
+                    filteredFleet.map((driver) => {
+                      const isSelected = selectedDriver?.id === driver.id;
+                      const isInTrip = driver.active_trip_id || driver.active_trip_status === 'TRIP_STARTED';
 
-                    return (
-                      <div
-                        key={driver.id}
-                        onClick={() => setSelectedDriver(driver)}
-                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
-                          isSelected
-                            ? 'bg-white/10 border-white text-white'
-                            : 'bg-black/40 border-white/10 hover:bg-white/[0.04] text-white/80'
-                        }`}
-                      >
-                        <div className="space-y-0.5">
-                          <p className="text-xs font-medium text-white flex items-center gap-2">
-                            {driver.full_name}
-                            {driver.role === 'tour_guide' && (
-                              <span className="text-[9px] px-1 py-0.2 rounded bg-[#E5A93C]/20 text-[#E5A93C] font-mono">
-                                GUIDE
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-[11px] font-mono text-white/40">
-                            {driver.make} • {driver.registration_plate}
-                          </p>
+                      return (
+                        <div
+                          key={driver.id}
+                          onClick={() => setSelectedDriver(driver)}
+                          className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                            isSelected
+                              ? isLight
+                                ? 'bg-slate-900 border-slate-900 text-white shadow-sm'
+                                : 'bg-white/10 border-white text-white'
+                              : isLight
+                              ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300 text-slate-900'
+                              : 'bg-black/40 border-white/10 hover:bg-white/[0.04] text-white/80'
+                          }`}
+                        >
+                          <div className="space-y-0.5">
+                            <p className={`text-xs font-bold flex items-center gap-2 ${
+                              isSelected ? 'text-white' : isLight ? 'text-slate-900' : 'text-white'
+                            }`}>
+                              {driver.full_name}
+                              {driver.role === 'tour_guide' && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 font-mono font-bold">
+                                  GUIDE
+                                </span>
+                              )}
+                            </p>
+                            <p className={`text-[11px] font-mono ${
+                              isSelected ? 'text-slate-300' : isLight ? 'text-slate-500' : 'text-white/40'
+                            }`}>
+                              {driver.make} • {driver.registration_plate}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-mono uppercase font-bold ${
+                              !driver.is_online
+                                ? isLight ? 'bg-slate-200 text-slate-600' : 'bg-white/10 text-white/40'
+                                : isInTrip
+                                ? 'bg-[#E5A93C] text-black'
+                                : isLight
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                : 'bg-[#10B981]/20 text-[#10B981]'
+                            }`}>
+                              {!driver.is_online ? 'OFFLINE' : isInTrip ? 'EXPEDITION' : 'ONLINE'}
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <span className={`px-2 py-0.5 rounded text-[9px] font-mono uppercase ${
-                            !driver.is_online ? 'bg-white/10 text-white/40' :
-                            isInTrip ? 'bg-[#E5A93C] text-black font-bold' :
-                            'bg-[#10B981]/20 text-[#10B981] font-semibold'
-                          }`}>
-                            {!driver.is_online ? 'OFFLINE' : isInTrip ? 'EXPEDITION' : 'ONLINE'}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  ) : (
+                    <div className={`py-8 px-4 text-center rounded-xl border border-dashed ${
+                      isLight ? 'bg-slate-50 border-slate-300 text-slate-600' : 'bg-white/[0.01] border-white/10 text-white/40'
+                    }`}>
+                      <Users className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                      <p className="text-xs font-bold">No Active Units Matching Filter</p>
+                      <p className="text-[11px] mt-1 opacity-80">
+                        Approved drivers and tour guides appear here automatically once their account is activated.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1407,10 +1637,13 @@ export default function OperationsPage() {
 
             {/* Playback Canvas */}
             <div className="px-6 py-2">
-              <div className="bg-[#090A0C] border border-white/10 rounded-xl p-4 relative overflow-hidden">
+              <div className={`border rounded-xl p-4 relative overflow-hidden ${
+                isLight ? 'bg-slate-50 border-slate-300' : 'bg-[#090A0C] border-white/10'
+              }`}>
                 <svg viewBox="0 0 700 280" className="w-full h-auto">
+                  <rect width="700" height="280" fill={isLight ? '#f8fafc' : '#090A0C'} />
                   {/* Road Grid */}
-                  <g stroke="#1A1C22" strokeWidth="0.5" strokeDasharray="3 3">
+                  <g stroke={isLight ? '#cbd5e1' : '#1A1C22'} strokeWidth="0.7" strokeDasharray="3 3">
                     <line x1="0" y1="70" x2="700" y2="70" />
                     <line x1="0" y1="140" x2="700" y2="140" />
                     <line x1="0" y1="210" x2="700" y2="210" />
@@ -1419,7 +1652,7 @@ export default function OperationsPage() {
                   {/* Route Breadcrumbs Trail */}
                   {playbackPoints.length > 1 && (
                     <polyline
-                      points={playbackPoints.map((p, idx) => {
+                      points={playbackPoints.map((p) => {
                         const pt = projectGeoToSvg(p.lat, p.lng);
                         return `${pt.x},${pt.y * 0.55}`;
                       }).join(' ')}
@@ -1439,9 +1672,19 @@ export default function OperationsPage() {
                       return (
                         <g transform={`translate(${pt.x}, ${pt.y * 0.55})`}>
                           <circle r="12" fill="#E5A93C" opacity="0.3" />
-                          <circle r="6" fill="#E5A93C" stroke="#FFFFFF" strokeWidth="2" />
-                          <rect x="8" y="-12" width="70" height="18" rx="3" fill="#000000" fillOpacity="0.8" stroke="#FFFFFF" strokeWidth="0.5" />
-                          <text x="12" y="0" fill="#FFFFFF" fontSize="9" fontFamily="monospace">
+                          <circle r="6" fill="#E5A93C" stroke={isLight ? '#0f172a' : '#FFFFFF'} strokeWidth="2" />
+                          <rect
+                            x="8"
+                            y="-12"
+                            width="70"
+                            height="18"
+                            rx="3"
+                            fill={isLight ? '#ffffff' : '#000000'}
+                            fillOpacity="0.92"
+                            stroke={isLight ? '#cbd5e1' : '#FFFFFF'}
+                            strokeWidth="0.8"
+                          />
+                          <text x="12" y="0" fill={isLight ? '#0f172a' : '#FFFFFF'} fontSize="9" fontWeight="bold" fontFamily="monospace">
                             {curr.speed || 0} km/h
                           </text>
                         </g>
@@ -1520,8 +1763,8 @@ export default function OperationsPage() {
       {/* ========================================================================= */}
       {/* OTHER TABS: TRIPS, DELIVERIES, FLEET, USERS                                */}
       {/* ========================================================================= */}
-      {activeTab !== 'live_map' && (
-        <div className="border border-white/15 rounded-xl overflow-hidden bg-black">
+      {activeTab !== 'live_map' && activeTab !== 'approvals' && (
+        <div className={`${activeTab === 'users' ? '' : `border rounded-2xl overflow-hidden shadow-sm ${isLight ? 'bg-white border-slate-300' : 'bg-black border-white/15'}`}`}>
           {/* Tab: Trips */}
           {activeTab === 'trips' && (
             <div className="overflow-x-auto">
