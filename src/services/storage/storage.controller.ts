@@ -48,6 +48,44 @@ export class StorageController {
   }
 
   /**
+   * POST /api/v1/storage/upload
+   * Request body: { fileName: string, fileType: string, folder?: string, base64Data: string }
+   * Uploads directly to Cloudflare R2 from the server (bypassing any browser CORS limitations) and returns the public R2 URL.
+   */
+  public static async uploadDirect(req: Request, res: Response): Promise<void> {
+    try {
+      const { fileName, fileType, folder, base64Data } = req.body;
+
+      if (!fileName || typeof fileName !== 'string') {
+        res.status(400).json({ success: false, error: 'fileName is required.' });
+        return;
+      }
+      if (!base64Data || typeof base64Data !== 'string') {
+        res.status(400).json({ success: false, error: 'base64Data is required.' });
+        return;
+      }
+
+      const result = await StorageService.uploadDirectToR2({
+        fileName,
+        fileType: fileType || 'application/octet-stream',
+        folder: folder || 'careers',
+        base64Data,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (err: any) {
+      const statusCode = err.message?.includes('not fully configured') ? 503 : 400;
+      res.status(statusCode).json({
+        success: false,
+        error: err.message || 'Failed to upload document to Cloudflare R2.',
+      });
+    }
+  }
+
+  /**
    * GET /api/v1/storage/status
    * Returns storage setup status for Admin Dashboard.
    */

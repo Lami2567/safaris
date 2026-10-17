@@ -1,14 +1,12 @@
 /**
  * Cloudflare R2 Direct-to-Storage Client
- * 
- * Bypasses the Node.js API server completely for binary transfers.
- * The browser uploads directly to Cloudflare R2 using AWS SigV4 presigned URLs.
+ *
+ * Uploads images and PDF documents to Cloudflare R2 via AWS SigV4 presigned URLs,
+ * with automatic fallback to server-relayed Cloudflare R2 PUT if browser CORS blocks direct PUT.
  */
 
 export const getApiBase = () => {
   if (typeof window !== 'undefined') {
-    // In browser, always use relative path '/api/v1' to match current protocol and origin
-    // This completely prevents HTTPS/HTTP Mixed Content errors.
     return '/api/v1';
   }
   return process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
@@ -31,6 +29,8 @@ export interface StorageStatus {
   publicBaseUrl: string;
 }
 
+export type StorageFolder = 'banners' | 'tourism' | 'places' | 'fleet' | 'careers' | 'documents' | 'general';
+
 /**
  * Check if Cloudflare R2 storage is configured on the backend.
  */
@@ -46,27 +46,35 @@ export async function getStorageStatus(): Promise<StorageStatus> {
   return json.data;
 }
 
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to read file for upload'));
+    reader.readAsDataURL(file);
+  });
+}
+
 /**
- * Upload an image file directly to Cloudflare R2 via presigned PUT URL.
- * 
- * @param file The browser File object (PNG, JPEG, WEBP, etc.)
- * @param folder Destination category folder ('banners', 'tourism', 'places', 'fleet', etc.)
- * @param onProgress Optional callback receiving 0-100 upload progress percentage
- * @returns The public URL of the uploaded image
+ * Upload an image or document file to Cloudflare R2.
+ * Attempts direct browser PUT via presigned URL first; if browser CORS blocks direct PUT,
+ * automatically relays through POST /api/v1/storage/upload straight into Cloudflare R2.
  */
 export async function uploadImageToR2(
   file: File,
-  folder: 'banners' | 'tourism' | 'places' | 'fleet' | 'general' = 'general',
+  folder: StorageFolder = 'general',
   onProgress?: (percent: number) => void
 ): Promise<string> {
   const apiBase = getApiBase();
+  const contentType = file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+
   // 1. Request presigned upload ticket from backend
   const ticketRes = await fetch(`${apiBase}/storage/upload-url`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       fileName: file.name,
-      fileType: file.type || 'image/jpeg',
+      fileType: contentType,
       folder,
     }),
   });
@@ -79,42 +87,62 @@ export async function uploadImageToR2(
   const { data }: { data: PresignedUploadTicket } = await ticketRes.json();
   const { uploadUrl, publicUrl } = data;
 
-  // 2. Direct browser upload to Cloudflare R2 using XMLHttpRequest for accurate progress tracking
-  return new Promise<string>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', uploadUrl, true);
-    xhr.setRequestHeader('Content-Type', file.type || 'image/jpeg');
+  // 2. Try direct browser upload to Cloudflare R2 first
+  try {
+    const directUrl = await new Promise<string>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', uploadUrl, true);
+      xhr.setRequestHeader('Content-Type', contentType);
 
-    if (xhr.upload && onProgress) {
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          const percent = Math.round((event.loaded / event.total) * 100);
-          onProgress(percent);
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress(percent);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          if (onProgress) onProgress(100);
+          resolve(publicUrl);
+        } else {
+          reject(new Error(`R2 direct status ${xhr.status}`));
         }
       };
+
+      xhr.onerror = () => {
+        reject(new Error('CORS or network block on direct R2 PUT'));
+      };
+
+      xhr.send(file);
+    });
+    return directUrl;
+  } catch (_) {
+    // 3. Fallback: Relay through backend POST /api/v1/storage/upload -> Cloudflare R2
+    if (onProgress) onProgress(40);
+    const base64Data = await fileToBase64(file);
+    if (onProgress) onProgress(75);
+
+    const relayRes = await fetch(`${apiBase}/storage/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: file.name,
+        fileType: contentType,
+        folder,
+        base64Data,
+      }),
+    });
+
+    if (!relayRes.ok) {
+      const errJson = await relayRes.json().catch(() => ({}));
+      throw new Error(errJson.error || 'Cloudflare R2 upload failed');
     }
 
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        if (onProgress) onProgress(100);
-        resolve(publicUrl);
-      } else {
-        reject(
-          new Error(
-            `Cloudflare R2 direct upload failed with status ${xhr.status}. Please check bucket CORS configuration.`
-          )
-        );
-      }
-    };
-
-    xhr.onerror = () => {
-      reject(
-        new Error(
-          'Network error during direct upload to Cloudflare R2. Ensure CORS is enabled on your Cloudflare R2 bucket.'
-        )
-      );
-    };
-
-    xhr.send(file);
-  });
+    const relayData = await relayRes.json();
+    if (onProgress) onProgress(100);
+    return relayData.data.publicUrl;
+  }
 }

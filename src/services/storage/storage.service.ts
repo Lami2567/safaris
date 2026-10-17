@@ -35,7 +35,11 @@ export class StorageService {
     'image/gif',
     'image/svg+xml',
     'image/avif',
+    'image/heic',
+    'image/heif',
     'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   ]);
 
   /**
@@ -73,10 +77,11 @@ export class StorageService {
     }
 
     const { fileName, fileType, folder = 'general', expiresIn = 3600 } = request;
+    const normalizedType = (fileType || 'application/octet-stream').toLowerCase();
 
-    // Validate MIME type to ensure only valid images are uploaded
-    if (!this.ALLOWED_IMAGE_TYPES.has(fileType.toLowerCase())) {
-      throw new Error(`Unsupported image type '${fileType}'. Allowed types: JPEG, PNG, WEBP, GIF, SVG, AVIF.`);
+    // Validate MIME type to ensure only valid images and documents are uploaded
+    if (!this.ALLOWED_IMAGE_TYPES.has(normalizedType) && !normalizedType.startsWith('image/')) {
+      throw new Error(`Unsupported file type '${fileType}'. Allowed types: PDF, JPEG, PNG, WEBP, GIF, SVG, AVIF.`);
     }
 
     // Sanitize folder and filename
@@ -160,7 +165,6 @@ export class StorageService {
       const publicBase = ENV.CLOUDFLARE_R2_PUBLIC_URL.trim().replace(/\/$/, '');
       publicUrl = `${publicBase}/${key}`;
     } else {
-      // Fallback if public domain isn't set yet
       publicUrl = `https://${bucketName}.${accountId}.r2.cloudflarestorage.com/${key}`;
     }
 
@@ -169,8 +173,46 @@ export class StorageService {
       publicUrl,
       key,
       expiresIn,
-      fileType,
+      fileType: normalizedType,
     };
+  }
+
+  /**
+   * Server-side upload to Cloudflare R2 (bypasses browser CORS issues while still storing in Cloudflare R2).
+   */
+  public static async uploadDirectToR2(params: {
+    fileName: string;
+    fileType: string;
+    folder?: string;
+    base64Data: string;
+  }): Promise<PresignedUploadResponse> {
+    const ticket = this.generatePresignedUploadUrl({
+      fileName: params.fileName,
+      fileType: params.fileType,
+      folder: params.folder || 'careers',
+    });
+
+    // Strip data URL prefix if present (e.g. "data:application/pdf;base64,...")
+    const cleanBase64 = params.base64Data.includes(',')
+      ? params.base64Data.split(',')[1]
+      : params.base64Data;
+    const buffer = Buffer.from(cleanBase64, 'base64');
+
+    const putRes = await fetch(ticket.uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': ticket.fileType,
+        'Content-Length': buffer.length.toString(),
+      },
+      body: buffer,
+    });
+
+    if (!putRes.ok) {
+      const errText = await putRes.text().catch(() => '');
+      throw new Error(`Cloudflare R2 PUT failed with status ${putRes.status}: ${errText.slice(0, 200)}`);
+    }
+
+    return ticket;
   }
 
   /**

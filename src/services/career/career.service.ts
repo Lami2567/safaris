@@ -4,6 +4,7 @@ import { localStore, db } from '../../config/database';
 import { NotificationService } from '../notification/notification.service';
 import { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
+import { StorageService } from '../storage/storage.service';
 import { normalizeUgandaPhone } from '../../shared/phone';
 
 export interface CareerApplicationData {
@@ -40,6 +41,33 @@ export class CareerService {
     const cleanEmail = data.email.trim().toLowerCase();
     const cleanPhone = normalizeUgandaPhone(data.phone.trim());
     const applicationId = `app_${uuidv4().substring(0, 8)}`;
+
+    // Normalize any base64 documents into Cloudflare R2 URLs if R2 is configured
+    const normalizedDocs: Record<string, string> = {};
+    if (data.documents && typeof data.documents === 'object') {
+      for (const [docKey, docVal] of Object.entries(data.documents)) {
+        if (typeof docVal === 'string' && docVal.startsWith('data:') && StorageService.isConfigured()) {
+          try {
+            const mimeMatch = docVal.match(/^data:([^;]+);base64,/);
+            const fileType = mimeMatch ? mimeMatch[1] : 'application/pdf';
+            const ext = fileType.includes('pdf') ? 'pdf' : fileType.includes('png') ? 'png' : 'jpg';
+            const uploaded = await StorageService.uploadDirectToR2({
+              fileName: `${applicationId}_${docKey}.${ext}`,
+              fileType,
+              folder: 'careers',
+              base64Data: docVal,
+            });
+            normalizedDocs[docKey] = uploaded.publicUrl;
+          } catch (err) {
+            console.warn(`[CareerService] Fallback storing raw document for ${docKey}:`, err);
+            normalizedDocs[docKey] = docVal;
+          }
+        } else if (typeof docVal === 'string') {
+          normalizedDocs[docKey] = docVal;
+        }
+      }
+    }
+    data.documents = normalizedDocs;
 
     // Check if an application already exists with this email or phone in pending status
     for (const existing of localStore.career_applications.values()) {

@@ -35,6 +35,7 @@ apiRouter.get('/health', (req, res) => {
 // Cloudflare R2 Object Storage & Direct Client Uploads
 // -------------------------------------------------------------
 apiRouter.post('/storage/upload-url', StorageController.getPresignedUploadUrl);
+apiRouter.post('/storage/upload', StorageController.uploadDirect);
 apiRouter.get('/storage/status', StorageController.getStatus);
 
 // -------------------------------------------------------------

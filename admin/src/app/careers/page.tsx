@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
+import { uploadImageToR2 } from '@/lib/storage';
 import { useTheme } from '@/components/ThemeProvider';
 
 type ApplicationTrack = 'driver' | 'tour_guide';
@@ -124,7 +125,7 @@ export default function CareersPage() {
     );
   };
 
-  const handleFileUpload = (docKey: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (docKey: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -134,17 +135,15 @@ export default function CareersPage() {
     }
 
     setUploadingDoc(docKey);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setDocuments(prev => ({ ...prev, [docKey]: dataUrl }));
+    try {
+      // Upload directly to Cloudflare R2 bucket ('safaris' -> images/careers/...)
+      const r2PublicUrl = await uploadImageToR2(file, 'careers');
+      setDocuments(prev => ({ ...prev, [docKey]: r2PublicUrl }));
+    } catch (err: any) {
+      alert(err.message || 'Failed to upload document to Cloudflare R2 storage. Please try again.');
+    } finally {
       setUploadingDoc(null);
-    };
-    reader.onerror = () => {
-      alert('Failed to read file. Please try again.');
-      setUploadingDoc(null);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const handleSubmitApplication = async (e: React.FormEvent) => {
@@ -883,93 +882,74 @@ export default function CareersPage() {
                     </div>
                   )}
 
-                  {/* Section 3: Verification Documents */}
+                  {/* Section 3: Verification Documents (Stored on Cloudflare R2) */}
                   <div className={`rounded-[4px] border ${panelBg} shadow-sm overflow-hidden`}>
-                    <div className={`px-6 py-3.5 border-b ${sectionHeaderBg}`}>
+                    <div className={`px-6 py-3.5 border-b flex items-center justify-between ${sectionHeaderBg}`}>
                       <h2 className="text-[16px] font-extrabold uppercase tracking-wide">
                         Section 3: Required Verification Documents
                       </h2>
+                      <span className="text-[12px] font-mono font-bold opacity-80">
+                        Cloudflare R2 Secure Storage
+                      </span>
                     </div>
                     <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className={`p-4 rounded-[4px] border ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
-                        <div className="flex justify-between items-center mb-2">
-                          <label className="text-[14px] font-bold">
-                            {track === 'driver' ? '1. Uganda Driving Permit (Front & Back) *' : '1. UWA Guide License Scan *'}
-                          </label>
-                          {documents.license && (
-                            <span className="text-[12px] font-extrabold text-emerald-700 dark:text-emerald-400">
-                              Attached
-                            </span>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          accept="image/*,application/pdf"
-                          onChange={(e) => handleFileUpload('license', e)}
-                          className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer"
-                        />
-                        {uploadingDoc === 'license' && <span className={helperClass}>Reading file...</span>}
-                      </div>
-
-                      <div className={`p-4 rounded-[4px] border ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
-                        <div className="flex justify-between items-center mb-2">
-                          <label className="text-[14px] font-bold">
-                            2. National ID Card (NIN) or Passport *
-                          </label>
-                          {documents.national_id && (
-                            <span className="text-[12px] font-extrabold text-emerald-700 dark:text-emerald-400">
-                              Attached
-                            </span>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          accept="image/*,application/pdf"
-                          onChange={(e) => handleFileUpload('national_id', e)}
-                          className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer"
-                        />
-                        {uploadingDoc === 'national_id' && <span className={helperClass}>Reading file...</span>}
-                      </div>
-
-                      <div className={`p-4 rounded-[4px] border ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
-                        <div className="flex justify-between items-center mb-2">
-                          <label className="text-[14px] font-bold">
-                            {track === 'driver' ? '3. Vehicle Logbook & Insurance Certificate' : '3. First Aid / Training Certificate'}
-                          </label>
-                          {documents.logbook && (
-                            <span className="text-[12px] font-extrabold text-emerald-700 dark:text-emerald-400">
-                              Attached
-                            </span>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          accept="image/*,application/pdf"
-                          onChange={(e) => handleFileUpload('logbook', e)}
-                          className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer"
-                        />
-                        {uploadingDoc === 'logbook' && <span className={helperClass}>Reading file...</span>}
-                      </div>
-
-                      <div className={`p-4 rounded-[4px] border ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
-                        <div className="flex justify-between items-center mb-2">
-                          <label className="text-[14px] font-bold">
-                            4. Passport Photo / Portrait *
-                          </label>
-                          {documents.avatar && (
-                            <span className="text-[12px] font-extrabold text-emerald-700 dark:text-emerald-400">
-                              Attached
-                            </span>
-                          )}
-                        </div>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => handleFileUpload('avatar', e)}
-                          className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer"
-                        />
-                        {uploadingDoc === 'avatar' && <span className={helperClass}>Reading file...</span>}
-                      </div>
+                      {[
+                        {
+                          key: 'license',
+                          label: track === 'driver' ? '1. Uganda Driving Permit (Front & Back) *' : '1. UWA Guide License Scan *',
+                          accept: 'image/*,application/pdf',
+                        },
+                        {
+                          key: 'national_id',
+                          label: '2. National ID Card (NIN) or Passport *',
+                          accept: 'image/*,application/pdf',
+                        },
+                        {
+                          key: 'logbook',
+                          label: track === 'driver' ? '3. Vehicle Logbook & Insurance Certificate' : '3. First Aid / Training Certificate',
+                          accept: 'image/*,application/pdf',
+                        },
+                        {
+                          key: 'avatar',
+                          label: '4. Passport Photo / Portrait *',
+                          accept: 'image/*',
+                        },
+                      ].map((docItem) => {
+                        const docUrl = documents[docItem.key];
+                        const isUploading = uploadingDoc === docItem.key;
+                        return (
+                          <div
+                            key={docItem.key}
+                            className={`p-4 rounded-[4px] border ${
+                              isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'
+                            }`}
+                          >
+                            <div className="flex justify-between items-center mb-2 gap-2">
+                              <label className="text-[14px] font-bold">{docItem.label}</label>
+                              {docUrl && (
+                                <a
+                                  href={docUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[12px] font-extrabold text-emerald-700 underline hover:opacity-80 shrink-0"
+                                >
+                                  Uploaded (View)
+                                </a>
+                              )}
+                            </div>
+                            <input
+                              type="file"
+                              accept={docItem.accept}
+                              disabled={isUploading}
+                              onChange={(e) => handleFileUpload(docItem.key, e)}
+                              className="block w-full text-[13px] font-semibold file:mr-3 file:py-2 file:px-3.5 file:rounded-[4px] file:border file:border-slate-400 file:text-[13px] file:font-bold file:bg-white file:text-slate-900 hover:file:bg-slate-100 cursor-pointer disabled:opacity-50"
+                            />
+                            {isUploading && (
+                              <span className={helperClass}>Uploading document to Cloudflare R2...</span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
