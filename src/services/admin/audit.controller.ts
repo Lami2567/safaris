@@ -120,7 +120,21 @@ export class AdminAuditController {
           ORDER BY d.is_online DESC, d.updated_at DESC
         `;
         const result = await db.query(query);
-        return sendSuccess(res, result.rows);
+        const normalizedRows = (result.rows || []).map((r: any) => ({
+          ...r,
+          rating: Number(r.rating ?? 5.0),
+          is_online: r.is_online === true,
+          is_available: r.is_available === true,
+          is_approved: r.is_approved === true,
+          current_lat: Number(r.current_lat ?? 0.3136),
+          current_lng: Number(r.current_lng ?? 32.5811),
+          heading: Number(r.heading ?? 0),
+          speed: Number(r.speed ?? 0),
+          battery_level: Number(r.battery_level ?? 95),
+          today_earnings_ugx: Number(r.today_earnings_ugx ?? 0),
+          is_stale: r.is_stale === true,
+        }));
+        return sendSuccess(res, normalizedRows);
       }
 
       // Memory & disk persistent store: return genuine approved drivers only

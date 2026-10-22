@@ -35,6 +35,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.text({ type: ['application/xml', 'text/xml'], limit: '2mb' }));
 
 // Gateway Middlewares
 app.use(requestLogger);
@@ -65,6 +66,8 @@ app.get('/health/ready', async (req, res) => {
 import { AppConfigService } from './services/app_config/app_config.service';
 import { TourismService } from './services/tourism/tourism.service';
 import { TourGuideService } from './services/tour_guide/tour_guide.service';
+import { PaymentService } from './services/payment/payment.service';
+import { FinancialService } from './services/financial/financial.service';
 
 // Mount API Gateway routes under /api/v1
 app.use('/api/v1', apiRouter);
@@ -86,7 +89,12 @@ async function startServer() {
     await AppConfigService.init();
     await TourismService.init();
     await TourGuideService.init();
+    PaymentService.startReconciler();
+    await FinancialService.ensureDefaultRefundPolicy();
+    FinancialService.startRefundScheduler();
     console.log('✅ Persistent configurations, tourism records, and tour guides loaded.');
+    console.log(`💳 DPO Pay Reconciler started (${ENV.DPO_ENVIRONMENT.toUpperCase()} mode).`);
+    console.log('💰 Financial Engine initialized with default No-Show Refund Policy and background scheduler.');
   } catch (err) {
     console.warn('⚠️ Non-fatal error during service initialization:', err);
   }

@@ -11,6 +11,7 @@ import {
   BadgeDollarSign,
   Activity,
   Settings,
+  CreditCard,
   Sun,
   Moon,
 } from 'lucide-react';
@@ -19,6 +20,7 @@ import { useTheme } from './ThemeProvider';
 const NAV_ITEMS = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Tourism & Safaris', href: '/tourism', icon: Compass },
+  { name: 'DPO Payments', href: '/payments', icon: CreditCard },
   { name: 'App Services', href: '/services-config', icon: Sliders },
   { name: 'Promo Banners', href: '/banners', icon: BannerIcon },
   { name: 'Fare Matrix', href: '/pricing', icon: BadgeDollarSign },
@@ -108,6 +110,21 @@ export const Sidebar: React.FC = () => {
             Logout
           </button>
         )}
+
+        <div className="px-3 py-2 rounded border border-amber-500/30 bg-amber-500/10">
+          <div className="flex items-center justify-between text-xs font-semibold">
+            <span className="flex items-center gap-1.5 text-amber-400">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              DPO Gateway:
+            </span>
+            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold uppercase tracking-wider">
+              SANDBOX
+            </span>
+          </div>
+          <div className="text-[10px] font-mono text-amber-300/70 truncate mt-1">
+            Service: 54841 • Ref: #2777504
+          </div>
+        </div>
 
         <div className="px-3 py-2 rounded border border-white/10 bg-white/[0.02]">
           <div className="flex items-center gap-2 text-xs font-semibold text-white/80">

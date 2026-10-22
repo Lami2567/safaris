@@ -11,6 +11,7 @@ import { AppConfigService } from '../services/app_config/app_config.service';
 import { DriverService } from '../services/driver/driver.service';
 import { localStore } from '../config/database';
 import { seedUgandaData } from '../database/seed';
+import { runFinancialEngineTests } from './financial_engine.test';
 
 const DB_DIR = path.resolve(__dirname, '../database');
 const SNAPSHOT_FILES = [
@@ -23,6 +24,11 @@ const SNAPSHOT_FILES = [
   'persistent_bookings.json',
   'persistent_payments.json',
   'persistent_otps.json',
+  'persistent_wallet_transactions.json',
+  'persistent_refund_policies.json',
+  'persistent_refunds.json',
+  'persistent_platform_earnings.json',
+  'persistent_financial_adjustments.json',
 ];
 
 async function runTests() {
@@ -176,6 +182,18 @@ async function runTests() {
     }
 
     // 9. Test Telemetry Batch Upload & Deduplication
+    localStore.drivers.set('drv_ug_901', {
+      id: 'drv_ug_901',
+      user_id: 'usr_test_cust',
+      full_name: 'Test Driver',
+      phone: '+256700000001',
+      is_approved: true,
+      approval_status: 'APPROVED',
+      is_online: true,
+      is_available: true,
+      created_at: new Date().toISOString(),
+    } as any);
+
     const { TelemetryController } = await import('../services/telemetry/telemetry.controller');
     const mockReq: any = {
       body: {
@@ -355,7 +373,12 @@ async function runTests() {
     }
     console.log(`✅ 17c. Live Driver GPS Location Transmission verified on Admin Fleet Map (${liveFleet.current_lat}, ${liveFleet.current_lng}, Online: ${liveFleet.is_online}).`);
 
-    console.log('\n🎉 ALL 17 PRODUCTION READINESS INTEGRATION TESTS PASSED CLEANLY!\n');
+    // 18. Financial Engine, Customer Wallets & Automatic No-Show Refunds Suite
+    console.log('\n--- Financial Engine & Automatic Refunds Verification ---');
+    await runFinancialEngineTests();
+    console.log('✅ 18. Complete Financial Engine, Customer Wallets & Automatic Refunds Verified.');
+
+    console.log('\n🎉 ALL 18 PRODUCTION READINESS INTEGRATION TESTS PASSED CLEANLY!\n');
   } finally {
     // Restore original persistent JSON files so test data never pollutes production files
     for (const [fullPath, content] of snapshots.entries()) {

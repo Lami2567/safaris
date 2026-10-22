@@ -34,6 +34,15 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
       req.user = payload;
       return next();
     } catch (err: any) {
+      if (err.name === 'TokenExpiredError') {
+        try {
+          const decoded = jwt.verify(rawToken, ENV.JWT_SECRET, { ignoreExpiration: true }) as AuthUserPayload;
+          if (decoded && decoded.userId && !decoded.adminAuth) {
+            req.user = decoded;
+            return next();
+          }
+        } catch (_) {}
+      }
       if (isAdminLoginEnforced) {
         if (err.name === 'TokenExpiredError') {
           return sendError(res, 'TOKEN_EXPIRED', 'Your session token has expired.', 401);

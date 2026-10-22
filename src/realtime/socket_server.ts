@@ -143,7 +143,17 @@ export function initSocketServer(httpServer: HttpServer): Server {
         const decoded = jwt.verify(token, ENV.JWT_SECRET) as any;
         if (decoded?.userId) userId = decoded.userId;
         if (decoded?.role) role = decoded.role;
-      } catch (_) {}
+      } catch (err: any) {
+        if (err?.name === 'TokenExpiredError') {
+          try {
+            const decoded = jwt.verify(token, ENV.JWT_SECRET, { ignoreExpiration: true }) as any;
+            if (decoded?.role !== 'admin') {
+              if (decoded?.userId) userId = decoded.userId;
+              if (decoded?.role) role = decoded.role;
+            }
+          } catch (_) {}
+        }
+      }
     }
 
     if (userId) {
@@ -155,6 +165,8 @@ export function initSocketServer(httpServer: HttpServer): Server {
       socket.join('all_users');
       if (role === 'admin') {
         socket.join('admin:fleet');
+        socket.join('admin:payments');
+        socket.join('admin:financials');
       }
       console.log(`[Socket] Connected: user=${userId} (${role || 'customer'}) socket=${socket.id}`);
     } else {
@@ -373,5 +385,18 @@ export function broadcast(event: string, payload: any) {
   }
   emitToSseChannel('all_users', event, payload);
 }
+
+export function broadcastPaymentStream(payment: any, event = 'payment:update') {
+  emitToRoom('admin:payments', event, payment);
+  if (payment?.user_id) {
+    emitToUser(payment.user_id, 'wallet:payment_update', payment);
+  }
+}
+
+export function broadcastFinancialOverview(overview: any, event = 'financial:kpis') {
+  emitToRoom('admin:payments', event, overview);
+  emitToRoom('admin:financials', event, overview);
+}
+
 
 

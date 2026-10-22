@@ -120,24 +120,13 @@ export class CareerService {
           tier: data.vehicle_tier || 'go',
           make: data.vehicle_make || 'Toyota',
           model: data.vehicle_model || 'Corolla',
-          year: 2020,
           color: 'White',
           registration_plate: data.vehicle_plate.trim().toUpperCase(),
-          seating_capacity: 4,
-          is_active: true,
+          capacity: 4,
+          status: 'active',
           created_at: new Date().toISOString(),
         };
-        localStore.vehicles.set(vehicleId, vehicle);
-        if (db.isPostgresConnected) {
-          try {
-            await db.query(
-              `INSERT INTO vehicles (id, driver_id, tier, make, model, year, color, registration_plate, seating_capacity, is_active)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-               ON CONFLICT (id) DO NOTHING`,
-              [vehicle.id, vehicle.driver_id, vehicle.tier, vehicle.make, vehicle.model, vehicle.year, vehicle.color, vehicle.registration_plate, vehicle.seating_capacity, vehicle.is_active]
-            );
-          } catch (_) {}
-        }
+        await db.persistVehicle(vehicle);
       }
 
       const driverProfile = {
@@ -308,15 +297,60 @@ export class CareerService {
         await db.persistUser(user);
       }
 
-      // 2. Update driver if driver
+      // 2. Update driver if driver (or reconstruct if missing)
       if (app.applicant_type === 'driver') {
-        const driver = localStore.drivers.get(userId);
+        let driver = localStore.drivers.get(userId);
+        let vehicleId: string | null = driver?.vehicle_id || null;
+        if (!vehicleId && app.vehicle_plate) {
+          vehicleId = `veh_${userId.replace(/^usr_/, '')}`;
+          const vehicle = {
+            id: vehicleId,
+            driver_id: userId,
+            tier: app.vehicle_tier || 'go',
+            make: app.vehicle_make || 'Toyota',
+            model: app.vehicle_model || 'Corolla',
+            color: 'White',
+            registration_plate: String(app.vehicle_plate).trim().toUpperCase(),
+            capacity: 4,
+            status: 'active',
+            created_at: app.created_at || new Date().toISOString(),
+          };
+          await db.persistVehicle(vehicle);
+        }
+
         if (driver) {
+          driver.vehicle_id = driver.vehicle_id || vehicleId;
           driver.is_approved = true;
           driver.approval_status = 'APPROVED';
           driver.approved_by = adminId;
           driver.approved_at = new Date().toISOString();
           driver.rejection_reason = null;
+          driver.updated_at = new Date().toISOString();
+          await db.persistDriver(driver);
+        } else {
+          driver = {
+            id: userId,
+            vehicle_id: vehicleId,
+            is_online: false,
+            is_available: false,
+            is_approved: true,
+            approval_status: 'APPROVED',
+            approved_by: adminId,
+            approved_at: new Date().toISOString(),
+            rejection_reason: null,
+            current_lat: 0.3136,
+            current_lng: 32.5811,
+            heading: 0,
+            speed: 0,
+            license_number: app.license_number || 'UG-APPROVED',
+            national_id: app.national_id || '',
+            driving_permit_number: app.license_number || '',
+            years_of_experience: Number(app.experience_years || 0),
+            acceptance_rate: 100.0,
+            today_earnings_ugx: 0,
+            application_date: app.created_at || new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
           await db.persistDriver(driver);
         }
       }

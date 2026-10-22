@@ -223,4 +223,87 @@ export const api = {
       method: 'PUT',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     }),
+
+  // DPO Payments & Gateway Administration
+  getPayments: (params?: {
+    status?: string;
+    payment_environment?: string;
+    service_type?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set('status', params.status);
+    if (params?.payment_environment) q.set('payment_environment', params.payment_environment);
+    if (params?.service_type) q.set('service_type', params.service_type);
+    if (params?.search) q.set('search', params.search);
+    if (params?.limit) q.set('limit', String(params.limit));
+    if (params?.offset) q.set('offset', String(params.offset));
+    const qs = q.toString();
+    return fetcher<{
+      payments: any[];
+      total: number;
+      limit: number;
+      offset: number;
+      environment: string;
+    }>(`/admin/payments${qs ? `?${qs}` : ''}`);
+  },
+  getPaymentStats: () =>
+    fetcher<{
+      total_count: number;
+      successful_count: number;
+      pending_count: number;
+      failed_count: number;
+      sandbox_count: number;
+      live_count: number;
+      total_live_collected_ugx: number;
+      total_sandbox_tested_ugx: number;
+      current_environment: string;
+    }>('/admin/payments/stats'),
+  getDpoConfigStatus: () =>
+    fetcher<{
+      environment: string;
+      configured: boolean;
+      validation_error: string | null;
+      live_checklist: {
+        token_present: boolean;
+        service_type_confirmed: boolean;
+        endpoints_verified: boolean;
+        credentials_in_secret_store: boolean;
+        operator_authorized: boolean;
+        backend_validated: boolean;
+        dpo_verification_passed: boolean;
+        environment_recorded: boolean;
+      };
+      service_type_id: string;
+      ticket_ref: string;
+      active_gateway_endpoint: string;
+    }>('/admin/payments/config-status'),
+  reconcilePayment: (paymentId: string) =>
+    fetcher<any>(`/admin/payments/${paymentId}/reconcile`, { method: 'POST' }),
+  reconcileOpenPayments: () =>
+    fetcher<any>('/admin/payments/reconcile-open', { method: 'POST' }),
+
+  // Financial Engine, Customer Wallets & Automatic Refunds
+  getFinancialOverview: (environment?: string) =>
+    fetcher<any>(`/admin/financials/overview${environment ? `?environment=${environment}` : ''}`),
+  getEarningsLedger: (environment?: string, search?: string) => {
+    const q = new URLSearchParams();
+    if (environment) q.set('environment', environment);
+    if (search) q.set('search', search);
+    const qs = q.toString();
+    return fetcher<any>(`/admin/financials/ledger${qs ? `?${qs}` : ''}`);
+  },
+  getRefundPolicies: () => fetcher<{ policies: any[] }>('/admin/refund-policies'),
+  updateRefundPolicy: (id: string, data: any) =>
+    fetcher<any>(`/admin/refund-policies/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getRefunds: (environment?: string) =>
+    fetcher<{ count: number; environment: string; refunds: any[] }>(`/admin/refunds${environment ? `?environment=${environment}` : ''}`),
+  createRefund: (data: any) =>
+    fetcher<any>('/admin/refunds', { method: 'POST', body: JSON.stringify(data) }),
+  triggerRefundWorker: () =>
+    fetcher<any>('/admin/refunds/run-worker', { method: 'POST' }),
+  recordFinancialAdjustment: (data: any) =>
+    fetcher<any>('/admin/financial-adjustments', { method: 'POST', body: JSON.stringify(data) }),
 };

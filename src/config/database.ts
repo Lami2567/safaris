@@ -24,6 +24,11 @@ export const localStore = {
   admin_audit_logs: new Map<string, any>(),
   career_applications: new Map<string, any>(),
   pricing_audit_logs: new Map<string, any>(),
+  wallet_transactions: new Map<string, any>(),
+  refund_policies: new Map<string, any>(),
+  refunds: new Map<string, any>(),
+  platform_earnings: new Map<string, any>(),
+  financial_adjustments: new Map<string, any>(),
 };
 
 function resolveCandidatePaths(fileName: string): string[] {
@@ -44,6 +49,11 @@ const PERSISTENT_PAYMENTS_FILES = resolveCandidatePaths('persistent_payments.jso
 const PERSISTENT_BOOKINGS_FILES = resolveCandidatePaths('persistent_bookings.json');
 const PERSISTENT_DELIVERIES_FILES = resolveCandidatePaths('persistent_deliveries.json');
 const PERSISTENT_PRICING_AUDIT_FILES = resolveCandidatePaths('persistent_pricing_audit.json');
+const PERSISTENT_WALLET_TX_FILES = resolveCandidatePaths('persistent_wallet_transactions.json');
+const PERSISTENT_REFUND_POLICIES_FILES = resolveCandidatePaths('persistent_refund_policies.json');
+const PERSISTENT_REFUNDS_FILES = resolveCandidatePaths('persistent_refunds.json');
+const PERSISTENT_PLATFORM_EARNINGS_FILES = resolveCandidatePaths('persistent_platform_earnings.json');
+const PERSISTENT_FIN_ADJUSTMENTS_FILES = resolveCandidatePaths('persistent_financial_adjustments.json');
 
 class DatabaseManager {
   private pool: Pool | null = null;
@@ -161,6 +171,11 @@ class DatabaseManager {
     this.loadTableFromDisk(PERSISTENT_BOOKINGS_FILES, localStore.tour_bookings, 'tour_bookings');
     this.loadTableFromDisk(PERSISTENT_DELIVERIES_FILES, localStore.deliveries, 'deliveries');
     this.loadTableFromDisk(PERSISTENT_PRICING_AUDIT_FILES, localStore.pricing_audit_logs, 'pricing_audit_logs');
+    this.loadTableFromDisk(PERSISTENT_WALLET_TX_FILES, localStore.wallet_transactions, 'wallet_transactions');
+    this.loadTableFromDisk(PERSISTENT_REFUND_POLICIES_FILES, localStore.refund_policies, 'refund_policies');
+    this.loadTableFromDisk(PERSISTENT_REFUNDS_FILES, localStore.refunds, 'refunds');
+    this.loadTableFromDisk(PERSISTENT_PLATFORM_EARNINGS_FILES, localStore.platform_earnings, 'platform_earnings');
+    this.loadTableFromDisk(PERSISTENT_FIN_ADJUSTMENTS_FILES, localStore.financial_adjustments, 'financial_adjustments');
   }
 
   public saveAllToDisk(): void {
@@ -173,6 +188,11 @@ class DatabaseManager {
     this.saveTableToDisk(PERSISTENT_BOOKINGS_FILES, localStore.tour_bookings);
     this.saveTableToDisk(PERSISTENT_DELIVERIES_FILES, localStore.deliveries);
     this.saveTableToDisk(PERSISTENT_PRICING_AUDIT_FILES, localStore.pricing_audit_logs);
+    this.saveTableToDisk(PERSISTENT_WALLET_TX_FILES, localStore.wallet_transactions);
+    this.saveTableToDisk(PERSISTENT_REFUND_POLICIES_FILES, localStore.refund_policies);
+    this.saveTableToDisk(PERSISTENT_REFUNDS_FILES, localStore.refunds);
+    this.saveTableToDisk(PERSISTENT_PLATFORM_EARNINGS_FILES, localStore.platform_earnings);
+    this.saveTableToDisk(PERSISTENT_FIN_ADJUSTMENTS_FILES, localStore.financial_adjustments);
   }
 
   public async loadAllFromPostgres(): Promise<void> {
@@ -188,6 +208,11 @@ class DatabaseManager {
       localStore.deliveries.clear();
       localStore.tour_bookings.clear();
       localStore.payments.clear();
+      localStore.wallet_transactions.clear();
+      localStore.refund_policies.clear();
+      localStore.refunds.clear();
+      localStore.platform_earnings.clear();
+      localStore.financial_adjustments.clear();
 
       // 1. Users
       const userRes = await this.pool.query('SELECT * FROM users ORDER BY created_at ASC');
@@ -335,6 +360,7 @@ class DatabaseManager {
       const payRes = await this.pool.query('SELECT * FROM payments ORDER BY created_at DESC LIMIT 500');
       if (payRes?.rows?.length > 0) {
         for (const row of payRes.rows) {
+          const fallbackStatus = row.status === 'COMPLETED' ? 'SUCCESSFUL' : (row.status === 'FAILED' ? 'FAILED' : (row.status === 'REFUNDED' ? 'REFUNDED' : 'PENDING'));
           localStore.payments.set(row.id, {
             id: row.id,
             transaction_id: row.reference,
@@ -344,13 +370,26 @@ class DatabaseManager {
             amount_ugx: parseFloat(row.amount_ugx || '0'),
             currency: row.currency || 'UGX',
             payment_method: row.payment_method,
-            phone: '',
+            phone: row.phone || '',
+            idempotency_key: row.idempotency_key || undefined,
+            attempt_number: parseInt(row.attempt_number || '1', 10),
+            service_type_id: row.service_type_id || '54841',
+            support_ticket_ref: row.support_ticket_ref || '2777504',
             dpo_trans_token: row.dpo_trans_token || '',
             dpo_trans_ref: row.dpo_trans_ref || row.reference,
+            dpo_approval_code: row.dpo_approval_code || undefined,
+            dpo_result_code: row.dpo_result_code || undefined,
+            dpo_result_explanation: row.dpo_result_explanation || undefined,
             payment_url: row.payment_url || '',
-            status: row.status === 'COMPLETED' ? 'SUCCESSFUL' : (row.status === 'FAILED' ? 'FAILED' : 'PENDING'),
-            failure_reason: row.failure_reason,
-            verified_at: row.verified_at,
+            mobile_instructions: row.mobile_instructions || undefined,
+            status: row.lifecycle_status || fallbackStatus,
+            environment: (row.environment === 'production' ? 'production' : 'sandbox'),
+            failure_reason: row.failure_reason || undefined,
+            callback_count: parseInt(row.callback_count || '0', 10),
+            last_callback_at: row.last_callback_at ? new Date(row.last_callback_at).toISOString() : undefined,
+            audit_trail: Array.isArray(row.audit_trail) ? row.audit_trail : [],
+            provider_metadata: row.provider_metadata || {},
+            verified_at: row.verified_at ? new Date(row.verified_at).toISOString() : undefined,
             created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
             updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
           });
@@ -369,6 +408,146 @@ class DatabaseManager {
         }
       }
 
+      // 11. Wallet Transactions
+      try {
+        const wtRes = await this.pool.query('SELECT * FROM wallet_transactions ORDER BY created_at ASC');
+        if (wtRes?.rows?.length > 0) {
+          for (const row of wtRes.rows) {
+            localStore.wallet_transactions.set(row.id, {
+              ...row,
+              amount_ugx: parseFloat(row.amount_ugx || '0'),
+              balance_after_ugx: parseFloat(row.balance_after_ugx || '0'),
+              created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Wallet transactions sync notice:', err);
+      }
+
+      // 12. Refund Policies
+      try {
+        const rpRes = await this.pool.query('SELECT * FROM refund_policies ORDER BY created_at ASC');
+        if (rpRes?.rows?.length > 0) {
+          for (const row of rpRes.rows) {
+            localStore.refund_policies.set(row.id, {
+              ...row,
+              max_waiting_minutes: parseInt(row.max_waiting_minutes || '15', 10),
+              refund_percentage: parseFloat(row.refund_percentage || '100'),
+              created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+              updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Refund policies sync notice:', err);
+      }
+
+      // 13. Refunds
+      try {
+        const rfRes = await this.pool.query('SELECT * FROM refunds ORDER BY created_at ASC');
+        if (rfRes?.rows?.length > 0) {
+          for (const row of rfRes.rows) {
+            localStore.refunds.set(row.id, {
+              ...row,
+              amount_ugx: parseFloat(row.amount_ugx || '0'),
+              created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+              updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Refunds sync notice:', err);
+      }
+
+      // 14. Platform Earnings
+      try {
+        const peRes = await this.pool.query('SELECT * FROM platform_earnings ORDER BY created_at ASC');
+        if (peRes?.rows?.length > 0) {
+          for (const row of peRes.rows) {
+            localStore.platform_earnings.set(row.id, {
+              ...row,
+              gross_amount_ugx: parseFloat(row.gross_amount_ugx || '0'),
+              platform_commission_ugx: parseFloat(row.platform_commission_ugx || '0'),
+              platform_commission_rate: parseFloat(row.platform_commission_rate || '15'),
+              beneficiary_earnings_ugx: parseFloat(row.beneficiary_earnings_ugx || '0'),
+              created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+              updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Platform earnings sync notice:', err);
+      }
+
+      // 15. Financial Adjustments
+      try {
+        const faRes = await this.pool.query('SELECT * FROM financial_adjustments ORDER BY created_at ASC');
+        if (faRes?.rows?.length > 0) {
+          for (const row of faRes.rows) {
+            localStore.financial_adjustments.set(row.id, {
+              ...row,
+              amount_ugx: parseFloat(row.amount_ugx || '0'),
+              created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Financial adjustments sync notice:', err);
+      }
+
+      // 16. Auto-reconcile any driver applications or driver users missing from drivers/vehicles tables
+      for (const app of localStore.career_applications.values()) {
+        if (app.applicant_type === 'driver' && app.user_id) {
+          const existingDriver = localStore.drivers.get(app.user_id);
+          if (!existingDriver) {
+            let vehicleId: string | null = null;
+            if (app.vehicle_plate) {
+              vehicleId = `veh_${app.id.replace(/^app_/, '')}`;
+              const vehicle = {
+                id: vehicleId,
+                driver_id: app.user_id,
+                tier: app.vehicle_tier || 'safari_4x4',
+                make: app.vehicle_make || 'Toyota',
+                model: app.vehicle_model || 'Land Cruiser',
+                color: 'White',
+                registration_plate: String(app.vehicle_plate).trim().toUpperCase(),
+                capacity: 4,
+                status: 'active',
+                created_at: app.created_at || new Date().toISOString(),
+              };
+              await this.persistVehicle(vehicle);
+            }
+            const isApproved = app.status === 'APPROVED';
+            const reconciledDriver = {
+              id: app.user_id,
+              vehicle_id: vehicleId,
+              is_online: isApproved,
+              is_available: isApproved,
+              is_approved: isApproved,
+              approval_status: app.status || 'PENDING_APPROVAL',
+              current_lat: 0.3136,
+              current_lng: 32.5811,
+              heading: 0,
+              speed: 0,
+              license_number: app.license_number || '',
+              national_id: app.national_id || '',
+              driving_permit_number: app.license_number || '',
+              years_of_experience: Number(app.experience_years || 0),
+              acceptance_rate: 98.0,
+              today_earnings_ugx: 0,
+              application_date: app.created_at || new Date().toISOString(),
+              approved_by: app.reviewed_by || null,
+              approved_at: app.reviewed_at || null,
+              rejection_reason: app.rejection_reason || null,
+              updated_at: new Date().toISOString(),
+            };
+            await this.persistDriver(reconciledDriver);
+            console.log(`✅ [Database] Reconciled driver record for ${app.full_name} (${app.user_id})`);
+          }
+        }
+      }
+
       this.saveAllToDisk();
       console.log('📦 [Database] All business tables synchronized from PostgreSQL to memory & disk.');
     } catch (err) {
@@ -384,6 +563,41 @@ class DatabaseManager {
     this.saveTableToDisk(PERSISTENT_USERS_FILES, localStore.users);
   }
 
+  public async persistVehicle(vehicle: any): Promise<void> {
+    if (!vehicle || !vehicle.id) return;
+    localStore.vehicles.set(vehicle.id, vehicle);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO vehicles (id, driver_id, tier, make, model, registration_plate, color, capacity, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (id) DO UPDATE SET
+             driver_id = EXCLUDED.driver_id,
+             tier = EXCLUDED.tier,
+             make = EXCLUDED.make,
+             model = EXCLUDED.model,
+             registration_plate = EXCLUDED.registration_plate,
+             color = EXCLUDED.color,
+             capacity = EXCLUDED.capacity,
+             status = EXCLUDED.status`,
+          [
+            vehicle.id,
+            vehicle.driver_id || null,
+            vehicle.tier || 'go',
+            vehicle.make || 'Toyota',
+            vehicle.model || 'Safari',
+            vehicle.registration_plate || `UG-${vehicle.id}`,
+            vehicle.color || 'White',
+            vehicle.capacity || vehicle.seating_capacity || 4,
+            vehicle.status || 'active',
+          ]
+        );
+      } catch (err) {
+        console.error('[Database Error] Failed to persist vehicle to PostgreSQL:', err);
+      }
+    }
+  }
+
   public async persistUser(user: any): Promise<void> {
     // 1. Update in-memory cache
     localStore.users.set(user.id, user);
@@ -394,8 +608,8 @@ class DatabaseManager {
         await this.pool.query(
           `INSERT INTO users (
              id, full_name, phone, email, password_hash, role, avatar_url,
-             rating, total_trips, wallet_balance_ugx, is_verified, created_at, updated_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
+             rating, total_trips, wallet_balance_ugx, is_verified, approval_status, application_id, created_at, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CURRENT_TIMESTAMP)
            ON CONFLICT (id) DO UPDATE SET
              full_name = EXCLUDED.full_name,
              phone = EXCLUDED.phone,
@@ -407,6 +621,8 @@ class DatabaseManager {
              total_trips = EXCLUDED.total_trips,
              wallet_balance_ugx = EXCLUDED.wallet_balance_ugx,
              is_verified = EXCLUDED.is_verified,
+             approval_status = EXCLUDED.approval_status,
+             application_id = EXCLUDED.application_id,
              updated_at = CURRENT_TIMESTAMP`,
           [
             user.id,
@@ -420,6 +636,8 @@ class DatabaseManager {
             user.total_trips || 0,
             user.wallet_balance_ugx || 0,
             user.is_verified === true,
+            user.approval_status || 'APPROVED',
+            user.application_id || null,
             user.created_at || new Date().toISOString(),
           ]
         );
@@ -435,6 +653,9 @@ class DatabaseManager {
   public async persistDriver(driver: any): Promise<void> {
     localStore.drivers.set(driver.id, driver);
     if (this.isPostgresConnected && this.pool) {
+      if (driver.vehicle_id && localStore.vehicles.has(driver.vehicle_id)) {
+        await this.persistVehicle(localStore.vehicles.get(driver.vehicle_id));
+      }
       try {
         await this.pool.query(
           `INSERT INTO drivers (
@@ -749,6 +970,311 @@ class DatabaseManager {
       }
     }
     this.saveTableToDisk(PERSISTENT_BOOKINGS_FILES, localStore.tour_bookings);
+  }
+
+  public async persistPayment(payment: any): Promise<void> {
+    localStore.payments.set(payment.id, payment);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        const sqlStatus =
+          payment.status === 'SUCCESSFUL'
+            ? 'COMPLETED'
+            : payment.status === 'REFUNDED'
+            ? 'REFUNDED'
+            : payment.status === 'FAILED' || payment.status === 'CANCELLED' || payment.status === 'EXPIRED'
+            ? 'FAILED'
+            : 'PENDING';
+
+        await this.pool.query(
+          `INSERT INTO payments (
+             id, user_id, trip_id, delivery_id, booking_id, amount_ugx,
+             currency, payment_method, phone, reference, idempotency_key,
+             attempt_number, service_type_id, support_ticket_ref,
+             dpo_trans_token, dpo_trans_ref, dpo_approval_code,
+             dpo_result_code, dpo_result_explanation, payment_url,
+             mobile_instructions, failure_reason, environment,
+             lifecycle_status, status, callback_count, last_callback_at,
+             audit_trail, provider_metadata, verified_at, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6,
+             $7, $8, $9, $10, $11,
+             $12, $13, $14,
+             $15, $16, $17,
+             $18, $19, $20,
+             $21, $22, $23,
+             $24, $25, $26, $27,
+             $28, $29, $30, $31, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             phone = EXCLUDED.phone,
+             idempotency_key = EXCLUDED.idempotency_key,
+             attempt_number = EXCLUDED.attempt_number,
+             service_type_id = EXCLUDED.service_type_id,
+             dpo_trans_token = EXCLUDED.dpo_trans_token,
+             dpo_trans_ref = EXCLUDED.dpo_trans_ref,
+             dpo_approval_code = EXCLUDED.dpo_approval_code,
+             dpo_result_code = EXCLUDED.dpo_result_code,
+             dpo_result_explanation = EXCLUDED.dpo_result_explanation,
+             payment_url = EXCLUDED.payment_url,
+             mobile_instructions = EXCLUDED.mobile_instructions,
+             failure_reason = EXCLUDED.failure_reason,
+             environment = EXCLUDED.environment,
+             lifecycle_status = EXCLUDED.lifecycle_status,
+             status = EXCLUDED.status,
+             callback_count = EXCLUDED.callback_count,
+             last_callback_at = EXCLUDED.last_callback_at,
+             audit_trail = EXCLUDED.audit_trail,
+             provider_metadata = EXCLUDED.provider_metadata,
+             verified_at = EXCLUDED.verified_at,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            payment.id,
+            payment.user_id || null,
+            payment.reference_type === 'TRIP' ? payment.reference_id : null,
+            payment.reference_type === 'DELIVERY' ? payment.reference_id : null,
+            payment.reference_type === 'TOUR' ? payment.reference_id : null,
+            Number(payment.amount_ugx ?? 0),
+            payment.currency || 'UGX',
+            payment.payment_method || 'CARD',
+            payment.phone || '',
+            payment.transaction_id,
+            payment.idempotency_key || null,
+            Number(payment.attempt_number ?? 1),
+            payment.service_type_id || '54841',
+            payment.support_ticket_ref || '2777504',
+            payment.dpo_trans_token || '',
+            payment.dpo_trans_ref || payment.transaction_id,
+            payment.dpo_approval_code || null,
+            payment.dpo_result_code || null,
+            payment.dpo_result_explanation || null,
+            payment.payment_url || '',
+            payment.mobile_instructions || null,
+            payment.failure_reason || null,
+            payment.environment === 'production' ? 'production' : 'sandbox',
+            payment.status || 'INITIATED',
+            sqlStatus,
+            Number(payment.callback_count ?? 0),
+            payment.last_callback_at || null,
+            JSON.stringify(payment.audit_trail || []),
+            JSON.stringify(payment.provider_metadata || {}),
+            payment.verified_at || null,
+            payment.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistPayment PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_PAYMENTS_FILES, localStore.payments);
+  }
+
+  public async persistWalletTransaction(tx: any): Promise<void> {
+    if (!tx || !tx.id) return;
+    localStore.wallet_transactions.set(tx.id, tx);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO wallet_transactions (
+             id, user_id, amount_ugx, balance_after_ugx, type,
+             reference_type, reference_id, payment_id, refund_id,
+             environment, idempotency_key, description, metadata, created_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            tx.id,
+            tx.user_id,
+            Number(tx.amount_ugx ?? 0),
+            Number(tx.balance_after_ugx ?? 0),
+            tx.type,
+            tx.reference_type,
+            tx.reference_id,
+            tx.payment_id || null,
+            tx.refund_id || null,
+            tx.environment || 'sandbox',
+            tx.idempotency_key || null,
+            tx.description || '',
+            JSON.stringify(tx.metadata || {}),
+            tx.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistWalletTransaction PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_WALLET_TX_FILES, localStore.wallet_transactions);
+  }
+
+  public async persistRefundPolicy(policy: any): Promise<void> {
+    if (!policy || !policy.id) return;
+    localStore.refund_policies.set(policy.id, policy);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO refund_policies (
+             id, policy_name, is_enabled, max_waiting_minutes,
+             applicable_service_types, applicable_payment_methods,
+             refund_percentage, require_driver_assigned, require_no_arrival,
+             auto_process_enabled, updated_by, created_at, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
+           ON CONFLICT (id) DO UPDATE SET
+             policy_name = EXCLUDED.policy_name,
+             is_enabled = EXCLUDED.is_enabled,
+             max_waiting_minutes = EXCLUDED.max_waiting_minutes,
+             applicable_service_types = EXCLUDED.applicable_service_types,
+             applicable_payment_methods = EXCLUDED.applicable_payment_methods,
+             refund_percentage = EXCLUDED.refund_percentage,
+             require_driver_assigned = EXCLUDED.require_driver_assigned,
+             require_no_arrival = EXCLUDED.require_no_arrival,
+             auto_process_enabled = EXCLUDED.auto_process_enabled,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            policy.id,
+            policy.policy_name,
+            policy.is_enabled !== false,
+            Number(policy.max_waiting_minutes ?? 15),
+            policy.applicable_service_types || ['ride', 'airport_shuttle', 'delivery'],
+            policy.applicable_payment_methods || ['WALLET', 'CARD', 'MTN_MOMO', 'AIRTEL_MONEY'],
+            Number(policy.refund_percentage ?? 100),
+            policy.require_driver_assigned !== false,
+            policy.require_no_arrival !== false,
+            policy.auto_process_enabled !== false,
+            policy.updated_by || 'ADMIN',
+            policy.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistRefundPolicy PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_REFUND_POLICIES_FILES, localStore.refund_policies);
+  }
+
+  public async persistRefund(refund: any): Promise<void> {
+    if (!refund || !refund.id) return;
+    localStore.refunds.set(refund.id, refund);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO refunds (
+             id, refund_reference, payment_id, booking_id, trip_id, delivery_id,
+             user_id, amount_ugx, currency, reason, refund_method,
+             status, environment, policy_version, policy_snapshot,
+             eligibility_evidence, dpo_refund_trans_token, failure_reason,
+             processed_by, processed_at, audit_trail, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+             $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             status = EXCLUDED.status,
+             failure_reason = EXCLUDED.failure_reason,
+             processed_by = EXCLUDED.processed_by,
+             processed_at = EXCLUDED.processed_at,
+             dpo_refund_trans_token = EXCLUDED.dpo_refund_trans_token,
+             audit_trail = EXCLUDED.audit_trail,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            refund.id,
+            refund.refund_reference,
+            refund.payment_id || null,
+            refund.booking_id || null,
+            refund.trip_id || null,
+            refund.delivery_id || null,
+            refund.user_id,
+            Number(refund.amount_ugx ?? 0),
+            refund.currency || 'UGX',
+            refund.reason || 'NO_SHOW_DRIVER',
+            refund.refund_method || 'WALLET',
+            refund.status || 'PENDING',
+            refund.environment || 'sandbox',
+            refund.policy_version || '1.0',
+            JSON.stringify(refund.policy_snapshot || {}),
+            JSON.stringify(refund.eligibility_evidence || {}),
+            refund.dpo_refund_trans_token || null,
+            refund.failure_reason || null,
+            refund.processed_by || 'SYSTEM_AUTO_WORKER',
+            refund.processed_at || null,
+            JSON.stringify(refund.audit_trail || []),
+            refund.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistRefund PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_REFUNDS_FILES, localStore.refunds);
+  }
+
+  public async persistPlatformEarning(earning: any): Promise<void> {
+    if (!earning || !earning.id) return;
+    localStore.platform_earnings.set(earning.id, earning);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO platform_earnings (
+             id, booking_type, booking_id, payment_id, payer_user_id, beneficiary_id,
+             gross_amount_ugx, platform_commission_ugx, platform_commission_rate,
+             beneficiary_earnings_ugx, payment_method, environment, status,
+             refund_id, metadata, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             status = EXCLUDED.status,
+             refund_id = EXCLUDED.refund_id,
+             metadata = EXCLUDED.metadata,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            earning.id,
+            earning.booking_type,
+            earning.booking_id,
+            earning.payment_id || null,
+            earning.payer_user_id || null,
+            earning.beneficiary_id || null,
+            Number(earning.gross_amount_ugx ?? 0),
+            Number(earning.platform_commission_ugx ?? 0),
+            Number(earning.platform_commission_rate ?? 15),
+            Number(earning.beneficiary_earnings_ugx ?? 0),
+            earning.payment_method || 'CARD',
+            earning.environment || 'sandbox',
+            earning.status || 'EARNED',
+            earning.refund_id || null,
+            JSON.stringify(earning.metadata || {}),
+            earning.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistPlatformEarning PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_PLATFORM_EARNINGS_FILES, localStore.platform_earnings);
+  }
+
+  public async persistFinancialAdjustment(adj: any): Promise<void> {
+    if (!adj || !adj.id) return;
+    localStore.financial_adjustments.set(adj.id, adj);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO financial_adjustments (
+             id, admin_id, target_type, target_id, amount_ugx, adjustment_type, reason, environment, created_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            adj.id,
+            adj.admin_id || null,
+            adj.target_type,
+            adj.target_id,
+            Number(adj.amount_ugx ?? 0),
+            adj.adjustment_type,
+            adj.reason || '',
+            adj.environment || 'sandbox',
+            adj.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistFinancialAdjustment PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_FIN_ADJUSTMENTS_FILES, localStore.financial_adjustments);
   }
 
   public async query(text: string, params?: any[]): Promise<QueryResult<any> | any> {

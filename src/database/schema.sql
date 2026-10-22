@@ -270,32 +270,65 @@ CREATE TABLE IF NOT EXISTS payments (
     amount_ugx NUMERIC(14, 2) NOT NULL,
     currency VARCHAR(8) DEFAULT 'UGX',
     payment_method VARCHAR(64) NOT NULL,
+    phone VARCHAR(32) DEFAULT '',
     reference VARCHAR(128) UNIQUE NOT NULL,
+    idempotency_key VARCHAR(128),
+    attempt_number INT DEFAULT 1,
+    service_type_id VARCHAR(32) DEFAULT '54841',
+    support_ticket_ref VARCHAR(32) DEFAULT '2777504',
     dpo_trans_token VARCHAR(128),
     dpo_trans_ref VARCHAR(128),
+    dpo_approval_code VARCHAR(64),
     dpo_result_code VARCHAR(32),
     dpo_result_explanation TEXT,
     payment_url TEXT,
+    mobile_instructions TEXT,
     failure_reason TEXT,
     environment VARCHAR(16) DEFAULT 'sandbox',
-    status payment_status NOT NULL DEFAULT 'COMPLETED',
+    lifecycle_status VARCHAR(32) DEFAULT 'INITIATED',
+    status payment_status NOT NULL DEFAULT 'PENDING',
+    callback_count INT DEFAULT 0,
+    last_callback_at TIMESTAMP WITH TIME ZONE,
+    audit_trail JSONB DEFAULT '[]',
+    provider_metadata JSONB DEFAULT '{}',
     verified_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS phone VARCHAR(32) DEFAULT '';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS attempt_number INT DEFAULT 1;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS service_type_id VARCHAR(32) DEFAULT '54841';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS support_ticket_ref VARCHAR(32) DEFAULT '2777504';
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS dpo_trans_token VARCHAR(128);
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS dpo_trans_ref VARCHAR(128);
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS dpo_approval_code VARCHAR(64);
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS dpo_result_code VARCHAR(32);
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS dpo_result_explanation TEXT;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_url TEXT;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS mobile_instructions TEXT;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS failure_reason TEXT;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS environment VARCHAR(16) DEFAULT 'sandbox';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS lifecycle_status VARCHAR(32) DEFAULT 'INITIATED';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS callback_count INT DEFAULT 0;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS last_callback_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS audit_trail JSONB DEFAULT '[]';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider_metadata JSONB DEFAULT '{}';
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS payment_status VARCHAR(32) DEFAULT 'PENDING';
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS payment_environment VARCHAR(16);
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS payment_environment VARCHAR(16);
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS payment_status VARCHAR(32) DEFAULT 'PENDING';
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS payment_environment VARCHAR(16);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sandbox_wallet_balance_ugx NUMERIC(14, 2) DEFAULT 0.0;
+
 CREATE INDEX IF NOT EXISTS idx_payments_dpo_token ON payments(dpo_trans_token);
 CREATE INDEX IF NOT EXISTS idx_payments_status_env ON payments(status, environment);
+CREATE INDEX IF NOT EXISTS idx_payments_lifecycle_env ON payments(lifecycle_status, environment);
+CREATE INDEX IF NOT EXISTS idx_payments_idempotency ON payments(idempotency_key);
 
 -- 11b. CAREER RECRUITMENT APPLICATIONS TABLE
 CREATE TABLE IF NOT EXISTS career_applications (
@@ -456,4 +489,136 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created ON admin_audit_logs(created_at DESC);
+
+-- ==========================================================
+-- 18. FINANCIAL ENGINE: WALLETS, REFUNDS, EARNINGS & POLICIES
+-- ==========================================================
+
+-- 18a. WALLET TRANSACTIONS IMMUTABLE LEDGER
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    amount_ugx NUMERIC(14, 2) NOT NULL,
+    balance_after_ugx NUMERIC(14, 2) NOT NULL,
+    type VARCHAR(32) NOT NULL,
+    reference_type VARCHAR(32) NOT NULL,
+    reference_id VARCHAR(64) NOT NULL,
+    payment_id VARCHAR(64),
+    refund_id VARCHAR(64),
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    idempotency_key VARCHAR(128),
+    description TEXT NOT NULL,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_user ON wallet_transactions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_ref ON wallet_transactions(reference_type, reference_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_env ON wallet_transactions(environment);
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_idempotency ON wallet_transactions(idempotency_key);
+
+-- 18b. REFUND POLICIES TABLE (ADMIN CONFIGURABLE)
+CREATE TABLE IF NOT EXISTS refund_policies (
+    id VARCHAR(64) PRIMARY KEY,
+    policy_name VARCHAR(128) NOT NULL UNIQUE,
+    is_enabled BOOLEAN DEFAULT TRUE,
+    max_waiting_minutes INT NOT NULL DEFAULT 15,
+    applicable_service_types TEXT[] DEFAULT ARRAY['ride', 'airport_shuttle', 'delivery'],
+    applicable_payment_methods TEXT[] DEFAULT ARRAY['WALLET', 'CARD', 'MTN_MOMO', 'AIRTEL_MONEY'],
+    refund_percentage NUMERIC(5, 2) DEFAULT 100.0,
+    require_driver_assigned BOOLEAN DEFAULT TRUE,
+    require_no_arrival BOOLEAN DEFAULT TRUE,
+    auto_process_enabled BOOLEAN DEFAULT TRUE,
+    updated_by VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 18c. REFUNDS TABLE
+CREATE TABLE IF NOT EXISTS refunds (
+    id VARCHAR(64) PRIMARY KEY,
+    refund_reference VARCHAR(128) UNIQUE NOT NULL,
+    payment_id VARCHAR(64),
+    booking_id VARCHAR(64),
+    trip_id VARCHAR(64),
+    delivery_id VARCHAR(64),
+    user_id VARCHAR(64) NOT NULL REFERENCES users(id),
+    amount_ugx NUMERIC(14, 2) NOT NULL,
+    currency VARCHAR(8) DEFAULT 'UGX',
+    reason VARCHAR(64) NOT NULL,
+    refund_method VARCHAR(32) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    policy_version VARCHAR(32),
+    policy_snapshot JSONB DEFAULT '{}',
+    eligibility_evidence JSONB DEFAULT '{}',
+    dpo_refund_trans_token VARCHAR(128),
+    failure_reason TEXT,
+    processed_by VARCHAR(64) DEFAULT 'SYSTEM_AUTO_WORKER',
+    processed_at TIMESTAMP WITH TIME ZONE,
+    audit_trail JSONB DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_refunds_status_env ON refunds(status, environment);
+CREATE INDEX IF NOT EXISTS idx_refunds_user ON refunds(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_refunds_payment ON refunds(payment_id);
+CREATE INDEX IF NOT EXISTS idx_refunds_trip ON refunds(trip_id);
+
+-- 18d. PLATFORM EARNINGS AND COMMISSION LEDGER
+CREATE TABLE IF NOT EXISTS platform_earnings (
+    id VARCHAR(64) PRIMARY KEY,
+    booking_type VARCHAR(32) NOT NULL,
+    booking_id VARCHAR(64) NOT NULL,
+    payment_id VARCHAR(64),
+    payer_user_id VARCHAR(64) REFERENCES users(id),
+    beneficiary_id VARCHAR(64),
+    gross_amount_ugx NUMERIC(14, 2) NOT NULL,
+    platform_commission_ugx NUMERIC(14, 2) NOT NULL,
+    platform_commission_rate NUMERIC(5, 2) NOT NULL,
+    beneficiary_earnings_ugx NUMERIC(14, 2) NOT NULL,
+    payment_method VARCHAR(64) NOT NULL,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    status VARCHAR(32) NOT NULL DEFAULT 'EARNED',
+    refund_id VARCHAR(64),
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_earnings_booking ON platform_earnings(booking_type, booking_id);
+CREATE INDEX IF NOT EXISTS idx_platform_earnings_beneficiary ON platform_earnings(beneficiary_id);
+CREATE INDEX IF NOT EXISTS idx_platform_earnings_env ON platform_earnings(environment, status);
+
+-- 18e. FINANCIAL ADJUSTMENTS AUDIT TABLE
+CREATE TABLE IF NOT EXISTS financial_adjustments (
+    id VARCHAR(64) PRIMARY KEY,
+    admin_id VARCHAR(64) REFERENCES users(id),
+    target_type VARCHAR(32) NOT NULL,
+    target_id VARCHAR(64) NOT NULL,
+    amount_ugx NUMERIC(14, 2) NOT NULL,
+    adjustment_type VARCHAR(32) NOT NULL,
+    reason TEXT NOT NULL,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_adjustments_target ON financial_adjustments(target_type, target_id);
+
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS refund_status VARCHAR(32) DEFAULT 'NONE';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS refunded_amount_ugx NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS refund_id VARCHAR(64);
+
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS refund_status VARCHAR(32) DEFAULT 'NONE';
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS refunded_amount_ugx NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS refund_id VARCHAR(64);
+
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS refund_status VARCHAR(32) DEFAULT 'NONE';
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS refunded_amount_ugx NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS refund_id VARCHAR(64);
+
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS refund_status VARCHAR(32) DEFAULT 'NONE';
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS refunded_amount_ugx NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS refund_id VARCHAR(64);
 

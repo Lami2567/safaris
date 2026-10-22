@@ -2,8 +2,82 @@ import { db, localStore } from '../../config/database';
 import { broadcastDriverSnapshot, emitToTrip, emitToUser } from '../../realtime/socket_server';
 
 export class DriverService {
-  public static setAvailability(driverId: string, isOnline: boolean) {
-    const driver = localStore.drivers.get(driverId);
+  public static ensureDriverRecord(driverId: string): any | null {
+    let driver = localStore.drivers.get(driverId);
+    if (driver) return driver;
+
+    const user = localStore.users.get(driverId);
+    let app: any = null;
+    for (const candidate of localStore.career_applications.values()) {
+      if (candidate.user_id === driverId && candidate.applicant_type === 'driver') {
+        app = candidate;
+        break;
+      }
+    }
+
+    if (!app && (!user || user.role !== 'driver')) {
+      return null;
+    }
+
+    const isApproved =
+      app?.status === 'APPROVED' || user?.approval_status === 'APPROVED';
+    const approvalStatus = isApproved
+      ? 'APPROVED'
+      : app?.status || user?.approval_status || 'PENDING_APPROVAL';
+
+    let vehicleId: string | null = null;
+    if (app?.vehicle_plate) {
+      vehicleId = `veh_${driverId.replace(/^usr_/, '')}`;
+      if (!localStore.vehicles.has(vehicleId)) {
+        const vehicle = {
+          id: vehicleId,
+          driver_id: driverId,
+          tier: app.vehicle_tier || 'go',
+          make: app.vehicle_make || 'Toyota',
+          model: app.vehicle_model || 'Corolla',
+          registration_plate: String(app.vehicle_plate).trim().toUpperCase(),
+          color: 'White',
+          capacity: 4,
+          status: 'active',
+          created_at: app.created_at || new Date().toISOString(),
+        };
+        db.persistVehicle(vehicle).catch(() => {});
+      }
+    }
+
+    driver = {
+      id: driverId,
+      vehicle_id: vehicleId,
+      is_online: false,
+      is_available: false,
+      is_approved: isApproved,
+      approval_status: approvalStatus,
+      current_lat: 0.3136,
+      current_lng: 32.5811,
+      heading: 0,
+      speed: 0,
+      license_number: app?.license_number || 'UG-PERMIT',
+      national_id: app?.national_id || '',
+      driving_permit_number: app?.license_number || '',
+      years_of_experience: Number(app?.experience_years || 0),
+      acceptance_rate: 100.0,
+      today_earnings_ugx: 0,
+      application_date: app?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    db.persistDriver(driver).catch((err) =>
+      console.error('[DriverService.ensureDriverRecord persist error]', err)
+    );
+    return driver;
+  }
+
+  public static setAvailability(
+    driverId: string,
+    isOnline: boolean,
+    coords?: { lat?: number; lng?: number; heading?: number; speed?: number }
+  ) {
+    const driver = this.ensureDriverRecord(driverId);
     if (!driver) {
       throw new Error('Driver account not found. Please apply via careers.mumwesafarisuganda.com.');
     }
@@ -28,6 +102,20 @@ export class DriverService {
 
     driver.is_online = Boolean(isOnline);
     driver.is_available = Boolean(isOnline) && !hasActiveTrip;
+    if (
+      coords &&
+      Number.isFinite(coords.lat) &&
+      Number.isFinite(coords.lng) &&
+      coords.lat! >= -90 &&
+      coords.lat! <= 90 &&
+      coords.lng! >= -180 &&
+      coords.lng! <= 180
+    ) {
+      driver.current_lat = Number(coords.lat);
+      driver.current_lng = Number(coords.lng);
+      if (Number.isFinite(coords.heading)) driver.heading = Number(coords.heading);
+      if (Number.isFinite(coords.speed)) driver.speed = Number(coords.speed);
+    }
     driver.updated_at = new Date().toISOString();
 
     db.persistDriver(driver).catch((err) =>
@@ -60,7 +148,7 @@ export class DriverService {
       throw new Error('Invalid GPS coordinates. Latitude must be [-90, 90] and longitude [-180, 180].');
     }
 
-    const driver = localStore.drivers.get(driverId);
+    const driver = this.ensureDriverRecord(driverId);
     if (!driver) {
       throw new Error('Driver not found.');
     }
@@ -220,7 +308,7 @@ export class DriverService {
 
   public static getDriverDashboard(driverId: string) {
     const user = localStore.users.get(driverId);
-    const driver = localStore.drivers.get(driverId);
+    const driver = this.ensureDriverRecord(driverId);
     const vehicle = driver?.vehicle_id ? localStore.vehicles.get(driver.vehicle_id) : null;
 
     const isApproved = Boolean(driver?.is_approved && driver?.approval_status === 'APPROVED');
@@ -245,7 +333,7 @@ export class DriverService {
           activeTrip = enrichedTrip;
         } else if (['TRIP_COMPLETED', 'CANCELLED'].includes(t.status)) {
           completedTrips.push(enrichedTrip);
-          if (t.status === 'TRIP_COMPLETED') {
+          if (t.status === 'TRIP_COMPLETED' && t.payment_environment !== 'sandbox') {
             calculatedCompletedEarnings += Number(t.fare_ugx || 0) + Number(t.tip_ugx || 0);
           }
         }

@@ -15,6 +15,7 @@ import { TelemetryController } from '../services/telemetry/telemetry.controller'
 import { AdminAuditController } from '../services/admin/audit.controller';
 import { StorageController } from '../services/storage/storage.controller';
 import { CareerController } from '../services/career/career.controller';
+import { FinancialController } from '../services/financial/financial.controller';
 import { authenticate, requireRole } from './auth_middleware';
 
 export const apiRouter = Router();
@@ -185,8 +186,32 @@ apiRouter.post('/payments/:id/verify', authenticate, PaymentController.verifyPay
 apiRouter.get('/payments/reference/:type/:id', authenticate, PaymentController.getPaymentByReference);
 apiRouter.get('/payments/dpo/callback', PaymentController.handleDpoCallback);
 apiRouter.post('/payments/dpo/callback', PaymentController.handleDpoCallback);
-apiRouter.post('/payments/topup', authenticate, UserController.topUpWallet);
+apiRouter.get('/payments/dpo/cancel', PaymentController.handleDpoCancel);
+apiRouter.post('/payments/dpo/cancel', PaymentController.handleDpoCancel);
+apiRouter.post('/payments/topup', authenticate, PaymentController.topUpWallet);
 apiRouter.get('/payments/history/:userId', authenticate, PaymentController.getPaymentHistory);
+
+// Admin Payments Management & DPO Verification Center
+apiRouter.get('/admin/payments', authenticate, requireRole('admin'), PaymentController.adminListPayments);
+apiRouter.get('/admin/payments/stats', authenticate, requireRole('admin'), PaymentController.adminGetPaymentStats);
+apiRouter.get('/admin/payments/config-status', authenticate, requireRole('admin'), PaymentController.adminGetConfigStatus);
+apiRouter.post('/admin/payments/:id/reconcile', authenticate, requireRole('admin'), PaymentController.adminReconcilePayment);
+apiRouter.post('/admin/payments/reconcile-open', authenticate, requireRole('admin'), PaymentController.adminReconcileOpen);
+
+// -------------------------------------------------------------
+// Financial Engine: Customer Wallets, Platform Earnings & Automatic Refunds
+// -------------------------------------------------------------
+apiRouter.get('/wallet/balance', authenticate, FinancialController.getBalance);
+apiRouter.get('/wallet/transactions', authenticate, FinancialController.getTransactions);
+
+apiRouter.get('/admin/financials/overview', authenticate, requireRole('admin'), FinancialController.getOverview);
+apiRouter.get('/admin/financials/ledger', authenticate, requireRole('admin'), FinancialController.getEarningsLedger);
+apiRouter.get('/admin/refund-policies', authenticate, requireRole('admin'), FinancialController.getPolicies);
+apiRouter.put('/admin/refund-policies/:id', authenticate, requireRole('admin'), FinancialController.updatePolicy);
+apiRouter.get('/admin/refunds', authenticate, requireRole('admin'), FinancialController.getRefunds);
+apiRouter.post('/admin/refunds', authenticate, requireRole('admin'), FinancialController.createRefund);
+apiRouter.post('/admin/refunds/run-worker', authenticate, requireRole('admin'), FinancialController.triggerRefundWorker);
+apiRouter.post('/admin/financial-adjustments', authenticate, requireRole('admin'), FinancialController.recordAdjustment);
 
 // -------------------------------------------------------------
 // In-App Encrypted Messaging

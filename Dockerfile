@@ -23,6 +23,8 @@ RUN (npm ci --omit=dev && npm cache clean --force) || (npm install --omit=dev --
 COPY --from=builder /app/dist ./dist
 COPY src/database/schema.sql ./dist/database/schema.sql
 COPY src/database/schema.sql ./src/database/schema.sql
+COPY src/database/migrations ./src/database/migrations
+COPY src/database/migrations ./dist/database/migrations
 
 EXPOSE 3000
 

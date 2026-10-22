@@ -246,7 +246,7 @@ export class TourGuideService {
 
       if (['COMPLETED', 'CANCELLED'].includes(status)) {
         completedBookings.push(enriched);
-        if (status === 'COMPLETED') {
+        if (status === 'COMPLETED' && b.payment_environment !== 'sandbox') {
           totalEarningsUGX += Number(enriched.total_ugx || 0);
         }
       } else {

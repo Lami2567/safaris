@@ -7,8 +7,13 @@ export class DriverController {
   public static setAvailability(req: AuthenticatedRequest, res: Response) {
     try {
       const driverId = req.user!.userId;
-      const { isOnline } = req.body;
-      const result = DriverService.setAvailability(driverId, Boolean(isOnline));
+      const { isOnline, lat, lng, heading, speed } = req.body;
+      const result = DriverService.setAvailability(driverId, Boolean(isOnline), {
+        lat: lat !== undefined ? Number(lat) : undefined,
+        lng: lng !== undefined ? Number(lng) : undefined,
+        heading: heading !== undefined ? Number(heading) : undefined,
+        speed: speed !== undefined ? Number(speed) : undefined,
+      });
       return sendSuccess(res, result);
     } catch (err: any) {
       const status = err.message?.includes('not approved') || err.message?.includes('pending') ? 403 : 400;

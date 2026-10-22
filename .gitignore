@@ -33,7 +33,11 @@ test-results/
 .cache/
 tmp/
 temp/
-/persistent_*.json
+**/persistent_*.json
+persistent_*.json
+admin/.next/
+admin/out/
+*.tsbuildinfo
 
 # OS generated files
 .DS_Store

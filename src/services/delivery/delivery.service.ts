@@ -59,7 +59,8 @@ export class DeliveryService {
       is_fragile: data.isFragile || false,
       fare_ugx: fareUGX,
       payment_method: data.paymentMethod || 'MTN Mobile Money',
-      payment_status: 'PAID',
+      // Payment status is independent of dispatch: only a DPO-verified payment marks a delivery PAID
+      payment_status: /cash/i.test(String(data.paymentMethod || '')) ? 'PENDING_CASH' : 'PENDING',
       status: 'SEARCHING_COURIER', // SEARCHING_COURIER, COURIER_ASSIGNED, PICKED_UP, IN_TRANSIT, DELIVERED
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

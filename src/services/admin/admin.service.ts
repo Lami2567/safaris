@@ -64,23 +64,67 @@ export class AdminService {
     const totalBookings = localStore.tour_bookings.size;
     const totalDeliveries = localStore.deliveries.size;
 
-    // Calculate revenue totals
-    let tripsRevenueUgx = 0;
+    // Authoritative Revenue Calculation: Strictly isolate live production revenue from sandbox test transactions
+    let liveTripsRevenueUgx = 0;
+    let sandboxTripsRevenueUgx = 0;
     for (const trip of localStore.trips.values()) {
-      tripsRevenueUgx += Number(trip.fare_ugx || trip.fare || 0);
+      const fare = Number(trip.fare_ugx || trip.fare || 0);
+      const isPaid = trip.payment_status === 'PAID';
+      if (isPaid) {
+        if (trip.payment_environment === 'production') {
+          liveTripsRevenueUgx += fare;
+        } else if (trip.payment_environment === 'sandbox') {
+          sandboxTripsRevenueUgx += fare;
+        }
+      }
     }
 
-    let bookingsRevenueUgx = 0;
+    let liveBookingsRevenueUgx = 0;
+    let sandboxBookingsRevenueUgx = 0;
     for (const b of localStore.tour_bookings.values()) {
-      bookingsRevenueUgx += Number(b.total_ugx || 0);
+      const total = Number(b.total_ugx || 0);
+      const isPaid = b.payment_status === 'PAID' || b.payment_status === 'COMPLETED';
+      if (isPaid) {
+        if (b.payment_environment === 'production') {
+          liveBookingsRevenueUgx += total;
+        } else if (b.payment_environment === 'sandbox') {
+          sandboxBookingsRevenueUgx += total;
+        }
+      }
     }
 
-    let deliveriesRevenueUgx = 0;
+    let liveDeliveriesRevenueUgx = 0;
+    let sandboxDeliveriesRevenueUgx = 0;
     for (const d of localStore.deliveries.values()) {
-      deliveriesRevenueUgx += Number(d.price_ugx || d.fare_ugx || 0);
+      const price = Number(d.price_ugx || d.fare_ugx || 0);
+      const isPaid = d.payment_status === 'PAID';
+      if (isPaid) {
+        if (d.payment_environment === 'production') {
+          liveDeliveriesRevenueUgx += price;
+        } else if (d.payment_environment === 'sandbox') {
+          sandboxDeliveriesRevenueUgx += price;
+        }
+      }
     }
 
-    const totalRevenueUgx = tripsRevenueUgx + bookingsRevenueUgx + deliveriesRevenueUgx;
+    // Direct verified payments ledger check as secondary safety
+    let verifiedLivePaymentsUgx = 0;
+    let verifiedSandboxPaymentsUgx = 0;
+    for (const p of localStore.payments.values()) {
+      if (p.status === 'SUCCESSFUL' && !p.duplicate_of_payment_id) {
+        const amt = Number(p.amount_ugx || 0);
+        if (p.environment === 'production') {
+          verifiedLivePaymentsUgx += amt;
+        } else {
+          verifiedSandboxPaymentsUgx += amt;
+        }
+      }
+    }
+
+    // Production collected revenue (strictly excludes sandbox test volume)
+    const liveRevenueUgx = Math.max(liveTripsRevenueUgx + liveBookingsRevenueUgx + liveDeliveriesRevenueUgx, verifiedLivePaymentsUgx);
+    const sandboxRevenueUgx = Math.max(sandboxTripsRevenueUgx + sandboxBookingsRevenueUgx + sandboxDeliveriesRevenueUgx, verifiedSandboxPaymentsUgx);
+    const totalRevenueUgx = liveRevenueUgx; // Only real production revenue is reported as total
 
     // Active counts
     const activeTripsCount = Array.from(localStore.trips.values()).filter(
@@ -99,12 +143,19 @@ export class AdminService {
       (d: any) => d.is_online && d.is_available
     ).length;
 
+    const dpoConfig = ENV.validateDpoConfig();
+
     return {
       kpis: {
         totalRevenueUgx,
-        tripsRevenueUgx,
-        bookingsRevenueUgx,
-        deliveriesRevenueUgx,
+        liveRevenueUgx,
+        sandboxRevenueUgx,
+        tripsRevenueUgx: liveTripsRevenueUgx,
+        bookingsRevenueUgx: liveBookingsRevenueUgx,
+        deliveriesRevenueUgx: liveDeliveriesRevenueUgx,
+        sandboxTripsRevenueUgx,
+        sandboxBookingsRevenueUgx,
+        sandboxDeliveriesRevenueUgx,
         totalUsers,
         totalDrivers,
         onlineDriversCount,
@@ -120,6 +171,13 @@ export class AdminService {
       },
       system: {
         environment: ENV.NODE_ENV,
+        dpo: {
+          environment: dpoConfig.environment,
+          isValid: dpoConfig.isValid,
+          serviceTypeId: dpoConfig.serviceTypeId,
+          supportTicketRef: dpoConfig.supportTicketRef,
+          liveReady: dpoConfig.liveReady,
+        },
         database: db.isPostgresConnected ? 'PostgreSQL 16 (Connected)' : 'In-Memory Resilient Hub',
         redis: 'Redis 7 Alpine (Active)',
         apiGateway: 'Online (/api/v1)',
