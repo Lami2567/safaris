@@ -12,6 +12,8 @@ import {
   Activity,
   Settings,
   CreditCard,
+  ShieldCheck,
+  ExternalLink,
   Sun,
   Moon,
 } from 'lucide-react';
@@ -48,18 +50,18 @@ export const Sidebar: React.FC = () => {
       <div>
         {/* Brand Header */}
         <div className="h-16 px-6 flex items-center gap-3 border-b border-white/10">
-          <div className="w-8 h-8 rounded border border-white/30 flex items-center justify-center font-extrabold text-white tracking-widest text-sm bg-white/5">
+          <div className="w-8 h-8 rounded border border-white/30 flex items-center justify-center font-bold text-white tracking-widest text-sm bg-white/5">
             S
           </div>
           <div>
-            <div className="text-sm font-bold tracking-wider text-white">SAFARIS UGANDA</div>
-            <div className="text-[11px] font-semibold uppercase tracking-widest text-white/50">Command Center</div>
+            <div className="text-sm font-semibold tracking-wider text-white">SAFARIS UGANDA</div>
+            <div className="text-[10px] uppercase tracking-widest text-white/40">Command Center</div>
           </div>
         </div>
 
         {/* Navigation List */}
-        <nav className="p-4 space-y-1.5">
-          <div className="px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-white/40">
+        <nav className="p-4 space-y-1">
+          <div className="px-3 py-2 text-[10px] uppercase tracking-widest text-white/30 font-mono">
             Navigation
           </div>
           {NAV_ITEMS.map((item) => {
@@ -69,15 +71,15 @@ export const Sidebar: React.FC = () => {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-md text-[13px] font-semibold transition-all ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-xs font-medium transition-all ${
                   isActive
-                    ? 'bg-white/10 text-white border border-white/20 shadow-sm font-bold'
-                    : 'text-white/70 hover:text-white hover:bg-white/[0.04]'
+                    ? 'bg-white/10 text-white border border-white/20 shadow-sm'
+                    : 'text-white/60 hover:text-white hover:bg-white/[0.04]'
                 }`}
               >
                 <Icon
                   className={`w-4 h-4 transition-colors ${
-                    isActive ? 'text-white' : 'text-white/50 group-hover:text-white/80'
+                    isActive ? 'text-white' : 'text-white/40 group-hover:text-white/80'
                   }`}
                 />
                 <span>{item.name}</span>
@@ -105,38 +107,38 @@ export const Sidebar: React.FC = () => {
               localStorage.removeItem('safaris_admin_token');
               window.dispatchEvent(new Event('safaris-admin-auth-change'));
             }}
-            className="w-full px-3 py-2 text-xs font-semibold text-white/80 hover:text-white border border-white/15 hover:border-white/30 hover:bg-white/[0.04] rounded-md transition-colors text-left"
+            className="w-full px-3 py-1.5 text-xs font-semibold text-white/70 hover:text-white border border-white/15 hover:border-white/30 hover:bg-white/[0.04] rounded-md transition-colors text-left"
           >
             Logout
           </button>
         )}
 
-        <div className="px-3 py-2 rounded border border-amber-500/30 bg-amber-500/10">
+        <div className="px-3 py-2 rounded border border-white/20 bg-white/[0.04]">
           <div className="flex items-center justify-between text-xs font-semibold">
-            <span className="flex items-center gap-1.5 text-amber-400">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="flex items-center gap-1.5 text-white/90">
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
               DPO Gateway:
             </span>
-            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold uppercase tracking-wider">
+            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white font-bold uppercase tracking-wider border border-white/20">
               SANDBOX
             </span>
           </div>
-          <div className="text-[10px] font-mono text-amber-300/70 truncate mt-1">
+          <div className="text-[10px] font-mono text-white/60 truncate mt-1">
             Service: 54841 • Ref: #2777504
           </div>
         </div>
 
         <div className="px-3 py-2 rounded border border-white/10 bg-white/[0.02]">
-          <div className="flex items-center gap-2 text-xs font-semibold text-white/80">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          <div className="flex items-center gap-2 text-[11px] text-white/80">
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
             <span>Target Domain:</span>
           </div>
-          <div className="text-[11px] font-medium text-white/60 font-mono truncate mt-0.5">
+          <div className="text-[10px] text-white/50 font-mono truncate mt-0.5">
             admin.mumwesafarisuganda.com
           </div>
         </div>
 
-        <div className="px-3 text-[11px] font-semibold text-white/50 flex items-center justify-between">
+        <div className="px-3 text-[10px] text-white/30 flex items-center justify-between">
           <span>SAFARIS v1.0.1</span>
           <span className="font-mono">18.222.41.199</span>
         </div>
