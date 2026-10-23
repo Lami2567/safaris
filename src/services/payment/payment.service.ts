@@ -52,6 +52,13 @@ export interface PaymentInitiationRequest {
   redirectUrl?: string;
   backUrl?: string;
   idempotencyKey?: string;
+  cardDetails?: {
+    cardNumber: string;
+    cardExpiry: string;
+    cardCvv: string;
+    cardHolderName?: string;
+    saveCard?: boolean;
+  };
 }
 
 export interface PaymentAuditEntry {
@@ -395,8 +402,63 @@ export class PaymentService {
     if (!req.referenceType || !req.referenceId) {
       throw new PaymentError('INVALID_REQUEST', 'referenceType and referenceId are required.');
     }
-    if (!DPO_PAYABLE_METHODS.includes(req.paymentMethod) && req.paymentMethod !== 'WALLET') {
-      throw new PaymentError('UNSUPPORTED_METHOD', 'Online payments support CARD, MTN_MOMO, AIRTEL_MONEY via DPO Pay, or Safaris WALLET.');
+    if (!DPO_PAYABLE_METHODS.includes(req.paymentMethod) && req.paymentMethod !== 'WALLET' && req.paymentMethod !== 'CASH') {
+      throw new PaymentError('UNSUPPORTED_METHOD', 'Supported payment methods: CARD, MTN_MOMO, AIRTEL_MONEY via DPO Pay, Safaris WALLET, or CASH.');
+    }
+
+    if (req.paymentMethod === 'CASH') {
+      if (req.referenceType === 'WALLET') {
+        throw new PaymentError('INVALID_REQUEST', 'Cannot top up wallet using cash.');
+      }
+      const env = DpoPayGateway.environment;
+      const { authoritativeAmount, serviceDetails } = await this.resolveAuthoritativeAmount(
+        req.referenceType,
+        req.referenceId,
+        req.amountUgx,
+        req.userId,
+        env
+      );
+
+      const paymentId = `pay_${Date.now()}_${uuidv4().substring(0, 8)}`;
+      const txId = `CSH-${Date.now().toString().slice(-6)}-${uuidv4().substring(0, 4).toUpperCase()}`;
+      const now = new Date().toISOString();
+      const payment: PaymentRecord = {
+        id: paymentId,
+        transaction_id: txId,
+        user_id: req.userId,
+        reference_type: req.referenceType,
+        reference_id: req.referenceId,
+        amount_ugx: authoritativeAmount,
+        currency: 'UGX',
+        payment_method: 'CASH',
+        phone: req.phone || '',
+        idempotency_key: req.idempotencyKey,
+        attempt_number: 1,
+        service_type_id: 'CASH',
+        support_ticket_ref: 'CASH',
+        dpo_trans_token: `cash_${paymentId}`,
+        dpo_trans_ref: txId,
+        payment_url: '',
+        status: 'PENDING',
+        environment: env,
+        callback_count: 0,
+        refund_status: 'NONE',
+        refunded_amount_ugx: 0,
+        audit_trail: [
+          {
+            at: now,
+            event: 'cash_payment_selected',
+            source: 'customer',
+            note: 'Cash payment selected upon trip/delivery completion',
+          },
+        ],
+        provider_metadata: { method: 'CASH', serviceDetails },
+        created_at: now,
+        updated_at: now,
+      };
+
+      await this.persist(payment);
+      return payment;
     }
 
     if (req.paymentMethod === 'WALLET') {
@@ -656,6 +718,59 @@ export class PaymentService {
         });
         if (mobile.success) {
           this.transition(record, 'PENDING', 'system', { note: 'Awaiting customer approval on phone' });
+        }
+      }
+
+      // 5b. Direct Card Processing: charge credit/debit card if cardDetails provided
+      if (req.paymentMethod === 'CARD' && req.cardDetails) {
+        const cardRes = await DpoPayGateway.chargeTokenCreditCard({
+          transToken: dpoResult.transToken,
+          cardNumber: req.cardDetails.cardNumber,
+          cardExpiry: req.cardDetails.cardExpiry,
+          cardCvv: req.cardDetails.cardCvv,
+          cardHolderName: req.cardDetails.cardHolderName || req.customerName,
+        });
+
+        record.dpo_approval_code = cardRes.approvalCode;
+        record.provider_metadata = {
+          ...record.provider_metadata,
+          card: {
+            statusCode: cardRes.statusCode,
+            explanation: cardRes.resultExplanation,
+            cardLast4: cardRes.cardLast4,
+            cardType: cardRes.cardType,
+            approved: cardRes.transactionApproved,
+          },
+        };
+
+        if (cardRes.transactionApproved) {
+          record.dpo_result_code = '000';
+          record.dpo_result_explanation = cardRes.resultExplanation;
+          record.verified_at = new Date().toISOString();
+          this.transition(record, 'SUCCESSFUL', 'system', {
+            note: `Direct card charge approved: ${cardRes.cardType} ending in ${cardRes.cardLast4}`,
+            dpoResultCode: '000',
+          });
+          await this.fulfil(record);
+          this.notifySuccess(record);
+
+          // Save card if requested
+          if (req.cardDetails.saveCard && req.userId) {
+            await this.saveUserMaskedCard(req.userId, {
+              brand: cardRes.cardType || 'Card',
+              last4: cardRes.cardLast4 || '0000',
+              expiry: req.cardDetails.cardExpiry,
+              holderName: req.cardDetails.cardHolderName || req.customerName || 'Cardholder',
+            });
+          }
+        } else {
+          record.failure_reason = cardRes.resultExplanation;
+          this.appendAudit(record, {
+            event: 'card_charge_pending_or_failed',
+            source: 'system',
+            dpoResultCode: cardRes.statusCode,
+            note: cardRes.resultExplanation,
+          });
         }
       }
 
@@ -1082,9 +1197,52 @@ export class PaymentService {
 
   private static async updatePaymentEnvironmentColumn(table: string, id: string, env: PaymentEnvironment) {
     if (!db.isPostgresConnected) return;
+    const allowedTables = ['trips', 'deliveries', 'tour_bookings'];
+    if (!allowedTables.includes(table)) {
+      console.warn(`[PaymentService] Blocked invalid table name in updatePaymentEnvironmentColumn: ${table}`);
+      return;
+    }
     try {
       await db.query(`UPDATE ${table} SET payment_environment = $1 WHERE id = $2`, [env, id]);
     } catch (_) {}
+  }
+
+  public static async saveUserMaskedCard(
+    userId: string,
+    card: { brand: string; last4: string; expiry: string; holderName: string }
+  ) {
+    const user = localStore.users.get(userId);
+    if (!user) return null;
+    const cards = Array.isArray(user.saved_cards) ? [...user.saved_cards] : [];
+    const exists = cards.some((c: any) => c.last4 === card.last4 && c.brand.toLowerCase() === card.brand.toLowerCase());
+    if (!exists) {
+      const newCard = {
+        id: `card_${Date.now()}_${uuidv4().substring(0, 6)}`,
+        brand: card.brand,
+        last4: card.last4,
+        expiry: card.expiry,
+        holderName: card.holderName,
+        createdAt: new Date().toISOString(),
+      };
+      cards.push(newCard);
+      user.saved_cards = cards;
+      await db.persistUser(user);
+      return newCard;
+    }
+    return null;
+  }
+
+  public static getUserMaskedCards(userId: string) {
+    const user = localStore.users.get(userId);
+    return Array.isArray(user?.saved_cards) ? user.saved_cards : [];
+  }
+
+  public static async deleteUserMaskedCard(userId: string, cardId: string) {
+    const user = localStore.users.get(userId);
+    if (!user || !Array.isArray(user.saved_cards)) return false;
+    user.saved_cards = user.saved_cards.filter((c: any) => c.id !== cardId);
+    await db.persistUser(user);
+    return true;
   }
 
   private static methodLabel(method: PaymentMethodType) {

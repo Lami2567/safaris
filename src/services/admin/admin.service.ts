@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { localStore, db } from '../../config/database';
 import { ENV } from '../../config/env';
+import { FinancialService } from '../financial/financial.service';
 
 const PERSISTENT_CONFIG_FILE = path.resolve(__dirname, '../../database/persistent_config.json');
 
@@ -424,6 +425,7 @@ export class AdminService {
               created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
             });
           }
+          const env = (ENV.DPO_ENVIRONMENT || 'sandbox') as any;
           return res.rows.map((u: any) => ({
             id: u.id,
             full_name: u.full_name,
@@ -432,7 +434,7 @@ export class AdminService {
             role: u.role,
             rating: parseFloat(u.rating || '5.0'),
             total_trips: parseInt(u.total_trips || '0', 10),
-            wallet_balance_ugx: parseFloat(u.wallet_balance_ugx || '0'),
+            wallet_balance_ugx: FinancialService.calculateWalletBalance(u.id, env),
             is_verified: u.is_verified === true,
             approval_status: u.approval_status || 'APPROVED',
             created_at: u.created_at ? new Date(u.created_at).toISOString() : new Date().toISOString(),
@@ -443,6 +445,7 @@ export class AdminService {
       }
     }
 
+    const env = (ENV.DPO_ENVIRONMENT || 'sandbox') as any;
     return Array.from(localStore.users.values())
       .filter((u: any) => {
         if (['driver-001', 'usr_ug_001', 'usr_drv_001', 'usr_drv_002', 'usr_gd_001'].includes(u.id)) {
@@ -461,7 +464,7 @@ export class AdminService {
         role: u.role,
         rating: u.rating,
         total_trips: u.total_trips,
-        wallet_balance_ugx: u.wallet_balance_ugx || 0,
+        wallet_balance_ugx: FinancialService.calculateWalletBalance(u.id, env),
         is_verified: u.is_verified,
         approval_status: u.approval_status || 'APPROVED',
         created_at: u.created_at,

@@ -14,7 +14,8 @@ export class FinancialController {
    */
   public static async getBalance(req: Request, res: Response): Promise<void> {
     try {
-      const userId = (req as any).user?.id || req.query.userId;
+      const authUser = (req as any).user;
+      const userId = authUser?.userId || authUser?.id || (req.query.userId as string);
       if (!userId) {
         res.status(401).json({ error: 'Authentication required.' });
         return;
@@ -41,7 +42,8 @@ export class FinancialController {
    */
   public static async getTransactions(req: Request, res: Response): Promise<void> {
     try {
-      const userId = (req as any).user?.id || req.query.userId;
+      const authUser = (req as any).user;
+      const userId = authUser?.userId || authUser?.id || (req.query.userId as string);
       if (!userId) {
         res.status(401).json({ error: 'Authentication required.' });
         return;

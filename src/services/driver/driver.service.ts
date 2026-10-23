@@ -1,4 +1,6 @@
 import { db, localStore } from '../../config/database';
+import { ENV } from '../../config/env';
+import { FinancialService } from '../financial/financial.service';
 import { broadcastDriverSnapshot, emitToTrip, emitToUser } from '../../realtime/socket_server';
 
 export class DriverService {
@@ -372,7 +374,7 @@ export class DriverService {
       totalTrips: Math.max(Number(user?.total_trips ?? 0), completedCount),
       completedTripsCount: completedCount,
       completedTripsToday: completedCount,
-      walletBalanceUGX: Number(user?.wallet_balance_ugx ?? 0),
+      walletBalanceUGX: FinancialService.calculateWalletBalance(driverId, (ENV.DPO_ENVIRONMENT || 'sandbox') as any),
       isApproved,
       approvalStatus,
       isOnline: driver ? Boolean(driver.is_online) : false,

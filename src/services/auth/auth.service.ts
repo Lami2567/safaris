@@ -6,6 +6,7 @@ import path from 'path';
 import { ENV } from '../../config/env';
 import { localStore, db } from '../../config/database';
 import { EmailService } from '../email/email.service';
+import { FinancialService } from '../financial/financial.service';
 import { getUgandaPhoneVariants, normalizeUgandaPhone } from '../../shared/phone';
 
 interface OtpRecord {
@@ -453,6 +454,12 @@ export class AuthService {
 
   public static sanitizeUser(user: any) {
     const { password_hash, ...sanitized } = user;
+    try {
+      const env = (ENV.DPO_ENVIRONMENT || 'sandbox') as any;
+      sanitized.wallet_balance_ugx = FinancialService.calculateWalletBalance(user.id, env);
+    } catch (_) {
+      sanitized.wallet_balance_ugx = Number(user.wallet_balance_ugx || 0);
+    }
     return sanitized;
   }
 

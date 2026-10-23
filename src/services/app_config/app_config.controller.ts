@@ -68,4 +68,17 @@ export class AppConfigController {
       return sendError(res, 'UPDATE_VERSION_CONFIG_FAILED', err.message, 400);
     }
   }
+
+  public static async updatePaymentMethods(req: Request, res: Response) {
+    try {
+      const paymentMethods = Array.isArray(req.body) ? req.body : req.body.paymentMethods;
+      if (!paymentMethods) {
+        return sendError(res, 'INVALID_PAYMENT_METHODS', 'Array of payment methods is required', 400);
+      }
+      const updated = await AppConfigService.updatePaymentMethods(paymentMethods);
+      return sendSuccess(res, updated);
+    } catch (err: any) {
+      return sendError(res, 'UPDATE_PAYMENT_METHODS_FAILED', err.message, 400);
+    }
+  }
 }

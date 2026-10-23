@@ -1,13 +1,32 @@
 import { localStore, db } from '../../config/database';
 import { AuthService } from '../auth/auth.service';
 import { NotificationService } from '../notification/notification.service';
+import { FinancialService } from '../financial/financial.service';
+import { DpoPayGateway } from '../payment/dpo_gateway';
+import { PaymentService } from '../payment/payment.service';
 
 export class UserService {
-  public static getProfile(userId: string) {
-    const user = localStore.users.get(userId);
+  public static async getProfile(userId: string) {
+    let user = localStore.users.get(userId);
+    if (!user && db.isPostgresConnected) {
+      try {
+        const res = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+        if (res?.rows?.length > 0) {
+          user = res.rows[0];
+          localStore.users.set(userId, user);
+        }
+      } catch (_) {}
+    }
+
     if (!user) {
       throw new Error('User profile not found.');
     }
+
+    // Pull authoritative wallet balance strictly from verified database ledger
+    const env = DpoPayGateway.environment;
+    const verifiedBalance = FinancialService.calculateWalletBalance(userId, env);
+    user.wallet_balance_ugx = verifiedBalance;
+
     return AuthService.sanitizeUser(user);
   }
 
@@ -26,32 +45,36 @@ export class UserService {
     return AuthService.sanitizeUser(user);
   }
 
-  public static async topUpWallet(userId: string, amountUGX: number) {
+  public static async topUpWallet(userId: string, amountUGX: number, paymentMethod: any = 'MTN_MOMO', phone?: string) {
     const user = localStore.users.get(userId);
     if (!user) {
       throw new Error('User not found.');
     }
 
-    user.wallet_balance_ugx += amountUGX;
+    if (!amountUGX || amountUGX < 1000) {
+      throw new Error('Minimum wallet top-up amount is UGX 1,000.');
+    }
 
-    await db.persistUser(user);
-
-    // Direct database notification for wallet credit
-    NotificationService.createNotification({
+    // Top-up MUST initiate an authoritative payment through the gateway instead of arbitrary balance injection
+    const payment = await PaymentService.processPayment({
       userId,
-      title: 'Wallet Top-up Successful',
-      message: `UGX ${amountUGX.toLocaleString()} has been credited to your SAFARIS wallet via Mobile Money.`,
-      type: 'PAYMENT',
-      metadata: {
-        amountUgx: amountUGX,
-        newBalanceUgx: user.wallet_balance_ugx,
-        source: 'MOBILE_MONEY',
-      },
-    }).catch((err) => console.error('[TopUpNotification Error]', err));
+      referenceType: 'WALLET',
+      referenceId: userId,
+      amountUgx: amountUGX,
+      paymentMethod: paymentMethod || 'MTN_MOMO',
+      phone: phone || user.phone,
+      customerName: user.full_name,
+      customerEmail: user.email,
+      description: `Safaris Wallet Top-Up: UGX ${amountUGX.toLocaleString()}`,
+    });
+
+    const env = DpoPayGateway.environment;
+    const currentBalance = FinancialService.calculateWalletBalance(userId, env);
 
     return {
-      walletBalanceUGX: user.wallet_balance_ugx,
-      message: `Successfully topped up UGX ${amountUGX.toLocaleString()} via Mobile Money.`,
+      payment: PaymentService.toPublicView(payment),
+      walletBalanceUGX: currentBalance,
+      message: `Top-up payment initiated via ${paymentMethod}. Approve the prompt on your phone or card to fund your account.`,
     };
   }
 

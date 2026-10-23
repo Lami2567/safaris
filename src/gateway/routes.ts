@@ -54,6 +54,7 @@ apiRouter.put('/app-config/services', authenticate, requireRole('admin'), AppCon
 apiRouter.put('/app-config/banners', authenticate, requireRole('admin'), AppConfigController.updateBanners);
 apiRouter.put('/app-config/features', authenticate, requireRole('admin'), AppConfigController.updateFeatures);
 apiRouter.put('/app-config/version', authenticate, requireRole('admin'), AppConfigController.updateVersionConfig);
+apiRouter.put('/app-config/payment-methods', authenticate, requireRole('admin'), AppConfigController.updatePaymentMethods);
 
 // -------------------------------------------------------------
 // Admin Hub & Controls (Protected with persistent Admin Auth)
@@ -102,6 +103,8 @@ apiRouter.get('/auth/me', authenticate, AuthController.me);
 // -------------------------------------------------------------
 // Users
 // -------------------------------------------------------------
+apiRouter.get('/users/profile', authenticate, UserController.getProfile);
+apiRouter.get('/users/me', authenticate, UserController.getProfile);
 apiRouter.get('/users/:id', authenticate, UserController.getProfile);
 apiRouter.put('/users/:id', authenticate, UserController.updateProfile);
 apiRouter.post('/users/wallet/topup', authenticate, UserController.topUpWallet);
@@ -190,6 +193,9 @@ apiRouter.get('/payments/dpo/cancel', PaymentController.handleDpoCancel);
 apiRouter.post('/payments/dpo/cancel', PaymentController.handleDpoCancel);
 apiRouter.post('/payments/topup', authenticate, PaymentController.topUpWallet);
 apiRouter.get('/payments/history/:userId', authenticate, PaymentController.getPaymentHistory);
+apiRouter.get('/payments/cards', authenticate, PaymentController.getUserCards);
+apiRouter.post('/payments/cards', authenticate, PaymentController.saveUserCard);
+apiRouter.delete('/payments/cards/:cardId', authenticate, PaymentController.deleteUserCard);
 
 // Admin Payments Management & DPO Verification Center
 apiRouter.get('/admin/payments', authenticate, requireRole('admin'), PaymentController.adminListPayments);

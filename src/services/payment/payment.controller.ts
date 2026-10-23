@@ -35,6 +35,7 @@ export class PaymentController {
         redirectUrl: req.body.redirectUrl,
         backUrl: req.body.backUrl,
         idempotencyKey: req.body.idempotencyKey || req.headers['x-idempotency-key'],
+        cardDetails: req.body.cardDetails,
       });
 
       const responsePayload = authUser?.role === 'admin' ? payment : PaymentService.toPublicView(payment);
@@ -428,5 +429,69 @@ export class PaymentController {
   </div>
 </body>
 </html>`;
+  }
+
+  /**
+   * GET /api/v1/payments/cards
+   * Returns saved cards for authenticated user.
+   */
+  public static getUserCards(req: Request, res: Response) {
+    try {
+      const authUser = (req as any).user;
+      const userId = authUser?.userId || (req.query.userId as string);
+      if (!userId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+      const cards = PaymentService.getUserMaskedCards(userId);
+      return sendSuccess(res, cards);
+    } catch (err: any) {
+      return sendError(res, 'FETCH_CARDS_FAILED', err.message, 500);
+    }
+  }
+
+  /**
+   * POST /api/v1/payments/cards
+   * Saves a masked card reference for future payments.
+   */
+  public static async saveUserCard(req: Request, res: Response) {
+    try {
+      const authUser = (req as any).user;
+      const userId = authUser?.userId || req.body.userId;
+      if (!userId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+      const { brand, last4, expiry, holderName } = req.body;
+      if (!last4 || !expiry) {
+        return sendError(res, 'INVALID_CARD_DATA', 'last4 and expiry are required.', 400);
+      }
+      const saved = await PaymentService.saveUserMaskedCard(userId, {
+        brand: brand || 'Card',
+        last4: String(last4).slice(-4),
+        expiry: String(expiry),
+        holderName: holderName || authUser?.fullName || 'Cardholder',
+      });
+      return sendSuccess(res, saved, 201);
+    } catch (err: any) {
+      return sendError(res, 'SAVE_CARD_FAILED', err.message, 500);
+    }
+  }
+
+  /**
+   * DELETE /api/v1/payments/cards/:cardId
+   * Deletes a saved card.
+   */
+  public static async deleteUserCard(req: Request, res: Response) {
+    try {
+      const authUser = (req as any).user;
+      const userId = authUser?.userId || (req.query.userId as string);
+      const { cardId } = req.params;
+      if (!userId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+      await PaymentService.deleteUserMaskedCard(userId, cardId);
+      return sendSuccess(res, { message: 'Card removed successfully.' });
+    } catch (err: any) {
+      return sendError(res, 'DELETE_CARD_FAILED', err.message, 500);
+    }
   }
 }

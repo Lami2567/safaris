@@ -150,6 +150,45 @@ export class AppConfigService {
       { id: 'dest_lake_mburo', title: 'Lake Mburo', subtitle: 'Zebra Sanctuary', latitude: -0.6358, longitude: 30.9328, city: 'Kiruhura' },
     ];
 
+    const defaultPaymentMethods = [
+      {
+        id: 'MTN_MOMO',
+        name: 'MTN Mobile Money',
+        description: 'Instant MoMo push prompt (*165#)',
+        enabled: true,
+        isOnline: true,
+      },
+      {
+        id: 'AIRTEL_MONEY',
+        name: 'Airtel Money',
+        description: 'Instant Airtel Money push prompt (*185#)',
+        enabled: true,
+        isOnline: true,
+      },
+      {
+        id: 'CARD',
+        name: 'Credit / Debit Card',
+        description: 'Visa, MasterCard, American Express via DPO Gateway',
+        enabled: true,
+        isOnline: true,
+        supportsCardInput: true,
+      },
+      {
+        id: 'WALLET',
+        name: 'SAFARIS Wallet',
+        description: 'Pay instantly with your verified SAFARIS balance',
+        enabled: true,
+        isOnline: true,
+      },
+      {
+        id: 'CASH',
+        name: 'Cash on Arrival',
+        description: 'Pay the driver / courier directly upon trip completion',
+        enabled: true,
+        isOnline: false,
+      },
+    ];
+
     const defaultFeatures = {
       instant_mobile_money_pay: true,
       boda_rides_enabled: true,
@@ -197,6 +236,7 @@ export class AppConfigService {
       minDriverRatingThreshold: 4.5,
       services: master.services || configMap.services || defaultServices,
       banners: master.banners || configMap.banners || defaultBanners,
+      paymentMethods: master.paymentMethods || configMap.paymentMethods || defaultPaymentMethods,
       features: { ...defaultFeatures, ...(master.featureFlags || {}), ...(configMap.features || {}) },
       featureFlags: { ...defaultFeatures, ...(master.featureFlags || {}), ...(configMap.featureFlags || {}) },
       versionConfig: master.versionConfig || configMap.versionConfig || defaultVersion,
@@ -420,5 +460,19 @@ export class AppConfigService {
 
   public static async updateMapboxToken(token: string) {
     return this.updateConfig('mapboxAccessToken', token);
+  }
+
+  public static async updatePaymentMethods(methods: any[]) {
+    const normalized = (methods || []).map((m: any) => ({
+      id: String(m.id || '').toUpperCase().trim(),
+      name: String(m.name || m.title || m.id || ''),
+      description: m.description ? String(m.description) : '',
+      enabled: m.enabled !== undefined ? Boolean(m.enabled) : (m.isEnabled !== undefined ? Boolean(m.isEnabled) : true),
+      isOnline: m.isOnline !== undefined ? Boolean(m.isOnline) : true,
+      supportsCardInput: String(m.id || '').toUpperCase().trim() === 'CARD' || Boolean(m.supportsCardInput),
+      minAmountUGX: m.minAmountUGX ? Number(m.minAmountUGX) : 500,
+      maxAmountUGX: m.maxAmountUGX ? Number(m.maxAmountUGX) : 10000000,
+    }));
+    return this.updateConfig('paymentMethods', normalized);
   }
 }

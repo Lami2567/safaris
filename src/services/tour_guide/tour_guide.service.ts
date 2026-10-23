@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { localStore, db } from '../../config/database';
+import { ENV } from '../../config/env';
+import { FinancialService } from '../financial/financial.service';
 import { broadcastToFleet, emitToUser } from '../../realtime/socket_server';
 
 const PERSISTENT_GUIDES_FILES = [
@@ -284,7 +286,7 @@ export class TourGuideService {
       expeditionsCount: Math.max(Number(guide?.expeditions_count ?? 0), completedCount),
       completedToursCount: completedCount,
       totalEarningsUGX,
-      walletBalanceUGX: Number(user?.wallet_balance_ugx ?? 0),
+      walletBalanceUGX: FinancialService.calculateWalletBalance(guideId, (ENV.DPO_ENVIRONMENT || 'sandbox') as any),
       activeBooking,
       assignedBookings,
       completedBookings,

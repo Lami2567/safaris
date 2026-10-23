@@ -145,7 +145,17 @@ export default function PaymentsPage() {
   const { theme } = useTheme();
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'stream' | 'financials' | 'wallets' | 'refunds'>('stream');
+  const [activeTab, setActiveTab] = useState<'stream' | 'financials' | 'wallets' | 'refunds' | 'methods'>('stream');
+
+  // Payment Methods (Master Source of Truth)
+  const [paymentMethods, setPaymentMethods] = useState<any[]>([
+    { id: 'MTN_MOMO', name: 'MTN Mobile Money', description: 'Instant MoMo push prompt (*165#)', enabled: true, isOnline: true },
+    { id: 'AIRTEL_MONEY', name: 'Airtel Money', description: 'Instant Airtel Money push prompt (*185#)', enabled: true, isOnline: true },
+    { id: 'CARD', name: 'Credit / Debit Card', description: 'Visa, MasterCard, American Express via DPO Gateway', enabled: true, isOnline: true, supportsCardInput: true },
+    { id: 'WALLET', name: 'SAFARIS Wallet', description: 'Pay instantly with your verified SAFARIS balance', enabled: true, isOnline: true },
+    { id: 'CASH', name: 'Cash on Arrival', description: 'Pay the driver / courier directly upon trip completion', enabled: true, isOnline: false },
+  ]);
+  const [savingMethods, setSavingMethods] = useState(false);
 
   // Core Data
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -209,11 +219,27 @@ export default function PaymentsPage() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  const togglePaymentMethod = async (id: string, newEnabled: boolean) => {
+    const updated = paymentMethods.map(m => m.id === id ? { ...m, enabled: newEnabled } : m);
+    setPaymentMethods(updated);
+    setSavingMethods(true);
+    try {
+      await api.updatePaymentMethods(updated);
+      showToast(`Payment method "${id}" ${newEnabled ? 'enabled' : 'disabled'} across all mobile & web clients.`);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update payment method', 'error');
+      // revert
+      setPaymentMethods(paymentMethods);
+    } finally {
+      setSavingMethods(false);
+    }
+  };
+
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
     setRefreshing(true);
     try {
-      const [paymentsRes, statsRes, configRes, overviewRes, policiesRes, refundsRes, earningsRes] =
+      const [paymentsRes, statsRes, configRes, overviewRes, policiesRes, refundsRes, earningsRes, appConfigRes] =
         await Promise.allSettled([
           api.getPayments({
             limit: 100,
@@ -228,6 +254,7 @@ export default function PaymentsPage() {
           api.getRefundPolicies(),
           api.getRefunds(),
           api.getEarningsLedger(),
+          api.getConfig(),
         ]);
 
       if (paymentsRes.status === 'fulfilled' && paymentsRes.value?.payments) {
@@ -250,6 +277,9 @@ export default function PaymentsPage() {
       }
       if (earningsRes.status === 'fulfilled' && earningsRes.value?.earnings) {
         setEarningsLedger(earningsRes.value.earnings);
+      }
+      if (appConfigRes.status === 'fulfilled' && appConfigRes.value?.paymentMethods) {
+        setPaymentMethods(appConfigRes.value.paymentMethods);
       }
     } catch (err: any) {
       console.error('Failed to load financial data:', err);
@@ -642,6 +672,17 @@ export default function PaymentsPage() {
         >
           <RotateCcw className="w-4 h-4" />
           <span>No-Show Refund Policies & Cases</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('methods')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider flex items-center gap-2 border-b-2 transition-all ${
+            activeTab === 'methods'
+              ? 'border-black text-black bg-black/[0.04] dark:border-white dark:text-white dark:bg-white/[0.04]'
+              : 'border-transparent text-black/50 hover:text-black dark:text-white/60 dark:hover:text-white'
+          }`}
+        >
+          <Sliders className="w-4 h-4" />
+          <span>Payment Methods (Source of Truth)</span>
         </button>
       </div>
 
@@ -1395,6 +1436,135 @@ export default function PaymentsPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 5: PAYMENT METHODS MASTER CONTROLS (SOURCE OF TRUTH) */}
+      {/* ========================================================================= */}
+      {activeTab === 'methods' && (
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-[#121212] border border-black/10 dark:border-white/10 rounded-2xl p-6 shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-black/10 dark:border-white/10">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 text-[11px] font-bold rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
+                    Single Source of Truth
+                  </span>
+                  <span className="text-xs text-black/40 dark:text-white/40 font-mono">Real-time sync to all mobile & web clients</span>
+                </div>
+                <h2 className="text-lg font-bold text-black dark:text-white mt-1">Platform Payment Channels & Gateways</h2>
+                <p className="text-xs text-black/60 dark:text-white/60 mt-1 max-w-2xl">
+                  Enable or disable payment methods accepted across Ride Hailing, Express Package Delivery, and Uganda Safaris Tourism. Changes saved here immediately update the customer checkout sheets and remove stale or unauthorized payment options.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {savingMethods && (
+                  <div className="flex items-center gap-2 text-xs text-black/60 dark:text-white/60">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving config...</span>
+                  </div>
+                )}
+                <div className="text-right">
+                  <div className="text-xs font-mono font-bold text-black dark:text-white">
+                    {paymentMethods.filter((m) => m.enabled !== false).length} of {paymentMethods.length} Channels Active
+                  </div>
+                  <div className="text-[10px] text-black/50 dark:text-white/50">Production & Sandbox Ledger Active</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {paymentMethods.map((method) => {
+                const isEnabled = method.enabled !== false;
+                const getMethodIcon = (id: string) => {
+                  switch (id) {
+                    case 'MTN_MOMO':
+                    case 'AIRTEL_MONEY':
+                      return <Smartphone className="w-5 h-5 text-amber-500" />;
+                    case 'CARD':
+                      return <CreditCard className="w-5 h-5 text-indigo-500" />;
+                    case 'WALLET':
+                      return <Wallet className="w-5 h-5 text-emerald-500" />;
+                    case 'CASH':
+                    default:
+                      return <DollarSign className="w-5 h-5 text-blue-500" />;
+                  }
+                };
+
+                return (
+                  <div
+                    key={method.id}
+                    className={`rounded-xl border p-5 transition-all flex flex-col justify-between ${
+                      isEnabled
+                        ? 'border-black/15 bg-black/[0.02] dark:border-white/15 dark:bg-white/[0.02]'
+                        : 'border-black/5 bg-black/[0.01] opacity-60 dark:border-white/5 dark:bg-white/[0.01]'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-start justify-between">
+                        <div className="w-10 h-10 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center">
+                          {getMethodIcon(method.id)}
+                        </div>
+                        <button
+                          onClick={() => togglePaymentMethod(method.id, !isEnabled)}
+                          disabled={savingMethods}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                            isEnabled ? 'bg-emerald-500' : 'bg-black/20 dark:bg-white/20'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              isEnabled ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      <div className="mt-4">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-sm text-black dark:text-white">{method.name}</h3>
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black/70 dark:text-white/70">
+                            {method.id}
+                          </span>
+                        </div>
+                        <p className="text-xs text-black/60 dark:text-white/60 mt-1 leading-relaxed">
+                          {method.description || 'Channel payment option'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 pt-4 border-t border-black/5 dark:border-white/5 flex items-center justify-between text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            isEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                          }`}
+                        />
+                        <span className="font-semibold text-black/80 dark:text-white/80">
+                          {isEnabled ? 'Available to Customers' : 'Disabled / Hidden'}
+                        </span>
+                      </div>
+                      <span className="font-mono text-black/40 dark:text-white/40">
+                        {method.isOnline ? 'DPO Gateway' : 'Direct Handover'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-8 p-4 rounded-xl border border-blue-500/20 bg-blue-500/5 text-blue-900 dark:text-blue-200 text-xs flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 flex-shrink-0 text-blue-500 mt-0.5" />
+              <div>
+                <p className="font-semibold">Security & Ledger Verification Protocol</p>
+                <p className="mt-1 text-black/70 dark:text-white/70">
+                  Card details are processed directly through DPO XML API v6 without storing raw PAN or CVV on disk. Wallet balances are computed strictly by aggregating non-repudiable ledger transactions from <code className="font-mono font-bold">wallet_transactions</code> to prevent balance manipulation and race condition exploits.
+                </p>
+              </div>
             </div>
           </div>
         </div>

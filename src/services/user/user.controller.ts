@@ -4,10 +4,13 @@ import { UserService } from './user.service';
 import { sendSuccess, sendError } from '../../shared/response';
 
 export class UserController {
-  public static getProfile(req: AuthenticatedRequest, res: Response) {
+  public static async getProfile(req: AuthenticatedRequest, res: Response) {
     try {
-      const userId = req.user!.userId;
-      const profile = UserService.getProfile(userId);
+      const requestedId = req.params?.id;
+      const userId = (requestedId && requestedId !== 'profile' && requestedId !== 'me')
+        ? requestedId
+        : req.user!.userId;
+      const profile = await UserService.getProfile(userId);
       return sendSuccess(res, profile);
     } catch (err: any) {
       return sendError(res, 'USER_NOT_FOUND', err.message, 404);
