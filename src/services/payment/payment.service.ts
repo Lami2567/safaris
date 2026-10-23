@@ -372,7 +372,7 @@ export class PaymentService {
       if (requested > WALLET_MAX_TOPUP_UGX) {
         throw new PaymentError('INVALID_AMOUNT', `Maximum wallet top-up amount is UGX ${WALLET_MAX_TOPUP_UGX.toLocaleString()}.`);
       }
-      if (userId && referenceId !== userId) {
+      if (userId && referenceId && referenceId.startsWith('usr_') && referenceId !== userId) {
         throw new PaymentError('FORBIDDEN', 'You can only top up your own wallet.', 403);
       }
       authoritativeAmount = requested;
