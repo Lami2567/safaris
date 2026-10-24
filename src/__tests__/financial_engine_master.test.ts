@@ -528,7 +528,7 @@ async function runMasterFinancialTestSuite() {
   pass(16, 'Driver earning allocation after completed paid ride');
 
   // 17. Tour-guide earning allocation after completed paid tour
-  const tourBooking = TourismService.createBooking({
+  const tourBooking = await TourismService.createBooking({
     customerId,
     destinationId: 'dest_bwindi',
     packageId: 'pkg_bwindi_3d',
@@ -663,7 +663,7 @@ async function runMasterFinancialTestSuite() {
   pass(21, 'Duplicate refund prevention');
 
   // 22. Partial refund calculation and over-refund rejection
-  const partialTour = TourismService.createBooking({
+  const partialTour = await TourismService.createBooking({
     customerId,
     destinationId: 'dest_murchison',
     packageId: 'pkg_murchison',

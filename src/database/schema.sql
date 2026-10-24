@@ -1022,4 +1022,168 @@ CREATE TABLE IF NOT EXISTS financial_audit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_fin_audit_logs_created ON financial_audit_logs(created_at DESC);
 
+-- ==========================================================
+-- 20. DYNAMIC CONTENT MANAGEMENT, VEHICLE CATALOGUE & PRICING ENGINE
+-- ==========================================================
+
+-- 20a. ENHANCED DESTINATIONS & TOUR PACKAGES COLUMNS
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS country VARCHAR(64) DEFAULT 'Uganda';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS district VARCHAR(128) DEFAULT '';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS location_address TEXT DEFAULT '';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS category VARCHAR(64) DEFAULT 'national_park';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS latitude NUMERIC(10, 6) DEFAULT 0.3136;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS longitude NUMERIC(10, 6) DEFAULT 32.5811;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS image_url TEXT DEFAULT '';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS short_description TEXT DEFAULT '';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS content_blocks JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS gallery_images JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS videos JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS audio_clips JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS activities JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS inclusions JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS exclusions JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS recommended_duration VARCHAR(128) DEFAULT '3 Days / 2 Nights';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS travel_duration VARCHAR(128) DEFAULT '5 hours';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS distance_from_kampala VARCHAR(128) DEFAULT '300 km';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS rating NUMERIC(3, 2) DEFAULT 4.90;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS is_popular BOOLEAN DEFAULT TRUE;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS base_price_ugx BIGINT DEFAULT 0;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS tourist_pricing_tiers JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS assigned_vehicle_ids JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS assigned_guide_ids JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS itinerary JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS additional_charges JSONB DEFAULT '[]';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS booking_available BOOLEAN DEFAULT TRUE;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS publication_status VARCHAR(32) DEFAULT 'PUBLISHED';
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS display_order INT DEFAULT 0;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS content_version INT DEFAULT 1;
+ALTER TABLE destinations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS short_description TEXT DEFAULT '';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS image_url TEXT DEFAULT '';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS content_blocks JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS gallery_images JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS videos JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS audio_clips JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS exclusions JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS itinerary JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS tourist_pricing_tiers JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS assigned_vehicle_ids JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS assigned_guide_ids JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS additional_charges JSONB DEFAULT '[]';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS is_featured BOOLEAN DEFAULT TRUE;
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS booking_available BOOLEAN DEFAULT TRUE;
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS publication_status VARCHAR(32) DEFAULT 'PUBLISHED';
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS display_order INT DEFAULT 0;
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS content_version INT DEFAULT 1;
+ALTER TABLE tour_packages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+
+-- 20b. DESTINATION & PACKAGE MULTIMEDIA METADATA (CLOUDFLARE R2 + VALIDATED EXTERNAL LINKS)
+CREATE TABLE IF NOT EXISTS destination_media (
+    id VARCHAR(64) PRIMARY KEY,
+    owner_type VARCHAR(32) NOT NULL DEFAULT 'DESTINATION', -- 'DESTINATION' | 'PACKAGE' | 'VEHICLE' | 'GUIDE'
+    owner_id VARCHAR(64) NOT NULL,
+    media_type VARCHAR(32) NOT NULL CHECK (media_type IN ('IMAGE', 'VIDEO', 'AUDIO')),
+    source_type VARCHAR(32) NOT NULL DEFAULT 'CLOUDFLARE_R2' CHECK (source_type IN ('CLOUDFLARE_R2', 'EXTERNAL_URL')),
+    url TEXT NOT NULL,
+    r2_key TEXT,
+    mime_type VARCHAR(128) DEFAULT 'image/jpeg',
+    title VARCHAR(255) DEFAULT '',
+    caption TEXT DEFAULT '',
+    display_order INT DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dest_media_owner ON destination_media(owner_type, owner_id, display_order ASC);
+
+-- 20c. CENTRALIZED VEHICLE CATALOGUE & EXPLICIT SERVICE ASSIGNMENT
+CREATE TABLE IF NOT EXISTS catalogue_vehicles (
+    id VARCHAR(64) PRIMARY KEY,
+    code VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    category VARCHAR(64) NOT NULL,
+    make VARCHAR(64) DEFAULT '',
+    model VARCHAR(64) DEFAULT '',
+    description TEXT DEFAULT '',
+    image_url TEXT DEFAULT '',
+    icon_name VARCHAR(64) DEFAULT 'directions_car',
+    passenger_capacity INT NOT NULL DEFAULT 4,
+    luggage_capacity INT NOT NULL DEFAULT 2,
+    max_weight_kg NUMERIC(8, 2) DEFAULT 50.0,
+    eta_minutes INT DEFAULT 5,
+    is_available BOOLEAN NOT NULL DEFAULT TRUE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    display_order INT NOT NULL DEFAULT 0,
+    assigned_services JSONB NOT NULL DEFAULT '[]', -- Explicit list of ['ride_hailing', 'airport_shuttle', 'tours', 'express_delivery']
+    service_pricing JSONB NOT NULL DEFAULT '{}',
+    pricing_version INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_catalogue_vehicles_active ON catalogue_vehicles(is_active, is_available, display_order ASC);
+
+-- 20d. SERVICE PRICING RULES (RIDE HAILING, AIRPORT SHUTTLE, EXPRESS DELIVERY, TOUR GUIDES)
+CREATE TABLE IF NOT EXISTS service_pricing_rules (
+    service_key VARCHAR(64) PRIMARY KEY, -- 'ride_hailing', 'airport_shuttle', 'express_delivery', 'tour_guides', 'tours'
+    config JSONB NOT NULL DEFAULT '{}',
+    pricing_version INT NOT NULL DEFAULT 1,
+    updated_by VARCHAR(64) DEFAULT 'ADMIN',
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 20e. IMMUTABLE SERVER-SIDE PRICE QUOTATIONS
+CREATE TABLE IF NOT EXISTS price_quotations (
+    id VARCHAR(64) PRIMARY KEY,
+    service_type VARCHAR(32) NOT NULL CHECK (service_type IN ('RIDE', 'AIRPORT_SHUTTLE', 'TOUR', 'DELIVERY')),
+    reference_id VARCHAR(64),
+    vehicle_id VARCHAR(64),
+    guide_id VARCHAR(64),
+    guest_count INT DEFAULT 1,
+    distance_km NUMERIC(10, 2) DEFAULT 0,
+    weight_kg NUMERIC(10, 2) DEFAULT 0,
+    base_price_ugx BIGINT NOT NULL DEFAULT 0,
+    distance_price_ugx BIGINT NOT NULL DEFAULT 0,
+    vehicle_charge_ugx BIGINT NOT NULL DEFAULT 0,
+    tourist_count_charge_ugx BIGINT NOT NULL DEFAULT 0,
+    tour_guide_fee_ugx BIGINT NOT NULL DEFAULT 0,
+    additional_charges_ugx BIGINT NOT NULL DEFAULT 0,
+    discounts_ugx BIGINT NOT NULL DEFAULT 0,
+    taxes_ugx BIGINT NOT NULL DEFAULT 0,
+    total_price_ugx BIGINT NOT NULL CHECK (total_price_ugx > 0),
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    pricing_version INT NOT NULL DEFAULT 1,
+    breakdown JSONB NOT NULL DEFAULT '[]',
+    request_params JSONB NOT NULL DEFAULT '{}',
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_quotations_service ON price_quotations(service_type, created_at DESC);
+
+-- 20f. ADD QUOTATION SNAPSHOT COLUMNS TO TRIPS, DELIVERIES & TOUR BOOKINGS
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS quotation_id VARCHAR(64);
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS pricing_version INT DEFAULT 1;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS quotation_snapshot JSONB DEFAULT '{}';
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS service_category VARCHAR(32) DEFAULT 'RIDE';
+
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS quotation_id VARCHAR(64);
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS pricing_version INT DEFAULT 1;
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS quotation_snapshot JSONB DEFAULT '{}';
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS vehicle_id VARCHAR(64);
+ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS distance_km NUMERIC(10, 2) DEFAULT 5.0;
+
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS quotation_id VARCHAR(64);
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS pricing_version INT DEFAULT 1;
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS quotation_snapshot JSONB DEFAULT '{}';
+ALTER TABLE tour_bookings ADD COLUMN IF NOT EXISTS vehicle_id VARCHAR(64);
+
+ALTER TABLE tour_guides ADD COLUMN IF NOT EXISTS multi_day_rate_ugx NUMERIC(12, 2) DEFAULT 140000.0;
+ALTER TABLE tour_guides ADD COLUMN IF NOT EXISTS fixed_tour_fee_ugx NUMERIC(12, 2) DEFAULT 0.0;
+ALTER TABLE tour_guides ADD COLUMN IF NOT EXISTS group_size_surcharge_ugx NUMERIC(12, 2) DEFAULT 0.0;
+ALTER TABLE tour_guides ADD COLUMN IF NOT EXISTS supported_destination_ids JSONB DEFAULT '[]';
+ALTER TABLE tour_guides ADD COLUMN IF NOT EXISTS supported_activities JSONB DEFAULT '[]';
+
+
 

@@ -5,7 +5,9 @@ import { sendSuccess, sendError } from '../../shared/response';
 export class TourismController {
   public static getAllDestinations(req: Request, res: Response) {
     try {
-      const destinations = TourismService.getAllDestinations();
+      const includeDrafts = req.query.includeDrafts === 'true';
+      const category = req.query.category as string | undefined;
+      const destinations = TourismService.getAllDestinations({ includeDrafts, category });
       return sendSuccess(res, destinations);
     } catch (err: any) {
       return sendError(res, 'FETCH_DESTINATIONS_FAILED', err.message, 500);
@@ -24,9 +26,10 @@ export class TourismController {
   public static getAllPackages(req: Request, res: Response) {
     try {
       const destinationId = req.query.destinationId as string;
+      const includeDrafts = req.query.includeDrafts === 'true';
       const packages = destinationId
-        ? TourismService.getPackagesByDestination(destinationId)
-        : TourismService.getAllPackages();
+        ? TourismService.getPackagesByDestination(destinationId, { includeDrafts })
+        : TourismService.getAllPackages({ includeDrafts });
       return sendSuccess(res, packages);
     } catch (err: any) {
       return sendError(res, 'FETCH_PACKAGES_FAILED', err.message, 500);
@@ -42,10 +45,10 @@ export class TourismController {
     }
   }
 
-  public static createBooking(req: Request, res: Response) {
+  public static async createBooking(req: Request, res: Response) {
     try {
       const customerId = (req as any).user?.userId || req.body.customerId;
-      const booking = TourismService.createBooking({
+      const booking = await TourismService.createBooking({
         ...req.body,
         customerId,
       });
@@ -77,54 +80,72 @@ export class TourismController {
   // -----------------------------------------------------------
   // Admin Endpoints
   // -----------------------------------------------------------
-  public static createDestination(req: Request, res: Response) {
+  public static async createDestination(req: Request, res: Response) {
     try {
-      const destination = TourismService.createDestination(req.body);
+      const destination = await TourismService.createDestination(req.body);
       return sendSuccess(res, destination, 201);
     } catch (err: any) {
       return sendError(res, 'CREATE_DESTINATION_FAILED', err.message, 400);
     }
   }
 
-  public static updateDestination(req: Request, res: Response) {
+  public static async updateDestination(req: Request, res: Response) {
     try {
-      const destination = TourismService.updateDestination(req.params.id, req.body);
+      const destination = await TourismService.updateDestination(req.params.id, req.body);
       return sendSuccess(res, destination);
     } catch (err: any) {
       return sendError(res, 'UPDATE_DESTINATION_FAILED', err.message, 400);
     }
   }
 
-  public static deleteDestination(req: Request, res: Response) {
+  public static async duplicateDestination(req: Request, res: Response) {
     try {
-      const result = TourismService.deleteDestination(req.params.id);
+      const destination = await TourismService.duplicateDestination(req.params.id);
+      return sendSuccess(res, destination, 201);
+    } catch (err: any) {
+      return sendError(res, 'DUPLICATE_DESTINATION_FAILED', err.message, 400);
+    }
+  }
+
+  public static async deleteDestination(req: Request, res: Response) {
+    try {
+      const result = await TourismService.deleteDestination(req.params.id);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'DELETE_DESTINATION_FAILED', err.message, 400);
     }
   }
 
-  public static createPackage(req: Request, res: Response) {
+  public static async createPackage(req: Request, res: Response) {
     try {
-      const pkg = TourismService.createPackage(req.body);
+      const pkg = await TourismService.createPackage(req.body);
       return sendSuccess(res, pkg, 201);
     } catch (err: any) {
       return sendError(res, 'CREATE_PACKAGE_FAILED', err.message, 400);
     }
   }
 
-  public static updatePackage(req: Request, res: Response) {
+  public static async updatePackage(req: Request, res: Response) {
     try {
-      const pkg = TourismService.updatePackage(req.params.id, req.body);
+      const pkg = await TourismService.updatePackage(req.params.id, req.body);
       return sendSuccess(res, pkg);
     } catch (err: any) {
       return sendError(res, 'UPDATE_PACKAGE_FAILED', err.message, 400);
     }
   }
 
-  public static deletePackage(req: Request, res: Response) {
+  public static async duplicatePackage(req: Request, res: Response) {
     try {
-      const result = TourismService.deletePackage(req.params.id);
+      const pkg = await TourismService.duplicatePackage(req.params.id);
+      return sendSuccess(res, pkg, 201);
+    } catch (err: any) {
+      return sendError(res, 'DUPLICATE_PACKAGE_FAILED', err.message, 400);
+    }
+  }
+
+  public static async deletePackage(req: Request, res: Response) {
+    try {
+      const result = await TourismService.deletePackage(req.params.id);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'DELETE_PACKAGE_FAILED', err.message, 400);

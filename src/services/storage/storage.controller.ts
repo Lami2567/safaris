@@ -103,4 +103,33 @@ export class StorageController {
       });
     }
   }
+
+  /**
+   * POST /api/v1/storage/validate-media-url
+   * Request body: { url: string, expectedCategory?: 'IMAGE' | 'VIDEO' | 'AUDIO' }
+   * Validates external or Cloudflare R2 media URLs for Rich-Text & Inline Multimedia Content blocks.
+   */
+  public static async validateMediaUrl(req: Request, res: Response): Promise<void> {
+    try {
+      const { url, expectedCategory } = req.body;
+      const validation = StorageService.validateMediaUrl(url, expectedCategory);
+      if (!validation.valid) {
+        res.status(400).json({
+          success: false,
+          error: validation.reason || 'Invalid media URL.',
+          data: validation,
+        });
+        return;
+      }
+      res.status(200).json({
+        success: true,
+        data: validation,
+      });
+    } catch (err: any) {
+      res.status(400).json({
+        success: false,
+        error: err.message || 'Failed to validate media URL.',
+      });
+    }
+  }
 }

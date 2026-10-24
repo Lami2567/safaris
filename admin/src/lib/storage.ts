@@ -18,6 +18,16 @@ export interface PresignedUploadTicket {
   key: string;
   expiresIn: number;
   fileType: string;
+  mediaCategory?: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
+}
+
+export interface MediaUrlValidationResult {
+  valid: boolean;
+  url: string;
+  mediaCategory: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'EXTERNAL_STREAM';
+  provider: 'CLOUDFLARE_R2' | 'YOUTUBE' | 'VIMEO' | 'DIRECT_CDN';
+  mimeType: string;
+  reason?: string;
 }
 
 export interface StorageStatus {
@@ -27,9 +37,42 @@ export interface StorageStatus {
   accessKeySet: boolean;
   publicUrlConfigured: boolean;
   publicBaseUrl: string;
+  supportedMediaCategories?: string[];
 }
 
 export type StorageFolder = 'banners' | 'tourism' | 'places' | 'fleet' | 'careers' | 'documents' | 'general';
+
+/**
+ * Validate an external or Cloudflare R2 media URL via the backend validator.
+ */
+export async function validateExternalMediaUrl(
+  url: string,
+  expectedCategory?: 'IMAGE' | 'VIDEO' | 'AUDIO'
+): Promise<MediaUrlValidationResult> {
+  const apiBase = getApiBase();
+  const res = await fetch(`${apiBase}/storage/validate-media-url`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, expectedCategory }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.success) {
+    throw new Error(json.error || 'Invalid media URL');
+  }
+  return json.data;
+}
+
+/**
+ * Upload any supported media file (Image, Video, Audio/Voice Recording, or PDF Document)
+ * directly to Cloudflare R2 via presigned PUT URL (with server relay fallback).
+ */
+export async function uploadMediaToR2(
+  file: File,
+  folder: StorageFolder = 'tourism',
+  onProgress?: (percent: number) => void
+): Promise<string> {
+  return uploadImageToR2(file, folder, onProgress);
+}
 
 /**
  * Check if Cloudflare R2 storage is configured on the backend.

@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "usr_drv_test_1",
+    "is_online": true,
+    "is_available": false,
+    "is_approved": true,
+    "approval_status": "APPROVED",
+    "today_earnings_ugx": 99960,
+    "updated_at": "2026-10-24T17:55:37.911Z"
+  }
+]

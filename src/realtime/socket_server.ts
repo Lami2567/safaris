@@ -398,5 +398,10 @@ export function broadcastFinancialOverview(overview: any, event = 'financial:kpi
   emitToRoom('admin:financials', event, overview);
 }
 
+export function broadcastConfigUpdate(payload: any, event = 'config:update') {
+  broadcast(event, payload);
+  emitToRoom('admin:pricing', event, payload);
+}
+
 
 

@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "id": "usr_gd_test_1",
+    "full_name": "Sarah Akello",
+    "is_approved": true,
+    "approval_status": "APPROVED",
+    "is_available": true,
+    "daily_rate_ugx": 200000,
+    "expeditions_count": 1,
+    "updated_at": "2026-10-24T17:55:37.871Z"
+  }
+]

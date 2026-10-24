@@ -50,6 +50,10 @@ export const localStore = {
   reconciliation_runs: new Map<string, any>(),
   reconciliation_discrepancies: new Map<string, any>(),
   financial_audit_logs: new Map<string, any>(),
+  catalogue_vehicles: new Map<string, any>(),
+  service_pricing_rules: new Map<string, any>(),
+  price_quotations: new Map<string, any>(),
+  destination_media: new Map<string, any>(),
 };
 
 function resolveCandidatePaths(fileName: string): string[] {
@@ -75,6 +79,10 @@ const PERSISTENT_REFUND_POLICIES_FILES = resolveCandidatePaths('persistent_refun
 const PERSISTENT_REFUNDS_FILES = resolveCandidatePaths('persistent_refunds.json');
 const PERSISTENT_PLATFORM_EARNINGS_FILES = resolveCandidatePaths('persistent_platform_earnings.json');
 const PERSISTENT_FIN_ADJUSTMENTS_FILES = resolveCandidatePaths('persistent_financial_adjustments.json');
+const PERSISTENT_CATALOGUE_VEHICLES_FILES = resolveCandidatePaths('persistent_catalogue_vehicles.json');
+const PERSISTENT_SERVICE_PRICING_FILES = resolveCandidatePaths('persistent_service_pricing_rules.json');
+const PERSISTENT_PRICE_QUOTATIONS_FILES = resolveCandidatePaths('persistent_price_quotations.json');
+const PERSISTENT_DESTINATION_MEDIA_FILES = resolveCandidatePaths('persistent_destination_media.json');
 
 class DatabaseManager {
   private pool: Pool | null = null;
@@ -199,6 +207,10 @@ class DatabaseManager {
     this.loadTableFromDisk(PERSISTENT_REFUNDS_FILES, localStore.refunds, 'refunds');
     this.loadTableFromDisk(PERSISTENT_PLATFORM_EARNINGS_FILES, localStore.platform_earnings, 'platform_earnings');
     this.loadTableFromDisk(PERSISTENT_FIN_ADJUSTMENTS_FILES, localStore.financial_adjustments, 'financial_adjustments');
+    this.loadTableFromDisk(PERSISTENT_CATALOGUE_VEHICLES_FILES, localStore.catalogue_vehicles, 'catalogue_vehicles');
+    this.loadTableFromDisk(PERSISTENT_SERVICE_PRICING_FILES, localStore.service_pricing_rules, 'service_pricing_rules');
+    this.loadTableFromDisk(PERSISTENT_PRICE_QUOTATIONS_FILES, localStore.price_quotations, 'price_quotations');
+    this.loadTableFromDisk(PERSISTENT_DESTINATION_MEDIA_FILES, localStore.destination_media, 'destination_media');
   }
 
   public saveAllToDisk(): void {
@@ -216,6 +228,10 @@ class DatabaseManager {
     this.saveTableToDisk(PERSISTENT_REFUNDS_FILES, localStore.refunds);
     this.saveTableToDisk(PERSISTENT_PLATFORM_EARNINGS_FILES, localStore.platform_earnings);
     this.saveTableToDisk(PERSISTENT_FIN_ADJUSTMENTS_FILES, localStore.financial_adjustments);
+    this.saveTableToDisk(PERSISTENT_CATALOGUE_VEHICLES_FILES, localStore.catalogue_vehicles);
+    this.saveTableToDisk(PERSISTENT_SERVICE_PRICING_FILES, localStore.service_pricing_rules);
+    this.saveTableToDisk(PERSISTENT_PRICE_QUOTATIONS_FILES, localStore.price_quotations);
+    this.saveTableToDisk(PERSISTENT_DESTINATION_MEDIA_FILES, localStore.destination_media);
   }
 
   public async loadAllFromPostgres(): Promise<void> {
@@ -517,6 +533,89 @@ class DatabaseManager {
         }
       } catch (err) {
         console.warn('[Database] Financial adjustments sync notice:', err);
+      }
+
+      // 15b. Catalogue Vehicles
+      try {
+        localStore.catalogue_vehicles.clear();
+        const cvRes = await this.pool.query('SELECT * FROM catalogue_vehicles ORDER BY display_order ASC, created_at ASC');
+        if (cvRes?.rows?.length > 0) {
+          for (const row of cvRes.rows) {
+            localStore.catalogue_vehicles.set(row.id, {
+              ...row,
+              passenger_capacity: parseInt(row.passenger_capacity || '4', 10),
+              luggage_capacity: parseInt(row.luggage_capacity || '2', 10),
+              max_weight_kg: parseFloat(row.max_weight_kg || '50'),
+              eta_minutes: parseInt(row.eta_minutes || '5', 10),
+              is_available: row.is_available !== false,
+              is_active: row.is_active !== false,
+              display_order: parseInt(row.display_order || '0', 10),
+              pricing_version: parseInt(row.pricing_version || '1', 10),
+              assigned_services: Array.isArray(row.assigned_services) ? row.assigned_services : [],
+              service_pricing: row.service_pricing || {},
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Catalogue vehicles sync notice:', err);
+      }
+
+      // 15c. Service Pricing Rules
+      try {
+        localStore.service_pricing_rules.clear();
+        const sprRes = await this.pool.query('SELECT * FROM service_pricing_rules');
+        if (sprRes?.rows?.length > 0) {
+          for (const row of sprRes.rows) {
+            localStore.service_pricing_rules.set(row.service_key, {
+              id: row.service_key,
+              service_key: row.service_key,
+              config: row.config || {},
+              pricing_version: parseInt(row.pricing_version || '1', 10),
+              updated_by: row.updated_by || 'ADMIN',
+              updated_at: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Service pricing rules sync notice:', err);
+      }
+
+      // 15d. Price Quotations
+      try {
+        localStore.price_quotations.clear();
+        const pqRes = await this.pool.query('SELECT * FROM price_quotations ORDER BY created_at DESC LIMIT 500');
+        if (pqRes?.rows?.length > 0) {
+          for (const row of pqRes.rows) {
+            localStore.price_quotations.set(row.id, {
+              ...row,
+              base_price_ugx: Number(row.base_price_ugx || 0),
+              distance_price_ugx: Number(row.distance_price_ugx || 0),
+              vehicle_charge_ugx: Number(row.vehicle_charge_ugx || 0),
+              tourist_count_charge_ugx: Number(row.tourist_count_charge_ugx || 0),
+              tour_guide_fee_ugx: Number(row.tour_guide_fee_ugx || 0),
+              additional_charges_ugx: Number(row.additional_charges_ugx || 0),
+              discounts_ugx: Number(row.discounts_ugx || 0),
+              taxes_ugx: Number(row.taxes_ugx || 0),
+              total_price_ugx: Number(row.total_price_ugx || 0),
+              pricing_version: parseInt(row.pricing_version || '1', 10),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Price quotations sync notice:', err);
+      }
+
+      // 15e. Destination Media
+      try {
+        localStore.destination_media.clear();
+        const dmRes = await this.pool.query('SELECT * FROM destination_media ORDER BY display_order ASC, created_at ASC');
+        if (dmRes?.rows?.length > 0) {
+          for (const row of dmRes.rows) {
+            localStore.destination_media.set(row.id, row);
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Destination media sync notice:', err);
       }
 
       // 16. Auto-reconcile any driver applications or driver users missing from drivers/vehicles tables
@@ -1298,6 +1397,197 @@ class DatabaseManager {
       }
     }
     this.saveTableToDisk(PERSISTENT_FIN_ADJUSTMENTS_FILES, localStore.financial_adjustments);
+  }
+
+  public async persistCatalogueVehicle(veh: any): Promise<void> {
+    if (!veh || !veh.id) return;
+    localStore.catalogue_vehicles.set(veh.id, veh);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO catalogue_vehicles (
+             id, code, name, category, make, model, description, image_url,
+             icon_name, passenger_capacity, luggage_capacity, max_weight_kg,
+             eta_minutes, is_available, is_active, display_order,
+             assigned_services, service_pricing, pricing_version, created_at, updated_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+             $17, $18, $19, $20, CURRENT_TIMESTAMP
+           ) ON CONFLICT (id) DO UPDATE SET
+             code = EXCLUDED.code,
+             name = EXCLUDED.name,
+             category = EXCLUDED.category,
+             make = EXCLUDED.make,
+             model = EXCLUDED.model,
+             description = EXCLUDED.description,
+             image_url = EXCLUDED.image_url,
+             icon_name = EXCLUDED.icon_name,
+             passenger_capacity = EXCLUDED.passenger_capacity,
+             luggage_capacity = EXCLUDED.luggage_capacity,
+             max_weight_kg = EXCLUDED.max_weight_kg,
+             eta_minutes = EXCLUDED.eta_minutes,
+             is_available = EXCLUDED.is_available,
+             is_active = EXCLUDED.is_active,
+             display_order = EXCLUDED.display_order,
+             assigned_services = EXCLUDED.assigned_services,
+             service_pricing = EXCLUDED.service_pricing,
+             pricing_version = EXCLUDED.pricing_version,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            veh.id,
+            veh.code || veh.id,
+            veh.name,
+            veh.category || 'Sedan / Economy',
+            veh.make || '',
+            veh.model || '',
+            veh.description || '',
+            veh.image_url || '',
+            veh.icon_name || 'directions_car',
+            Number(veh.passenger_capacity ?? 4),
+            Number(veh.luggage_capacity ?? 2),
+            Number(veh.max_weight_kg ?? 50),
+            Number(veh.eta_minutes ?? 5),
+            veh.is_available !== false,
+            veh.is_active !== false,
+            Number(veh.display_order ?? 0),
+            JSON.stringify(Array.isArray(veh.assigned_services) ? veh.assigned_services : []),
+            JSON.stringify(veh.service_pricing || {}),
+            Number(veh.pricing_version ?? 1),
+            veh.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistCatalogueVehicle PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_CATALOGUE_VEHICLES_FILES, localStore.catalogue_vehicles);
+  }
+
+  public async deleteCatalogueVehicle(id: string): Promise<void> {
+    localStore.catalogue_vehicles.delete(id);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query('DELETE FROM catalogue_vehicles WHERE id = $1', [id]);
+      } catch (err) {
+        console.warn('[Database] deleteCatalogueVehicle PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_CATALOGUE_VEHICLES_FILES, localStore.catalogue_vehicles);
+  }
+
+  public async persistServicePricingRule(rule: any): Promise<void> {
+    if (!rule || !rule.service_key) return;
+    const record = { ...rule, id: rule.service_key };
+    localStore.service_pricing_rules.set(rule.service_key, record);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO service_pricing_rules (service_key, config, pricing_version, updated_by, updated_at)
+           VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+           ON CONFLICT (service_key) DO UPDATE SET
+             config = EXCLUDED.config,
+             pricing_version = EXCLUDED.pricing_version,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            rule.service_key,
+            JSON.stringify(rule.config || {}),
+            Number(rule.pricing_version ?? 1),
+            rule.updated_by || 'ADMIN',
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistServicePricingRule PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_SERVICE_PRICING_FILES, localStore.service_pricing_rules);
+  }
+
+  public async persistPriceQuotation(quote: any): Promise<void> {
+    if (!quote || !quote.id) return;
+    localStore.price_quotations.set(quote.id, quote);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO price_quotations (
+             id, service_type, reference_id, vehicle_id, guide_id, guest_count,
+             distance_km, weight_kg, base_price_ugx, distance_price_ugx,
+             vehicle_charge_ugx, tourist_count_charge_ugx, tour_guide_fee_ugx,
+             additional_charges_ugx, discounts_ugx, taxes_ugx, total_price_ugx,
+             currency, pricing_version, breakdown, request_params, expires_at, created_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+             $17, $18, $19, $20, $21, $22, $23
+           ) ON CONFLICT (id) DO NOTHING`,
+          [
+            quote.id,
+            quote.service_type,
+            quote.reference_id || null,
+            quote.vehicle_id || null,
+            quote.guide_id || null,
+            Number(quote.guest_count ?? 1),
+            Number(quote.distance_km ?? 0),
+            Number(quote.weight_kg ?? 0),
+            Number(quote.base_price_ugx ?? 0),
+            Number(quote.distance_price_ugx ?? 0),
+            Number(quote.vehicle_charge_ugx ?? 0),
+            Number(quote.tourist_count_charge_ugx ?? 0),
+            Number(quote.tour_guide_fee_ugx ?? 0),
+            Number(quote.additional_charges_ugx ?? 0),
+            Number(quote.discounts_ugx ?? 0),
+            Number(quote.taxes_ugx ?? 0),
+            Number(quote.total_price_ugx ?? 0),
+            quote.currency || 'UGX',
+            Number(quote.pricing_version ?? 1),
+            JSON.stringify(quote.breakdown || []),
+            JSON.stringify(quote.request_params || {}),
+            quote.expires_at || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            quote.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistPriceQuotation PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_PRICE_QUOTATIONS_FILES, localStore.price_quotations);
+  }
+
+  public async persistDestinationMedia(media: any): Promise<void> {
+    if (!media || !media.id) return;
+    localStore.destination_media.set(media.id, media);
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO destination_media (
+             id, owner_type, owner_id, media_type, source_type, url, r2_key,
+             mime_type, title, caption, display_order, created_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT (id) DO UPDATE SET
+             url = EXCLUDED.url,
+             r2_key = EXCLUDED.r2_key,
+             title = EXCLUDED.title,
+             caption = EXCLUDED.caption,
+             display_order = EXCLUDED.display_order`,
+          [
+            media.id,
+            media.owner_type || 'DESTINATION',
+            media.owner_id,
+            media.media_type || 'IMAGE',
+            media.source_type || 'CLOUDFLARE_R2',
+            media.url,
+            media.r2_key || null,
+            media.mime_type || 'image/jpeg',
+            media.title || '',
+            media.caption || '',
+            Number(media.display_order ?? 0),
+            media.created_at || new Date().toISOString(),
+          ]
+        );
+      } catch (err) {
+        console.warn('[Database] persistDestinationMedia PostgreSQL notice:', err);
+      }
+    }
+    this.saveTableToDisk(PERSISTENT_DESTINATION_MEDIA_FILES, localStore.destination_media);
   }
 
   public async query(text: string, params?: any[]): Promise<QueryResult<any> | any> {

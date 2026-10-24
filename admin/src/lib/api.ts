@@ -49,15 +49,24 @@ export const api = {
   updatePaymentMethods: (paymentMethods: any[]) => fetcher<any>('/app-config/payment-methods', { method: 'PUT', body: JSON.stringify({ paymentMethods }) }),
 
   // Destinations
-  getDestinations: () => fetcher<any[]>('/tourism/destinations'),
+  getDestinations: (includeDrafts = true) =>
+    fetcher<any[]>(`/tourism/destinations${includeDrafts ? '?includeDrafts=true' : ''}`),
   createDestination: (data: any) => fetcher<any>('/tourism/destinations', { method: 'POST', body: JSON.stringify(data) }),
   updateDestination: (id: string, data: any) => fetcher<any>(`/tourism/destinations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  duplicateDestination: (id: string) => fetcher<any>(`/tourism/destinations/${id}/duplicate`, { method: 'POST' }),
   deleteDestination: (id: string) => fetcher<any>(`/tourism/destinations/${id}`, { method: 'DELETE' }),
 
   // Tour Packages
-  getPackages: (destinationId?: string) => fetcher<any[]>(destinationId ? `/tourism/packages?destinationId=${destinationId}` : '/tourism/packages'),
+  getPackages: (destinationId?: string, includeDrafts = true) => {
+    const q = new URLSearchParams();
+    if (destinationId) q.set('destinationId', destinationId);
+    if (includeDrafts) q.set('includeDrafts', 'true');
+    const qs = q.toString();
+    return fetcher<any[]>(`/tourism/packages${qs ? `?${qs}` : ''}`);
+  },
   createPackage: (data: any) => fetcher<any>('/tourism/packages', { method: 'POST', body: JSON.stringify(data) }),
   updatePackage: (id: string, data: any) => fetcher<any>(`/tourism/packages/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  duplicatePackage: (id: string) => fetcher<any>(`/tourism/packages/${id}/duplicate`, { method: 'POST' }),
   deletePackage: (id: string) => fetcher<any>(`/tourism/packages/${id}`, { method: 'DELETE' }),
 
   // Tour Guides
@@ -69,10 +78,31 @@ export const api = {
   // Bookings
   getBookings: () => fetcher<any[]>('/tourism/bookings'),
   updateBookingStatus: (id: string, status: string) => fetcher<any>(`/tourism/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  assignGuideToBooking: (id: string, guideId: string) =>
+    fetcher<any>(`/tourism/bookings/${id}/assign-guide`, { method: 'PUT', body: JSON.stringify({ guideId }) }),
 
-  // Pricing Matrix
+  // Pricing Matrix, Centralized Vehicle Catalogue & Server Quotation Engine
   getPricing: () => fetcher<any>('/admin/pricing'),
   updatePricing: (pricing: any) => fetcher<any>('/admin/pricing', { method: 'PUT', body: JSON.stringify(pricing) }),
+  getCatalogueVehicles: (params?: { service?: string; includeInactive?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params?.service) q.set('service', params.service);
+    if (params?.includeInactive !== false) q.set('includeInactive', 'true');
+    const qs = q.toString();
+    return fetcher<any[]>(`/catalogue/vehicles${qs ? `?${qs}` : ''}`);
+  },
+  upsertCatalogueVehicle: (data: any) =>
+    fetcher<any>(data.id ? `/admin/catalogue/vehicles/${data.id}` : '/admin/catalogue/vehicles', {
+      method: data.id ? 'PUT' : 'POST',
+      body: JSON.stringify(data),
+    }),
+  deleteCatalogueVehicle: (id: string) =>
+    fetcher<any>(`/admin/catalogue/vehicles/${id}`, { method: 'DELETE' }),
+  getServicePricingRules: () => fetcher<any>('/pricing/rules'),
+  updateServicePricingRule: (serviceKey: string, data: any) =>
+    fetcher<any>(`/admin/pricing/rules/${serviceKey}`, { method: 'PUT', body: JSON.stringify(data) }),
+  calculateQuote: (data: any) =>
+    fetcher<any>('/pricing/quote', { method: 'POST', body: JSON.stringify(data) }),
 
   // Operations Monitors
   getTrips: () => fetcher<any[]>('/admin/trips'),
@@ -82,6 +112,8 @@ export const api = {
 
   // Real-Time Fleet Telemetry & Audit Logs
   getLiveFleet: () => fetcher<any[]>('/admin/live-fleet'),
+  getLiveFleetStreamUrl: () => `${getApiBase()}/telemetry/live/stream`,
+  getPartnerStreamUrl: (token?: string) => `${getApiBase()}/telemetry/partner/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`,
   getDriverHistory: (driverId: string, date?: string) =>
     fetcher<any>(`/telemetry/drivers/${driverId}/history${date ? `?date=${date}` : ''}`),
   getTripHistory: (tripId: string) => fetcher<any>(`/telemetry/trips/${tripId}/history`),
@@ -108,14 +140,61 @@ export const api = {
     fetcher<any>(`/admin/applicants/${id}/suspend`, { method: 'POST', body: JSON.stringify({ reason }) }),
 
   // Admin Account & Password Management
+  getAdminAuthStatus: () => fetcher<any>('/admin/auth-status'),
+  adminLogin: (data: any) => fetcher<any>('/admin/login', { method: 'POST', body: JSON.stringify(data) }),
+  setupAdminCredentials: (data: any) =>
+    fetcher<any>('/admin/setup-credentials', { method: 'POST', body: JSON.stringify(data) }),
   changeAdminPassword: (data: { currentPassword: string; newPassword: string }) =>
     fetcher<any>('/admin/change-password', { method: 'POST', body: JSON.stringify(data) }),
 
   // Partner & Driver OTP Login and Live Dashboard
+  loginPartner: (email: string, password?: string) =>
+    fetcher<any>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   loginWithOtp: (email: string, otpCode: string) =>
     fetcher<any>('/auth/login-with-otp', { method: 'POST', body: JSON.stringify({ email, otpCode }) }),
   setupPassword: (email: string, setupToken: string, newPassword: string) =>
     fetcher<any>('/auth/setup-password', { method: 'POST', body: JSON.stringify({ email, setupToken, newPassword }) }),
+  getGuideDashboard: (token?: string) =>
+    fetcher<any>('/guides/dashboard', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  setGuideAvailability: (isAvailable: boolean, token?: string) =>
+    fetcher<any>('/guides/availability', {
+      method: 'POST',
+      body: JSON.stringify({ isAvailable }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  getPartnerNotifications: (partnerId: string, token?: string) =>
+    fetcher<any[]>(`/notifications/partner/${partnerId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  acceptTrip: (tripId: string, token?: string) =>
+    fetcher<any>(`/trips/${tripId}/accept`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  rejectTrip: (tripId: string, token?: string) =>
+    fetcher<any>(`/trips/${tripId}/reject`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  updateTripStatus: (tripId: string, status: string, token?: string) =>
+    fetcher<any>(`/trips/${tripId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  updatePartnerBookingStatus: (bookingId: string, status: string, token?: string) =>
+    fetcher<any>(`/tourism/bookings/${bookingId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
+  driverCashOut: (token?: string) =>
+    fetcher<any>('/drivers/cashout', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }),
   updateDriverLocation: (lat: number, lng: number, heading = 0, token?: string) =>
     fetcher<any>('/drivers/location', {
       method: 'POST',

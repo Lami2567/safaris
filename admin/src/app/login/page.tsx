@@ -11,7 +11,7 @@ export default function LoginPage() {
   useEffect(() => {
     api
       .getAdminAuthStatus()
-      .then((status) => {
+      .then((status: any) => {
         // Login should only appear after setting credentials in the admin panel
         if (!status.configured || status.authenticated) {
           router.replace('/');

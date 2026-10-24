@@ -16,6 +16,7 @@ import { AdminAuditController } from '../services/admin/audit.controller';
 import { StorageController } from '../services/storage/storage.controller';
 import { CareerController } from '../services/career/career.controller';
 import { FinancialController } from '../services/financial/financial.controller';
+import { PricingEngineController } from '../services/pricing/pricing_engine.controller';
 import { authenticate, requireRole } from './auth_middleware';
 
 export const apiRouter = Router();
@@ -37,7 +38,22 @@ apiRouter.get('/health', (req, res) => {
 // -------------------------------------------------------------
 apiRouter.post('/storage/upload-url', StorageController.getPresignedUploadUrl);
 apiRouter.post('/storage/upload', StorageController.uploadDirect);
+apiRouter.post('/storage/validate-media-url', StorageController.validateMediaUrl);
 apiRouter.get('/storage/status', StorageController.getStatus);
+
+// -------------------------------------------------------------
+// Centralized Vehicle Catalogue & Server-Side Pricing Engine
+// -------------------------------------------------------------
+apiRouter.get('/catalogue/vehicles', PricingEngineController.getCatalogueVehicles);
+apiRouter.post('/admin/catalogue/vehicles', authenticate, requireRole('admin'), PricingEngineController.upsertCatalogueVehicle);
+apiRouter.put('/admin/catalogue/vehicles/:id', authenticate, requireRole('admin'), PricingEngineController.upsertCatalogueVehicle);
+apiRouter.delete('/admin/catalogue/vehicles/:id', authenticate, requireRole('admin'), PricingEngineController.deleteCatalogueVehicle);
+
+apiRouter.get('/pricing/rules', PricingEngineController.getServicePricingRules);
+apiRouter.put('/admin/pricing/rules/:serviceKey', authenticate, requireRole('admin'), PricingEngineController.updateServicePricingRule);
+
+apiRouter.post('/pricing/quote', PricingEngineController.calculateQuote);
+apiRouter.get('/pricing/quote/:quotationId', PricingEngineController.getQuotation);
 
 // -------------------------------------------------------------
 // Careers Portal Integration (careers.mumwesafarisuganda.com)
@@ -142,12 +158,14 @@ apiRouter.get('/tourism/destinations', TourismController.getAllDestinations);
 apiRouter.get('/tourism/destinations/:id', TourismController.getDestinationById);
 apiRouter.post('/tourism/destinations', TourismController.createDestination);
 apiRouter.put('/tourism/destinations/:id', TourismController.updateDestination);
+apiRouter.post('/tourism/destinations/:id/duplicate', TourismController.duplicateDestination);
 apiRouter.delete('/tourism/destinations/:id', TourismController.deleteDestination);
 
 apiRouter.get('/tourism/packages', TourismController.getAllPackages);
 apiRouter.get('/tourism/packages/:id', TourismController.getPackageById);
 apiRouter.post('/tourism/packages', TourismController.createPackage);
 apiRouter.put('/tourism/packages/:id', TourismController.updatePackage);
+apiRouter.post('/tourism/packages/:id/duplicate', TourismController.duplicatePackage);
 apiRouter.delete('/tourism/packages/:id', TourismController.deletePackage);
 
 apiRouter.post('/tourism/bookings', authenticate, TourismController.createBooking);

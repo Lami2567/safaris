@@ -66,6 +66,7 @@ app.get('/health/ready', async (req, res) => {
 import { AppConfigService } from './services/app_config/app_config.service';
 import { TourismService } from './services/tourism/tourism.service';
 import { TourGuideService } from './services/tour_guide/tour_guide.service';
+import { PricingEngineService } from './services/pricing/pricing_engine.service';
 import { PaymentService } from './services/payment/payment.service';
 import { FinancialService } from './services/financial/financial.service';
 import { FinancialOutboxService } from './services/financial/outbox.service';
@@ -88,6 +89,7 @@ async function startServer() {
 
   // Load persistent configurations, destinations, packages, and tour guides
   try {
+    await PricingEngineService.init();
     await AppConfigService.init();
     await TourismService.init();
     await TourGuideService.init();

@@ -300,7 +300,7 @@ export class TourGuideService {
   public static async createGuide(data: any) {
     const id = data.id || `usr_gd_${Date.now().toString().slice(-6)}`;
     const avatarUrl = data.avatar_url || data.avatarUrl || '';
-    const fullName = data.full_name || data.fullName || 'Safari Specialist';
+    const fullName = data.full_name || data.fullName || data.name || 'Safari Specialist';
     const rating = Number(data.rating || 4.95);
     const phone = data.phone || '+256 700 000000';
 
@@ -314,19 +314,42 @@ export class TourGuideService {
       rating,
       total_trips: Number(data.total_trips || data.expeditions_count || 0),
       is_verified: data.is_uwa_certified !== false,
+      approval_status: 'APPROVED',
       created_at: new Date().toISOString(),
     };
     localStore.users.set(id, user);
+
+    const dailyRateUgx = Number(data.daily_rate_ugx || data.dailyRateUgx || data.pricePerDayUgx || 150000);
+    const multiDayRateUgx = Number(data.multi_day_rate_ugx || data.multiDayRateUgx || Math.round(dailyRateUgx * 0.9));
 
     const guideProfile = {
       id,
       title: data.title || 'Uganda Wildlife Guide',
       bio: data.bio || '',
-      languages: Array.isArray(data.languages) ? data.languages : (data.languages ? data.languages.split(',').map((l: string) => l.trim()) : ['English']),
-      specialties: Array.isArray(data.specialties) ? data.specialties : (data.specialties ? data.specialties.split(',').map((s: string) => s.trim()) : ['Uganda Safaris']),
-      daily_rate_ugx: Number(data.daily_rate_ugx || data.dailyRateUgx || 150000),
-      is_uwa_certified: data.is_uwa_certified !== false,
-      is_available: data.is_available !== false,
+      languages: Array.isArray(data.languages)
+        ? data.languages
+        : data.languages
+        ? String(data.languages).split(',').map((l: string) => l.trim()).filter(Boolean)
+        : ['English'],
+      specialties: Array.isArray(data.specialties)
+        ? data.specialties
+        : data.specialties
+        ? String(data.specialties).split(',').map((s: string) => s.trim()).filter(Boolean)
+        : ['Uganda Safaris'],
+      daily_rate_ugx: dailyRateUgx,
+      multi_day_rate_ugx: multiDayRateUgx,
+      fixed_tour_fee_ugx: Number(data.fixed_tour_fee_ugx || data.fixedTourFeeUgx || 0),
+      group_size_surcharge_ugx: Number(data.group_size_surcharge_ugx || data.groupSizeSurchargeUgx || 0),
+      supported_destination_ids: Array.isArray(data.supported_destination_ids || data.supportedDestinationIds)
+        ? data.supported_destination_ids || data.supportedDestinationIds
+        : [],
+      supported_activities: Array.isArray(data.supported_activities || data.supportedActivities)
+        ? data.supported_activities || data.supportedActivities
+        : [],
+      is_uwa_certified: data.is_uwa_certified !== false && data.isCertified !== false,
+      is_available: data.is_available !== false && data.isAvailable !== false,
+      is_approved: data.is_approved !== undefined ? Boolean(data.is_approved) : true,
+      approval_status: data.approval_status || 'APPROVED',
       expeditions_count: Number(data.expeditions_count || data.expeditionsCount || 0),
       avatar_url: avatarUrl,
       full_name: fullName,
@@ -339,27 +362,38 @@ export class TourGuideService {
     if (db.isPostgresConnected) {
       try {
         await db.query(`
-          INSERT INTO users (id, full_name, phone, email, password_hash, role, avatar_url, rating, total_trips, is_verified)
-          VALUES ($1, $2, $3, $4, '$2a$10$wVb7P3m6a0c0o.NnB0xWd.Xk/t2/b61R578kZ1sHqN1R31q123456', 'tour_guide', $5, $6, $7, $8)
+          INSERT INTO users (id, full_name, phone, email, password_hash, role, avatar_url, rating, total_trips, is_verified, approval_status)
+          VALUES ($1, $2, $3, $4, '$2a$10$wVb7P3m6a0c0o.NnB0xWd.Xk/t2/b61R578kZ1sHqN1R31q123456', 'tour_guide', $5, $6, $7, $8, 'APPROVED')
           ON CONFLICT (id) DO UPDATE SET
             full_name = EXCLUDED.full_name,
             phone = EXCLUDED.phone,
             avatar_url = EXCLUDED.avatar_url,
-            rating = EXCLUDED.rating
+            rating = EXCLUDED.rating,
+            approval_status = EXCLUDED.approval_status
         `, [id, fullName, phone, user.email, avatarUrl, rating, user.total_trips, user.is_verified]);
 
         await db.query(`
           INSERT INTO tour_guides (
-            id, title, bio, languages, specialties, daily_rate_ugx, is_uwa_certified, is_available, expeditions_count, avatar_url, full_name, rating, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
+            id, title, bio, languages, specialties, daily_rate_ugx, multi_day_rate_ugx,
+            fixed_tour_fee_ugx, group_size_surcharge_ugx, supported_destination_ids, supported_activities,
+            is_uwa_certified, is_available, is_approved, approval_status,
+            expeditions_count, avatar_url, full_name, rating, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, CURRENT_TIMESTAMP)
           ON CONFLICT (id) DO UPDATE SET
             title = EXCLUDED.title,
             bio = EXCLUDED.bio,
             languages = EXCLUDED.languages,
             specialties = EXCLUDED.specialties,
             daily_rate_ugx = EXCLUDED.daily_rate_ugx,
+            multi_day_rate_ugx = EXCLUDED.multi_day_rate_ugx,
+            fixed_tour_fee_ugx = EXCLUDED.fixed_tour_fee_ugx,
+            group_size_surcharge_ugx = EXCLUDED.group_size_surcharge_ugx,
+            supported_destination_ids = EXCLUDED.supported_destination_ids,
+            supported_activities = EXCLUDED.supported_activities,
             is_uwa_certified = EXCLUDED.is_uwa_certified,
             is_available = EXCLUDED.is_available,
+            is_approved = EXCLUDED.is_approved,
+            approval_status = EXCLUDED.approval_status,
             expeditions_count = EXCLUDED.expeditions_count,
             avatar_url = EXCLUDED.avatar_url,
             full_name = EXCLUDED.full_name,
@@ -372,8 +406,15 @@ export class TourGuideService {
           guideProfile.languages,
           guideProfile.specialties,
           guideProfile.daily_rate_ugx,
+          guideProfile.multi_day_rate_ugx,
+          guideProfile.fixed_tour_fee_ugx,
+          guideProfile.group_size_surcharge_ugx,
+          JSON.stringify(guideProfile.supported_destination_ids),
+          JSON.stringify(guideProfile.supported_activities),
           guideProfile.is_uwa_certified,
           guideProfile.is_available,
+          guideProfile.is_approved,
+          guideProfile.approval_status,
           guideProfile.expeditions_count,
           avatarUrl,
           fullName,
@@ -401,8 +442,7 @@ export class TourGuideService {
     if (!guide) throw new Error('Tour guide not found.');
 
     const user = localStore.users.get(id) || { id, full_name: 'Safari Guide', phone: '+256 700 000000', email: `${id}@safaris.ug`, is_verified: true, rating: 4.95, avatar_url: '' };
-    if (data.full_name) user.full_name = data.full_name;
-    if (data.fullName) user.full_name = data.fullName;
+    if (data.full_name || data.fullName || data.name) user.full_name = data.full_name || data.fullName || data.name;
     if (data.phone) user.phone = data.phone;
     if (data.avatar_url !== undefined) user.avatar_url = data.avatar_url;
     if (data.avatarUrl !== undefined) user.avatar_url = data.avatarUrl;
@@ -414,14 +454,57 @@ export class TourGuideService {
       title: data.title !== undefined ? data.title : guide.title,
       bio: data.bio !== undefined ? data.bio : guide.bio,
       languages: data.languages !== undefined
-        ? (Array.isArray(data.languages) ? data.languages : data.languages.split(',').map((l: string) => l.trim()))
+        ? (Array.isArray(data.languages) ? data.languages : String(data.languages).split(',').map((l: string) => l.trim()).filter(Boolean))
         : guide.languages,
       specialties: data.specialties !== undefined
-        ? (Array.isArray(data.specialties) ? data.specialties : data.specialties.split(',').map((s: string) => s.trim()))
+        ? (Array.isArray(data.specialties) ? data.specialties : String(data.specialties).split(',').map((s: string) => s.trim()).filter(Boolean))
         : guide.specialties,
-      daily_rate_ugx: data.daily_rate_ugx !== undefined ? Number(data.daily_rate_ugx) : (data.dailyRateUgx !== undefined ? Number(data.dailyRateUgx) : guide.daily_rate_ugx),
-      is_uwa_certified: data.is_uwa_certified !== undefined ? Boolean(data.is_uwa_certified) : guide.is_uwa_certified,
-      is_available: data.is_available !== undefined ? Boolean(data.is_available) : guide.is_available,
+      daily_rate_ugx:
+        data.daily_rate_ugx !== undefined
+          ? Number(data.daily_rate_ugx)
+          : data.dailyRateUgx !== undefined
+          ? Number(data.dailyRateUgx)
+          : data.pricePerDayUgx !== undefined
+          ? Number(data.pricePerDayUgx)
+          : guide.daily_rate_ugx,
+      multi_day_rate_ugx:
+        data.multi_day_rate_ugx !== undefined
+          ? Number(data.multi_day_rate_ugx)
+          : data.multiDayRateUgx !== undefined
+          ? Number(data.multiDayRateUgx)
+          : guide.multi_day_rate_ugx ?? guide.daily_rate_ugx,
+      fixed_tour_fee_ugx:
+        data.fixed_tour_fee_ugx !== undefined
+          ? Number(data.fixed_tour_fee_ugx)
+          : data.fixedTourFeeUgx !== undefined
+          ? Number(data.fixedTourFeeUgx)
+          : guide.fixed_tour_fee_ugx ?? 0,
+      group_size_surcharge_ugx:
+        data.group_size_surcharge_ugx !== undefined
+          ? Number(data.group_size_surcharge_ugx)
+          : data.groupSizeSurchargeUgx !== undefined
+          ? Number(data.groupSizeSurchargeUgx)
+          : guide.group_size_surcharge_ugx ?? 0,
+      supported_destination_ids:
+        data.supported_destination_ids !== undefined || data.supportedDestinationIds !== undefined
+          ? data.supported_destination_ids || data.supportedDestinationIds
+          : guide.supported_destination_ids || [],
+      supported_activities:
+        data.supported_activities !== undefined || data.supportedActivities !== undefined
+          ? data.supported_activities || data.supportedActivities
+          : guide.supported_activities || [],
+      is_uwa_certified:
+        data.is_uwa_certified !== undefined
+          ? Boolean(data.is_uwa_certified)
+          : data.isCertified !== undefined
+          ? Boolean(data.isCertified)
+          : guide.is_uwa_certified,
+      is_available:
+        data.is_available !== undefined
+          ? Boolean(data.is_available)
+          : data.isAvailable !== undefined
+          ? Boolean(data.isAvailable)
+          : guide.is_available,
       expeditions_count: data.expeditions_count !== undefined ? Number(data.expeditions_count) : guide.expeditions_count,
       avatar_url: user.avatar_url || guide.avatar_url || '',
       full_name: user.full_name || guide.full_name || '',
@@ -441,15 +524,22 @@ export class TourGuideService {
         await db.query(`
           UPDATE tour_guides
           SET title = $1, bio = $2, languages = $3, specialties = $4, daily_rate_ugx = $5,
-              is_uwa_certified = $6, is_available = $7, expeditions_count = $8, avatar_url = $9,
-              full_name = $10, rating = $11, updated_at = CURRENT_TIMESTAMP
-          WHERE id = $12
+              multi_day_rate_ugx = $6, fixed_tour_fee_ugx = $7, group_size_surcharge_ugx = $8,
+              supported_destination_ids = $9, supported_activities = $10,
+              is_uwa_certified = $11, is_available = $12, expeditions_count = $13, avatar_url = $14,
+              full_name = $15, rating = $16, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $17
         `, [
           updatedGuide.title,
           updatedGuide.bio,
           updatedGuide.languages,
           updatedGuide.specialties,
           updatedGuide.daily_rate_ugx,
+          updatedGuide.multi_day_rate_ugx,
+          updatedGuide.fixed_tour_fee_ugx,
+          updatedGuide.group_size_surcharge_ugx,
+          JSON.stringify(updatedGuide.supported_destination_ids || []),
+          JSON.stringify(updatedGuide.supported_activities || []),
           updatedGuide.is_uwa_certified,
           updatedGuide.is_available,
           updatedGuide.expeditions_count,

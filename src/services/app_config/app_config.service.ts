@@ -3,6 +3,7 @@ import path from 'path';
 import { localStore, db } from '../../config/database';
 import { ENV } from '../../config/env';
 import { AdminService } from '../admin/admin.service';
+import { PricingEngineService } from '../pricing/pricing_engine.service';
 import { encryptSecret, decryptSecret } from '../../shared/crypto';
 
 // Persistent fallback paths on disk for offline/development resilience
@@ -242,6 +243,11 @@ export class AppConfigService {
       mapboxAccessToken: cleanDecryptedToken,
       pricing: AdminService.getPricing(),
       pricingMatrix: AdminService.getPricing(),
+      catalogueVehicles: PricingEngineService.getAllCatalogueVehicles(),
+      servicePricingRules: PricingEngineService.getAllServicePricingRules(),
+      contentVersion:
+        Array.from(localStore.destinations.values()).reduce((acc, d: any) => acc + Number(d.content_version || 1), 0) +
+        Array.from(localStore.catalogue_vehicles.values()).reduce((acc, v: any) => acc + Number(v.pricing_version || 1), 0),
       quickPlaces: master.quickPlaces || configMap.quickPlaces || defaultQuickPlaces,
     };
   }

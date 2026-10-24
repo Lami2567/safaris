@@ -11,6 +11,7 @@ import { NotificationService } from '../notification/notification.service';
 import { AdminService } from '../admin/admin.service';
 import { FinancialService } from '../financial/financial.service';
 import { PayoutService } from '../financial/payout.service';
+import { PricingEngineService } from '../pricing/pricing_engine.service';
 import { ENV } from '../../config/env';
 
 export interface EstimateRequest {
@@ -19,6 +20,7 @@ export interface EstimateRequest {
   destLat: number;
   destLng: number;
   distanceKm?: number;
+  serviceType?: 'RIDE' | 'AIRPORT_SHUTTLE';
 }
 
 export interface CreateTripRequest {
@@ -32,6 +34,10 @@ export interface CreateTripRequest {
   destLat: number;
   destLng: number;
   vehicleTier: string;
+  vehicleId?: string;
+  serviceType?: 'RIDE' | 'AIRPORT_SHUTTLE';
+  quotationId?: string;
+  routeCode?: string;
   distanceKm: number;
   paymentMethod: string;
 }
@@ -59,22 +65,95 @@ export class TripService {
     };
   }
 
-  public static estimateFare(distanceKm: number) {
+  public static estimateFare(distanceKm: number, serviceKey: 'ride_hailing' | 'airport_shuttle' = 'ride_hailing') {
     const estimates: Record<string, number> = {};
+    const eligibleVehicles = PricingEngineService.getAllCatalogueVehicles({ service: serviceKey });
+
+    for (const veh of eligibleVehicles) {
+      if (serviceKey === 'airport_shuttle' && veh.service_pricing?.airport_shuttle) {
+        const asCfg = veh.service_pricing.airport_shuttle;
+        const raw = Number(asCfg.baseFareUgx || 25000) + distanceKm * Number(asCfg.perKmUgx || 2500);
+        estimates[veh.code] = Math.round(Math.max(Number(asCfg.minimumFareUgx || 0), raw));
+      } else if (veh.service_pricing?.ride_hailing) {
+        const rhCfg = veh.service_pricing.ride_hailing;
+        const { distanceChargeUgx } = PricingEngineService.calculateDistanceBandCharge(
+          distanceKm,
+          rhCfg.distanceBands || [],
+          rhCfg.calculationMode || 'BAND_MATCH'
+        );
+        const raw = Number(rhCfg.baseFareUgx || 0) + distanceChargeUgx;
+        estimates[veh.code] = Math.round(Math.max(Number(rhCfg.minimumFareUgx || 0), raw));
+      }
+    }
+
+    // Ensure legacy tier keys remain populated if present in AdminService
     const pricing = this.getTierPricing();
     for (const [tier, rates] of Object.entries(pricing)) {
-      estimates[tier] = Math.round(rates.base + distanceKm * rates.perKm);
+      if (estimates[tier] === undefined) {
+        estimates[tier] = Math.round(rates.base + distanceKm * rates.perKm);
+      }
     }
     return estimates;
   }
 
   public static createTrip(data: CreateTripRequest) {
     const tripId = `trp_${uuidv4().substring(0, 8)}`;
-    const pricingMap = this.getTierPricing();
-    const tierKey = (data.vehicleTier || 'go').toLowerCase();
-    const pricing = pricingMap[tierKey] || pricingMap.go;
+    const tierKey = (data.vehicleId || data.vehicleTier || 'go').toLowerCase();
     const distanceKm = Math.max(0.5, Number(data.distanceKm || 2.5));
-    const fareUGX = Math.round(pricing.base + distanceKm * pricing.perKm);
+    const serviceCategory = data.serviceType === 'AIRPORT_SHUTTLE' ? 'AIRPORT_SHUTTLE' : 'RIDE';
+    const serviceKey = serviceCategory === 'AIRPORT_SHUTTLE' ? 'airport_shuttle' : 'ride_hailing';
+
+    let fareUGX = 0;
+    let quotationId: string | null = data.quotationId || null;
+    let pricingVersion = 1;
+    let quotationSnapshot: any = {};
+
+    // Check if an existing valid quotation was supplied
+    const existingQuote = quotationId ? PricingEngineService.getQuotationById(quotationId) : null;
+    if (existingQuote) {
+      fareUGX = Number(existingQuote.total_price_ugx || existingQuote.totalPriceUgx || 0);
+      pricingVersion = Number(existingQuote.pricing_version || existingQuote.pricingVersion || 1);
+      quotationSnapshot = existingQuote;
+    } else {
+      const catVehicle = PricingEngineService.getCatalogueVehicleByIdOrCode(tierKey);
+      if (catVehicle && catVehicle.assigned_services.includes(serviceKey) && catVehicle.is_active && catVehicle.is_available) {
+        pricingVersion = catVehicle.pricing_version || 1;
+        if (serviceCategory === 'AIRPORT_SHUTTLE' && catVehicle.service_pricing?.airport_shuttle) {
+          const asCfg = catVehicle.service_pricing.airport_shuttle;
+          const routeKey = (data.routeCode || '').toLowerCase().trim();
+          if (routeKey && asCfg.fixedRoutes && asCfg.fixedRoutes[routeKey]) {
+            fareUGX = Math.round(Number(asCfg.fixedRoutes[routeKey]));
+          } else {
+            const raw = Number(asCfg.baseFareUgx || 25000) + distanceKm * Number(asCfg.perKmUgx || 2500);
+            fareUGX = Math.round(Math.max(Number(asCfg.minimumFareUgx || 0), raw));
+          }
+        } else if (catVehicle.service_pricing?.ride_hailing) {
+          const rhCfg = catVehicle.service_pricing.ride_hailing;
+          const { distanceChargeUgx, appliedBandLabel } = PricingEngineService.calculateDistanceBandCharge(
+            distanceKm,
+            rhCfg.distanceBands || [],
+            rhCfg.calculationMode || 'BAND_MATCH'
+          );
+          const raw = Number(rhCfg.baseFareUgx || 0) + distanceChargeUgx;
+          fareUGX = Math.round(Math.max(Number(rhCfg.minimumFareUgx || 0), raw));
+          quotationSnapshot = {
+            vehicleId: catVehicle.id,
+            vehicleName: catVehicle.name,
+            basePriceUgx: rhCfg.baseFareUgx,
+            distancePriceUgx: distanceChargeUgx,
+            appliedBandLabel,
+            totalPriceUgx: fareUGX,
+            pricingVersion,
+          };
+        }
+      }
+
+      if (fareUGX <= 0) {
+        const pricingMap = this.getTierPricing();
+        const pricing = pricingMap[tierKey] || pricingMap.go;
+        fareUGX = Math.round(pricing.base + distanceKm * pricing.perKm);
+      }
+    }
 
     const customer = data.customerId ? localStore.users.get(data.customerId) : null;
     const nowIso = new Date().toISOString();
@@ -94,10 +173,15 @@ export class TripService {
       dest_lat: Number(data.destLat ?? 0.3476),
       dest_lng: Number(data.destLng ?? 32.5825),
       vehicle_tier: tierKey,
+      service_category: serviceCategory,
+      quotation_id: quotationId,
+      pricing_version: pricingVersion,
+      quotation_snapshot: quotationSnapshot,
       status: 'SEARCHING',
       distance_km: distanceKm,
       estimated_duration_mins: Math.max(5, Math.round(distanceKm * 2.2)),
       fare_ugx: fareUGX,
+      fareUgx: fareUGX,
       tip_ugx: 0,
       payment_method: data.paymentMethod || 'MTN Mobile Money',
       declined_by: [],
