@@ -120,7 +120,7 @@ async function runTests() {
     }
     console.log(`✅ 6. Tourism Service verified (${destinations.length} Uganda destinations loaded).`);
 
-    const tourBooking = TourismService.createBooking({
+    const tourBooking = await TourismService.createBooking({
       customerId: loginRes.user.id,
       destinationId: 'dest_bwindi',
       packageId: 'pkg_bwindi_3d',
