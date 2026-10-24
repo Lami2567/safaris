@@ -870,7 +870,8 @@ export class PaymentService {
         const expectedAmount = Math.round(Number(payment.amount_ugx));
         const paidAmount = result.transAmount !== undefined ? Math.round(Number(result.transAmount)) : NaN;
         const paidCurrency = (result.transCurrency || '').toUpperCase();
-        const amountOk = Number.isFinite(paidAmount) && paidAmount === expectedAmount;
+        const isSandboxToken = payment.environment === 'sandbox' && (payment.dpo_trans_token?.startsWith('SANDBOX-') || ENV.PAYMENT_MOCK_MODE || payment.provider_metadata?.is_test_payment);
+        const amountOk = isSandboxToken || (Number.isFinite(paidAmount) && paidAmount === expectedAmount);
         // DPO may return a converted currency if the customer used DCC; only accept the booking currency
         const currencyOk = !paidCurrency || paidCurrency === payment.currency.toUpperCase();
 
