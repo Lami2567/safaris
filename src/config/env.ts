@@ -123,7 +123,7 @@ export const ENV = {
   // Localization
   DEFAULT_COUNTRY: process.env.DEFAULT_COUNTRY || 'Uganda',
   DEFAULT_CURRENCY: process.env.DEFAULT_CURRENCY || 'UGX',
-  PAYMENT_MOCK_MODE: process.env.PAYMENT_MOCK_MODE !== 'false',
+  PAYMENT_MOCK_MODE: process.env.PAYMENT_MOCK_MODE === 'true',
   
   // App Remote Config
   MIN_APP_VERSION: process.env.MIN_APP_VERSION || '1.0.0',
@@ -162,7 +162,7 @@ export const ENV = {
     return (process.env.DPO_SUPPORT_TICKET_REF || '2777504').trim();
   },
   get DPO_SANDBOX_COMPANY_TOKEN(): string {
-    return (process.env.DPO_SANDBOX_COMPANY_TOKEN || process.env.DPO_COMPANY_TOKEN || '').trim();
+    return (process.env.DPO_SANDBOX_COMPANY_TOKEN || process.env.DPO_COMPANY_TOKEN || 'B3F59BE7-0756-420E-BB88-1D98E7A6B040').trim();
   },
   get DPO_SANDBOX_SERVICE_TYPE_ID(): string {
     return (process.env.DPO_SANDBOX_SERVICE_TYPE_ID || process.env.DPO_SERVICE_TYPE || '54841').trim();
@@ -244,8 +244,8 @@ export const ENV = {
 
     const env: 'sandbox' | 'production' = normalizeDpoEnvironment(rawEnv);
 
-    const sandboxToken = (process.env.DPO_SANDBOX_COMPANY_TOKEN || process.env.DPO_COMPANY_TOKEN || '').trim();
-    const sandboxServiceType = (process.env.DPO_SANDBOX_SERVICE_TYPE_ID || process.env.DPO_SERVICE_TYPE || '54841').trim();
+    const sandboxToken = ENV.DPO_SANDBOX_COMPANY_TOKEN;
+    const sandboxServiceType = ENV.DPO_SANDBOX_SERVICE_TYPE_ID;
     const supportTicketRef = (process.env.DPO_SUPPORT_TICKET_REF || '2777504').trim();
 
     const liveToken = (process.env.DPO_LIVE_COMPANY_TOKEN || '').trim();

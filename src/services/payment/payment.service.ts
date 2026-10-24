@@ -27,7 +27,7 @@ export type PaymentStatus =
   | 'EXPIRED'
   | 'REFUNDED';
 
-export type PaymentMethodType = 'CARD' | 'MTN_MOMO' | 'AIRTEL_MONEY' | 'CASH' | 'WALLET';
+export type PaymentMethodType = 'CARD' | 'MTN_MOMO' | 'AIRTEL_MONEY' | 'WALLET';
 export type PaymentReferenceType = 'TRIP' | 'TOUR' | 'DELIVERY' | 'WALLET';
 export type PaymentEnvironment = 'sandbox' | 'production';
 
@@ -402,63 +402,11 @@ export class PaymentService {
     if (!req.referenceType || !req.referenceId) {
       throw new PaymentError('INVALID_REQUEST', 'referenceType and referenceId are required.');
     }
-    if (!DPO_PAYABLE_METHODS.includes(req.paymentMethod) && req.paymentMethod !== 'WALLET' && req.paymentMethod !== 'CASH') {
-      throw new PaymentError('UNSUPPORTED_METHOD', 'Supported payment methods: CARD, MTN_MOMO, AIRTEL_MONEY via DPO Pay, Safaris WALLET, or CASH.');
+    if ((req.paymentMethod as string) === 'CASH') {
+      throw new PaymentError('UNSUPPORTED_METHOD', 'Cash on arrival is not supported. Supported payment methods: MTN_MOMO, AIRTEL_MONEY, CARD, or WALLET.');
     }
-
-    if (req.paymentMethod === 'CASH') {
-      if (req.referenceType === 'WALLET') {
-        throw new PaymentError('INVALID_REQUEST', 'Cannot top up wallet using cash.');
-      }
-      const env = DpoPayGateway.environment;
-      const { authoritativeAmount, serviceDetails } = await this.resolveAuthoritativeAmount(
-        req.referenceType,
-        req.referenceId,
-        req.amountUgx,
-        req.userId,
-        env
-      );
-
-      const paymentId = `pay_${Date.now()}_${uuidv4().substring(0, 8)}`;
-      const txId = `CSH-${Date.now().toString().slice(-6)}-${uuidv4().substring(0, 4).toUpperCase()}`;
-      const now = new Date().toISOString();
-      const payment: PaymentRecord = {
-        id: paymentId,
-        transaction_id: txId,
-        user_id: req.userId,
-        reference_type: req.referenceType,
-        reference_id: req.referenceId,
-        amount_ugx: authoritativeAmount,
-        currency: 'UGX',
-        payment_method: 'CASH',
-        phone: req.phone || '',
-        idempotency_key: req.idempotencyKey,
-        attempt_number: 1,
-        service_type_id: 'CASH',
-        support_ticket_ref: 'CASH',
-        dpo_trans_token: `cash_${paymentId}`,
-        dpo_trans_ref: txId,
-        payment_url: '',
-        status: 'PENDING',
-        environment: env,
-        callback_count: 0,
-        refund_status: 'NONE',
-        refunded_amount_ugx: 0,
-        audit_trail: [
-          {
-            at: now,
-            event: 'cash_payment_selected',
-            source: 'customer',
-            note: 'Cash payment selected upon trip/delivery completion',
-          },
-        ],
-        provider_metadata: { method: 'CASH', serviceDetails },
-        created_at: now,
-        updated_at: now,
-      };
-
-      await this.persist(payment);
-      return payment;
+    if (!DPO_PAYABLE_METHODS.includes(req.paymentMethod) && req.paymentMethod !== 'WALLET') {
+      throw new PaymentError('UNSUPPORTED_METHOD', 'Supported payment methods: CARD, MTN_MOMO, AIRTEL_MONEY via DPO Pay, or Safaris WALLET.');
     }
 
     if (req.paymentMethod === 'WALLET') {
@@ -870,8 +818,7 @@ export class PaymentService {
         const expectedAmount = Math.round(Number(payment.amount_ugx));
         const paidAmount = result.transAmount !== undefined ? Math.round(Number(result.transAmount)) : NaN;
         const paidCurrency = (result.transCurrency || '').toUpperCase();
-        const isSandboxToken = payment.environment === 'sandbox' && (payment.dpo_trans_token?.startsWith('SANDBOX-') || ENV.PAYMENT_MOCK_MODE || payment.provider_metadata?.is_test_payment);
-        const amountOk = isSandboxToken || (Number.isFinite(paidAmount) && paidAmount === expectedAmount);
+        const amountOk = Number.isFinite(paidAmount) && paidAmount === expectedAmount;
         // DPO may return a converted currency if the customer used DCC; only accept the booking currency
         const currencyOk = !paidCurrency || paidCurrency === payment.currency.toUpperCase();
 

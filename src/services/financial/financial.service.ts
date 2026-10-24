@@ -301,11 +301,8 @@ export class FinancialService {
       await db.persistWalletTransaction(tx);
 
       // 5. Update user cached balance
-      if (environment === 'production') {
-        user.wallet_balance_ugx = newBalance;
-      } else {
-        user.sandbox_wallet_balance_ugx = newBalance;
-      }
+      user.wallet_balance_ugx = newBalance;
+      user.sandbox_wallet_balance_ugx = newBalance;
       user.updated_at = new Date().toISOString();
       await db.persistUser(user);
 
@@ -398,11 +395,8 @@ export class FinancialService {
       await db.persistWalletTransaction(tx);
 
       // Update user cached balance
-      if (environment === 'production') {
-        user.wallet_balance_ugx = newBalance;
-      } else {
-        user.sandbox_wallet_balance_ugx = newBalance;
-      }
+      user.wallet_balance_ugx = newBalance;
+      user.sandbox_wallet_balance_ugx = newBalance;
       user.updated_at = new Date().toISOString();
       await db.persistUser(user);
 

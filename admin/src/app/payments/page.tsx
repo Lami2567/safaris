@@ -153,7 +153,6 @@ export default function PaymentsPage() {
     { id: 'AIRTEL_MONEY', name: 'Airtel Money', description: 'Instant Airtel Money push prompt (*185#)', enabled: true, isOnline: true },
     { id: 'CARD', name: 'Credit / Debit Card', description: 'Visa, MasterCard, American Express via DPO Gateway', enabled: true, isOnline: true, supportsCardInput: true },
     { id: 'WALLET', name: 'SAFARIS Wallet', description: 'Pay instantly with your verified SAFARIS balance', enabled: true, isOnline: true },
-    { id: 'CASH', name: 'Cash on Arrival', description: 'Pay the driver / courier directly upon trip completion', enabled: true, isOnline: false },
   ]);
   const [savingMethods, setSavingMethods] = useState(false);
 
@@ -165,6 +164,7 @@ export default function PaymentsPage() {
   const [policies, setPolicies] = useState<RefundPolicyItem[]>([]);
   const [refunds, setRefunds] = useState<any[]>([]);
   const [earningsLedger, setEarningsLedger] = useState<any[]>([]);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
 
   // Loading States
   const [loading, setLoading] = useState(true);
@@ -239,7 +239,7 @@ export default function PaymentsPage() {
     if (!silent) setLoading(true);
     setRefreshing(true);
     try {
-      const [paymentsRes, statsRes, configRes, overviewRes, policiesRes, refundsRes, earningsRes, appConfigRes] =
+      const [paymentsRes, statsRes, configRes, overviewRes, policiesRes, refundsRes, earningsRes, appConfigRes, usersRes] =
         await Promise.allSettled([
           api.getPayments({
             limit: 100,
@@ -255,6 +255,7 @@ export default function PaymentsPage() {
           api.getRefunds(),
           api.getEarningsLedger(),
           api.getConfig(),
+          api.getUsers(),
         ]);
 
       if (paymentsRes.status === 'fulfilled' && paymentsRes.value?.payments) {
@@ -279,7 +280,13 @@ export default function PaymentsPage() {
         setEarningsLedger(earningsRes.value.earnings);
       }
       if (appConfigRes.status === 'fulfilled' && appConfigRes.value?.paymentMethods) {
-        setPaymentMethods(appConfigRes.value.paymentMethods);
+        const filtered = (appConfigRes.value.paymentMethods as any[]).filter(
+          (m: any) => String(m?.id || '').toUpperCase().trim() !== 'CASH'
+        );
+        if (filtered.length > 0) setPaymentMethods(filtered);
+      }
+      if (usersRes.status === 'fulfilled' && Array.isArray(usersRes.value)) {
+        setAllUsers(usersRes.value);
       }
     } catch (err: any) {
       console.error('Failed to load financial data:', err);
@@ -421,17 +428,21 @@ export default function PaymentsPage() {
     }
   };
 
-  const handleSearchWallet = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!walletSearchUser.trim()) return;
+  const inspectUserWallet = async (targetUserId: string) => {
+    const cleanId = targetUserId.trim();
+    if (!cleanId) return;
+    setWalletSearchUser(cleanId);
     setLoadingWallet(true);
     try {
-      const res = await fetch(`/api/v1/wallet/transactions?userId=${encodeURIComponent(walletSearchUser.trim())}`, {
-        headers: { 'x-admin-key': 'mumwe_safaris_secret_jwt_2026' },
+      const token = typeof window !== 'undefined' ? localStorage.getItem('safaris_admin_token') : null;
+      const headers: Record<string, string> = { 'x-admin-key': 'mumwe_safaris_secret_jwt_2026' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`/api/v1/wallet/transactions?userId=${encodeURIComponent(cleanId)}`, {
+        headers,
       });
       const data = await res.json();
       if (res.ok) {
-        setSearchedUserBalance({ userId: walletSearchUser.trim(), balance_ugx: data.balance_ugx || 0 });
+        setSearchedUserBalance({ userId: cleanId, balance_ugx: data.balance_ugx || 0 });
         setWalletTransactions(data.transactions || []);
       } else {
         showToast(data.error || 'Failed to find wallet', 'error');
@@ -441,6 +452,11 @@ export default function PaymentsPage() {
     } finally {
       setLoadingWallet(false);
     }
+  };
+
+  const handleSearchWallet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await inspectUserWallet(walletSearchUser);
   };
 
   const handleExecuteAdjustment = async (e: React.FormEvent) => {
@@ -1164,6 +1180,79 @@ export default function PaymentsPage() {
       {/* ========================================================================= */}
       {activeTab === 'wallets' && (
         <div className="space-y-6">
+          {/* All Users Authoritative Wallet Balances Table */}
+          <div className="rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black overflow-hidden shadow-sm">
+            <div className="px-5 py-3 border-b border-black/10 dark:border-white/10 flex items-center justify-between bg-black/[0.02] dark:bg-white/[0.02]">
+              <div className="text-xs font-bold uppercase tracking-wider text-black/60 dark:text-white/60 flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                <span>All Registered Users & Authoritative Server Wallet Balances ({allUsers.length})</span>
+              </div>
+              <span className="text-xs font-mono text-black/40 dark:text-white/40">Zero local storage — 100% server ledger computed</span>
+            </div>
+
+            <div className="overflow-x-auto max-h-80">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 bg-black/[0.02] dark:bg-white/[0.02]">
+                    <th className="px-4 py-3 font-semibold">User ID</th>
+                    <th className="px-4 py-3 font-semibold">Full Name</th>
+                    <th className="px-4 py-3 font-semibold">Email & Phone</th>
+                    <th className="px-4 py-3 font-semibold">Role</th>
+                    <th className="px-4 py-3 font-semibold">Server Wallet Balance</th>
+                    <th className="px-4 py-3 font-semibold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                  {allUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-black/40 dark:text-white/40">
+                        No registered users found.
+                      </td>
+                    </tr>
+                  ) : (
+                    allUsers.map((u) => (
+                      <tr key={u.id} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
+                        <td className="px-4 py-3 font-mono text-[11px] text-black/80 dark:text-white/80">{u.id}</td>
+                        <td className="px-4 py-3 font-bold text-black dark:text-white">{u.full_name || 'Customer'}</td>
+                        <td className="px-4 py-3">
+                          <div className="text-black/80 dark:text-white/80">{u.email}</div>
+                          <div className="font-mono text-[10px] text-black/50 dark:text-white/50">{u.phone}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-black/5 text-black border border-black/15 dark:bg-white/10 dark:text-white dark:border-white/15">
+                            {u.role || 'customer'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-black text-sm text-black dark:text-white">
+                          {formatUGX(Number(u.wallet_balance_ugx || 0))}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => inspectUserWallet(u.id)}
+                              className="px-2.5 py-1 text-[11px] font-semibold rounded bg-black/5 hover:bg-black/10 text-black border border-black/15 dark:bg-white/10 dark:hover:bg-white/20 dark:text-white dark:border-white/15 flex items-center gap-1 transition-colors"
+                            >
+                              <Eye className="w-3 h-3" /> Inspect Ledger
+                            </button>
+                            <button
+                              onClick={() => {
+                                setAdjustmentData((prev) => ({ ...prev, targetType: 'USER_WALLET', targetId: u.id }));
+                                setShowAdjustmentModal(true);
+                              }}
+                              className="px-2.5 py-1 text-[11px] font-semibold rounded bg-black text-white hover:bg-black/80 dark:bg-white dark:text-black dark:hover:bg-white/90 transition-colors"
+                            >
+                              Adjust
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           {/* User Search & Balance Inspector */}
           <div className="p-5 rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black space-y-4 shadow-sm">
             <h3 className="text-sm font-bold uppercase tracking-wider text-black dark:text-white flex items-center gap-2">

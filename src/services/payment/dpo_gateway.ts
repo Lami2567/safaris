@@ -14,7 +14,7 @@ export interface DpoCreateTokenParams {
   customerPhone?: string;
   redirectUrl?: string;
   backUrl?: string;
-  paymentMethod?: 'CARD' | 'MTN_MOMO' | 'AIRTEL_MONEY' | 'CASH' | 'WALLET';
+  paymentMethod?: 'CARD' | 'MTN_MOMO' | 'AIRTEL_MONEY' | 'WALLET';
   ptlHours?: number;
   companyRefUnique?: boolean;
 }
@@ -432,23 +432,6 @@ export class DpoPayGateway {
         };
       }
 
-      if (currentEnv === 'sandbox' && (result === '802' || result === '999' || ENV.PAYMENT_MOCK_MODE)) {
-        console.warn(`[DPO Pay Sandbox] Active DPO sandbox company token returned "${resultExplanation}". Providing secure sandbox development transaction token.`);
-        const sandboxToken = `SANDBOX-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
-        const sandboxRef = `SND-${Date.now().toString().slice(-6)}`;
-        return {
-          success: true,
-          transToken: sandboxToken,
-          transRef: sandboxRef,
-          paymentUrl: `${this.payUrl}?ID=${encodeURIComponent(sandboxToken)}`,
-          resultCode: '000',
-          resultExplanation: 'Sandbox Development Mode: Active',
-          serviceTypeId: serviceType,
-          supportTicketRef: ticketRef,
-          environment: currentEnv,
-        };
-      }
-
       console.warn(`[DPO Pay] createToken rejected | Result=${result} | Explanation=${resultExplanation} | env=${currentEnv}`);
       return {
         success: false,
@@ -461,22 +444,6 @@ export class DpoPayGateway {
         environment: currentEnv,
       };
     } catch (err: any) {
-      if (currentEnv === 'sandbox' && ENV.PAYMENT_MOCK_MODE) {
-        console.warn(`[DPO Pay Sandbox] Gateway unreachable in sandbox mode (${err.message}). Providing fallback sandbox token.`);
-        const sandboxToken = `SANDBOX-${Date.now()}-${uuidv4().substring(0, 8).toUpperCase()}`;
-        const sandboxRef = `SND-${Date.now().toString().slice(-6)}`;
-        return {
-          success: true,
-          transToken: sandboxToken,
-          transRef: sandboxRef,
-          paymentUrl: `${this.payUrl}?ID=${encodeURIComponent(sandboxToken)}`,
-          resultCode: '000',
-          resultExplanation: 'Sandbox Development Mode: Active (Offline Fallback)',
-          serviceTypeId: serviceType,
-          supportTicketRef: ticketRef,
-          environment: currentEnv,
-        };
-      }
       console.error(`[DPO Pay] createToken network/gateway error (${currentEnv}): ${err.message}`);
       throw new Error(`Failed to initialize DPO Pay transaction: ${err.message}`);
     }
@@ -561,25 +528,10 @@ export class DpoPayGateway {
 
     const mnoCountry = (params.mnoCountry || 'uganda').toLowerCase();
     let mnoName = params.mno === 'MTN_MOMO'
-      ? (process.env.DPO_MNO_MTN_UGANDA || 'MTNmobileMoney')
+      ? (process.env.DPO_MNO_MTN_UGANDA || 'MTNmobilemoney')
       : params.mno === 'AIRTEL_MONEY'
-      ? (process.env.DPO_MNO_AIRTEL_UGANDA || 'AirtelMobiquity_USSD')
+      ? (process.env.DPO_MNO_AIRTEL_UGANDA || 'Mobile_Airtel_UG')
       : params.mno;
-
-    if (currentEnv === 'sandbox' && (params.transToken.startsWith('SANDBOX-') || ENV.PAYMENT_MOCK_MODE)) {
-      console.log(`[DPO Pay Sandbox] Mocking STK push prompt for ${maskPhone(phoneValidation.msisdn)} in sandbox`);
-      return {
-        success: true,
-        statusCode: '000',
-        resultExplanation: 'Mobile Money push prompt dispatched (DPO Sandbox)',
-        instructions: `Dial *165# (MTN) or *185# (Airtel) on ${maskPhone(phoneValidation.msisdn)} to approve the transaction.`,
-        redirectOption: false,
-        mnoUsed: mnoName,
-        mnoCountryUsed: mnoCountry,
-        hostedFallbackAvailable: true,
-        environment: currentEnv,
-      };
-    }
 
     const xmlPayload = `<?xml version="1.0" encoding="utf-8"?>
 <API3G>
@@ -777,26 +729,6 @@ export class DpoPayGateway {
         };
       }
 
-      // In sandbox mode, approve official DPO test cards and sandbox development tokens
-      const isSandboxTestCard =
-        currentEnv === 'sandbox' &&
-        (cleanCard === '5436886269848367' || cleanCard === '4012888888881881' || cleanCard === '345678901234564' || params.transToken.startsWith('SANDBOX-') || ENV.PAYMENT_MOCK_MODE);
-
-      if (isSandboxTestCard) {
-        console.log(`[DPO Pay Sandbox] Auto-approving verified DPO test card ${cardType} ****${cardLast4}`);
-        return {
-          success: true,
-          statusCode: '000',
-          resultExplanation: 'Transaction Approved (DPO Sandbox Verified)',
-          transactionApproved: true,
-          approvalCode: `SB-APPR-${cardLast4}-${Date.now().toString().slice(-4)}`,
-          cardLast4,
-          cardType,
-          hostedFallbackAvailable: false,
-          environment: currentEnv,
-        };
-      }
-
       return {
         success: false,
         statusCode,
@@ -810,23 +742,6 @@ export class DpoPayGateway {
       };
     } catch (err: any) {
       console.warn(`[DPO Pay] chargeTokenCreditCard network error (${currentEnv}): ${err.message}`);
-      if (
-        currentEnv === 'sandbox' &&
-        (cleanCard === '5436886269848367' || cleanCard === '4012888888881881' || cleanCard === '345678901234564')
-      ) {
-        return {
-          success: true,
-          statusCode: '000',
-          resultExplanation: 'Transaction Approved (DPO Sandbox Verified Offline)',
-          transactionApproved: true,
-          approvalCode: `SB-OFFLINE-${cardLast4}`,
-          cardLast4,
-          cardType,
-          hostedFallbackAvailable: false,
-          environment: currentEnv,
-        };
-      }
-
       return {
         success: false,
         statusCode: '906',
@@ -866,18 +781,6 @@ export class DpoPayGateway {
         resultExplanation: 'Missing TransactionToken or CompanyRef for DPO verification.',
         lifecycleStatus: 'FAILED',
         transactionApproved: false,
-        environment: currentEnv,
-      };
-    }
-
-    if (currentEnv === 'sandbox' && (transToken.startsWith('SANDBOX-') || transToken.startsWith('mock_') || (ENV.PAYMENT_MOCK_MODE && !transToken.startsWith('real_')))) {
-      console.log(`[DPO Pay Sandbox] Authoritatively verifying sandbox transaction token ${transToken}`);
-      return {
-        success: true,
-        resultCode: '000',
-        resultExplanation: 'Transaction Approved (DPO Sandbox Verified)',
-        lifecycleStatus: 'SUCCESSFUL',
-        transactionApproved: true,
         environment: currentEnv,
       };
     }

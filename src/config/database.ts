@@ -114,6 +114,7 @@ class DatabaseManager {
 
       // Clean up legacy mock/seed accounts so only genuine registered accounts remain
       await this.pool.query(`
+        ALTER TABLE notifications ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
         DELETE FROM drivers WHERE id IN ('driver-001', 'usr_drv_001', 'usr_drv_002');
         DELETE FROM vehicles WHERE id IN ('veh-001', 'veh_001', 'veh_002') OR driver_id IN ('driver-001', 'usr_drv_001', 'usr_drv_002');
         DELETE FROM tour_guides WHERE id IN ('usr_gd_001');

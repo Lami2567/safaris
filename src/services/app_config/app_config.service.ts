@@ -180,13 +180,6 @@ export class AppConfigService {
         enabled: true,
         isOnline: true,
       },
-      {
-        id: 'CASH',
-        name: 'Cash on Arrival',
-        description: 'Pay the driver / courier directly upon trip completion',
-        enabled: true,
-        isOnline: false,
-      },
     ];
 
     const defaultFeatures = {
@@ -225,7 +218,12 @@ export class AppConfigService {
     // Ensure we return the decrypted, ready-to-use token to authorized clients
     const cleanDecryptedToken = decryptSecret(effectiveToken);
 
+    const rawPaymentMethods = master.paymentMethods || configMap.paymentMethods || defaultPaymentMethods;
+    const sanitizedPaymentMethods = (Array.isArray(rawPaymentMethods) ? rawPaymentMethods : defaultPaymentMethods)
+      .filter((m: any) => String(m?.id || '').toUpperCase().trim() !== 'CASH');
+
     return {
+      ...configMap,
       appName: 'SAFARIS',
       country: 'Uganda',
       currency: 'UGX',
@@ -236,7 +234,7 @@ export class AppConfigService {
       minDriverRatingThreshold: 4.5,
       services: master.services || configMap.services || defaultServices,
       banners: master.banners || configMap.banners || defaultBanners,
-      paymentMethods: master.paymentMethods || configMap.paymentMethods || defaultPaymentMethods,
+      paymentMethods: sanitizedPaymentMethods.length > 0 ? sanitizedPaymentMethods : defaultPaymentMethods,
       features: { ...defaultFeatures, ...(master.featureFlags || {}), ...(configMap.features || {}) },
       featureFlags: { ...defaultFeatures, ...(master.featureFlags || {}), ...(configMap.featureFlags || {}) },
       versionConfig: master.versionConfig || configMap.versionConfig || defaultVersion,
@@ -245,7 +243,6 @@ export class AppConfigService {
       pricing: AdminService.getPricing(),
       pricingMatrix: AdminService.getPricing(),
       quickPlaces: master.quickPlaces || configMap.quickPlaces || defaultQuickPlaces,
-      ...configMap,
     };
   }
 
@@ -463,16 +460,18 @@ export class AppConfigService {
   }
 
   public static async updatePaymentMethods(methods: any[]) {
-    const normalized = (methods || []).map((m: any) => ({
-      id: String(m.id || '').toUpperCase().trim(),
-      name: String(m.name || m.title || m.id || ''),
-      description: m.description ? String(m.description) : '',
-      enabled: m.enabled !== undefined ? Boolean(m.enabled) : (m.isEnabled !== undefined ? Boolean(m.isEnabled) : true),
-      isOnline: m.isOnline !== undefined ? Boolean(m.isOnline) : true,
-      supportsCardInput: String(m.id || '').toUpperCase().trim() === 'CARD' || Boolean(m.supportsCardInput),
-      minAmountUGX: m.minAmountUGX ? Number(m.minAmountUGX) : 500,
-      maxAmountUGX: m.maxAmountUGX ? Number(m.maxAmountUGX) : 10000000,
-    }));
+    const normalized = (methods || [])
+      .filter((m: any) => String(m?.id || '').toUpperCase().trim() !== 'CASH')
+      .map((m: any) => ({
+        id: String(m.id || '').toUpperCase().trim(),
+        name: String(m.name || m.title || m.id || ''),
+        description: m.description ? String(m.description) : '',
+        enabled: m.enabled !== undefined ? Boolean(m.enabled) : (m.isEnabled !== undefined ? Boolean(m.isEnabled) : true),
+        isOnline: m.isOnline !== undefined ? Boolean(m.isOnline) : true,
+        supportsCardInput: String(m.id || '').toUpperCase().trim() === 'CARD' || Boolean(m.supportsCardInput),
+        minAmountUGX: m.minAmountUGX ? Number(m.minAmountUGX) : 500,
+        maxAmountUGX: m.maxAmountUGX ? Number(m.maxAmountUGX) : 10000000,
+      }));
     return this.updateConfig('paymentMethods', normalized);
   }
 }
