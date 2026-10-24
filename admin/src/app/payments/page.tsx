@@ -727,7 +727,7 @@ export default function PaymentsPage() {
           }`}
         >
           <Sliders className="w-4 h-4" />
-          <span>Payment Methods (Source of Truth)</span>
+          <span>Payment Methods</span>
         </button>
       </div>
 
@@ -1745,7 +1745,7 @@ export default function PaymentsPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="px-2.5 py-1 text-[11px] font-bold rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 uppercase tracking-wider">
-                    Single Source of Truth
+                    Active Channels
                   </span>
                   <span className="text-xs text-black/40 dark:text-white/40 font-mono">Real-time sync to all mobile & web clients</span>
                 </div>

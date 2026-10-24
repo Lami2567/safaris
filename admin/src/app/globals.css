@@ -168,18 +168,61 @@ html.light .placeholder\:text-white\/40::placeholder {
   color: #94a3b8 !important;
 }
 
-/* Primary Action Buttons (bg-white text-black -> Solid Dark Slate/Navy in Light Mode) */
+/* Primary Action Buttons (bg-white text-black & bg-black text-white -> Solid Dark Slate/Navy in Light Mode) */
 html.light button.bg-white.text-black,
 html.light a.bg-white.text-black,
-html.light span.bg-white.text-black {
+html.light span.bg-white.text-black,
+html.light button.bg-black.text-white,
+html.light a.bg-black.text-white,
+html.light span.bg-black.text-white {
   background-color: #0f172a !important;
   color: #ffffff !important;
   border: 1px solid #0f172a !important;
 }
 
 html.light button.bg-white.text-black:hover,
-html.light a.bg-white.text-black:hover {
+html.light a.bg-white.text-black:hover,
+html.light button.bg-black.text-white:hover,
+html.light a.bg-black.text-white:hover {
   background-color: #1e293b !important;
+  color: #ffffff !important;
+}
+
+/* Preserve crisp white text & icons on dark/colored pills, badges, and buttons in Light Mode */
+html.light .bg-slate-900.text-white,
+html.light .bg-slate-900 .text-white,
+html.light .bg-slate-800.text-white,
+html.light .bg-slate-800 .text-white,
+html.light .bg-slate-950.text-white,
+html.light .bg-slate-950 .text-white,
+html.light .bg-neutral-900.text-white,
+html.light .bg-neutral-900 .text-white,
+html.light .bg-zinc-900.text-white,
+html.light .bg-zinc-900 .text-white,
+html.light .bg-\[\#2563EB\].text-white,
+html.light .bg-\[\#2563EB\] .text-white,
+html.light .bg-blue-600.text-white,
+html.light .bg-blue-600 .text-white,
+html.light .bg-blue-500.text-white,
+html.light .bg-blue-500 .text-white,
+html.light .bg-emerald-600.text-white,
+html.light .bg-emerald-600 .text-white,
+html.light .bg-emerald-500.text-white,
+html.light .bg-emerald-500 .text-white,
+html.light .bg-red-600.text-white,
+html.light .bg-red-600 .text-white,
+html.light .bg-red-500.text-white,
+html.light .bg-red-500 .text-white,
+html.light .bg-amber-600.text-white,
+html.light .bg-amber-600 .text-white,
+html.light .bg-indigo-600.text-white,
+html.light .bg-indigo-600 .text-white {
+  color: #ffffff !important;
+}
+
+html.light .bg-slate-900 .text-slate-300,
+html.light .bg-slate-800 .text-slate-300 {
+  color: #cbd5e1 !important;
 }
 
 /* Borders & Dividers in Light Mode */
