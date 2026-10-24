@@ -215,4 +215,23 @@ export const api = {
     fetcher<any>('/admin/refunds/run-worker', { method: 'POST' }),
   recordFinancialAdjustment: (data: any) =>
     fetcher<any>('/admin/financial-adjustments', { method: 'POST', body: JSON.stringify(data) }),
+  getDoubleEntryLedger: (environment?: string) =>
+    fetcher<any>(`/admin/financials/double-entry${environment ? `?environment=${environment}` : ''}`),
+  getAdminPayouts: (environment?: string, status?: string) => {
+    const q = new URLSearchParams();
+    if (environment) q.set('environment', environment);
+    if (status) q.set('status', status);
+    const qs = q.toString();
+    return fetcher<any>(`/admin/financials/payouts${qs ? `?${qs}` : ''}`);
+  },
+  executeAdminPayout: (id: string) =>
+    fetcher<any>(`/admin/financials/payouts/${id}/execute`, { method: 'POST' }),
+  reconcileAdminPayout: (id: string, data: { confirmedSuccess: boolean; providerReference?: string; reason: string }) =>
+    fetcher<any>(`/admin/financials/payouts/${id}/reconcile`, { method: 'POST', body: JSON.stringify(data) }),
+  getReconciliationStatus: (environment?: string) =>
+    fetcher<any>(`/admin/financials/reconciliation${environment ? `?environment=${environment}` : ''}`),
+  runReconciliationEngine: (environment?: string) =>
+    fetcher<any>('/admin/financials/reconciliation/run', { method: 'POST', body: JSON.stringify({ environment }) }),
+  importSettlementReport: (data: { settlementRef: string; environment?: string; records: any[] }) =>
+    fetcher<any>('/admin/financials/settlements/import', { method: 'POST', body: JSON.stringify(data) }),
 };

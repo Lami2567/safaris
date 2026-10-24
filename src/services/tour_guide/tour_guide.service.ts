@@ -3,6 +3,7 @@ import path from 'path';
 import { localStore, db } from '../../config/database';
 import { ENV } from '../../config/env';
 import { FinancialService } from '../financial/financial.service';
+import { PayoutService } from '../financial/payout.service';
 import { broadcastToFleet, emitToUser } from '../../realtime/socket_server';
 
 const PERSISTENT_GUIDES_FILES = [
@@ -266,6 +267,8 @@ export class TourGuideService {
       (a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()
     );
 
+    const activeEnv = (ENV.DPO_ENVIRONMENT || 'sandbox') as 'sandbox' | 'production';
+    const earningsSummary = PayoutService.getBeneficiaryEarningsSummary(guideId, 'tour_guide', activeEnv);
     const completedCount = completedBookings.filter((b) => b.booking_status === 'COMPLETED').length;
 
     return {
@@ -285,8 +288,9 @@ export class TourGuideService {
       rating: Number(user?.rating ?? guide?.rating ?? 5.0),
       expeditionsCount: Math.max(Number(guide?.expeditions_count ?? 0), completedCount),
       completedToursCount: completedCount,
-      totalEarningsUGX,
-      walletBalanceUGX: FinancialService.calculateWalletBalance(guideId, (ENV.DPO_ENVIRONMENT || 'sandbox') as any),
+      totalEarningsUGX: earningsSummary.availableEarningsUgx || totalEarningsUGX,
+      walletBalanceUGX: FinancialService.calculateWalletBalance(guideId, activeEnv),
+      earningsSummary,
       activeBooking,
       assignedBookings,
       completedBookings,

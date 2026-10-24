@@ -4,6 +4,7 @@ import { NotificationService } from '../notification/notification.service';
 import { DpoPayGateway, DpoCreateTokenParams, DpoVerifyTokenResult, maskPhone, normalizeMsisdnForDpo } from './dpo_gateway';
 import { ENV } from '../../config/env';
 import { FinancialService } from '../financial/financial.service';
+import { FinancialOutboxService } from '../financial/outbox.service';
 import { broadcastPaymentStream } from '../../realtime/socket_server';
 
 /**
@@ -402,6 +403,9 @@ export class PaymentService {
     if (!req.referenceType || !req.referenceId) {
       throw new PaymentError('INVALID_REQUEST', 'referenceType and referenceId are required.');
     }
+    if (!ENV.PAYMENTS_ENABLED) {
+      throw new PaymentError('PAYMENTS_DISABLED', 'Payments are temporarily disabled by system configuration.', 503);
+    }
     if ((req.paymentMethod as string) === 'CASH') {
       throw new PaymentError('UNSUPPORTED_METHOD', 'Cash on arrival is not supported. Supported payment methods: MTN_MOMO, AIRTEL_MONEY, CARD, or WALLET.');
     }
@@ -414,6 +418,9 @@ export class PaymentService {
         throw new PaymentError('INVALID_REQUEST', 'Cannot top up wallet using wallet balance.');
       }
       const env = DpoPayGateway.environment;
+      if (env === 'production' && !ENV.LIVE_PAYMENTS_ENABLED) {
+        throw new PaymentError('LIVE_PAYMENTS_DISABLED', 'Live payment execution is disabled until production activation approval.', 403);
+      }
       const { authoritativeAmount, serviceDetails } = await this.resolveAuthoritativeAmount(
         req.referenceType,
         req.referenceId,
@@ -425,7 +432,7 @@ export class PaymentService {
       const paymentId = `pay_${Date.now()}_${uuidv4().substring(0, 8)}`;
       const txId = `WLT-${Date.now().toString().slice(-6)}-${uuidv4().substring(0, 4).toUpperCase()}`;
 
-      // Debit wallet atomically
+      // Debit wallet atomically (debits 2010_CUSTOMER_WALLET_LIABILITY -> credits 2020_BOOKING_ESCROW_LIABILITY)
       await FinancialService.debitWallet({
         userId: req.userId,
         amountUgx: authoritativeAmount,
@@ -434,6 +441,7 @@ export class PaymentService {
         environment: env,
         idempotencyKey: req.idempotencyKey,
         description: `Wallet payment for ${req.referenceType} #${req.referenceId}`,
+        metadata: { paymentId },
       });
 
       const now = new Date().toISOString();
@@ -473,6 +481,23 @@ export class PaymentService {
         updated_at: now,
       };
 
+      localStore.payment_intents.set(`pi_${paymentId}`, {
+        id: `pi_${paymentId}`,
+        user_id: req.userId,
+        reference_type: req.referenceType,
+        reference_id: req.referenceId,
+        amount_ugx: authoritativeAmount,
+        currency: 'UGX',
+        payment_method: 'WALLET',
+        status: 'SUCCESSFUL',
+        idempotency_key: req.idempotencyKey || paymentId,
+        environment: env,
+        policy_version_id: 'pol_ver_v1',
+        metadata: { serviceDetails },
+        created_at: now,
+        updated_at: now,
+      });
+
       await this.fulfil(payment);
       await this.persist(payment);
       this.notifySuccess(payment);
@@ -489,6 +514,25 @@ export class PaymentService {
       );
     }
     const env = config.environment;
+    if (env === 'production' && !ENV.LIVE_PAYMENTS_ENABLED) {
+      throw new PaymentError(
+        'LIVE_PAYMENTS_DISABLED',
+        'Live DPO charges are currently disabled by safety feature flag (LIVE_PAYMENTS_ENABLED=false).',
+        403
+      );
+    }
+    if (req.referenceType === 'WALLET') {
+      if (!ENV.WALLET_TOPUPS_ENABLED) {
+        throw new PaymentError('WALLET_TOPUPS_DISABLED', 'Customer wallet top-ups are currently disabled.', 403);
+      }
+      if (env === 'production' && !ENV.WALLET_CUSTODY_APPROVED) {
+        throw new PaymentError(
+          'WALLET_CUSTODY_RESTRICTED',
+          'Live customer stored-value wallet top-ups require licensed Payment System Operator / trust-account custody approval under the Uganda National Payment Systems Act.',
+          403
+        );
+      }
+    }
 
     // Mobile Money requires a valid MSISDN before we create any DPO token
     let msisdn = '';
@@ -596,6 +640,24 @@ export class PaymentService {
         updated_at: now,
       };
       this.appendAudit(record, { event: 'attempt_created', to: 'INITIATED', source: 'customer', actor: req.userId, note: `Attempt #${attemptNumber} (${env.toUpperCase()})` });
+
+      const intentId = `pi_${req.referenceType.toLowerCase()}_${req.referenceId}`;
+      localStore.payment_intents.set(intentId, {
+        id: intentId,
+        user_id: req.userId,
+        reference_type: req.referenceType,
+        reference_id: req.referenceId,
+        amount_ugx: authoritativeAmount,
+        currency: 'UGX',
+        payment_method: req.paymentMethod,
+        status: 'INITIATED',
+        idempotency_key: req.idempotencyKey || paymentId,
+        environment: env,
+        policy_version_id: 'pol_ver_v1',
+        metadata: { serviceDetails, latest_payment_id: paymentId },
+        created_at: now,
+        updated_at: now,
+      });
 
       const dpoParams: DpoCreateTokenParams = {
         amountUgx: authoritativeAmount,
@@ -723,6 +785,24 @@ export class PaymentService {
       }
 
       await this.persist(record);
+      localStore.payment_attempts.set(`pa_${record.id}`, {
+        id: `pa_${record.id}`,
+        payment_intent_id: intentId,
+        payment_id: record.id,
+        attempt_number: attemptNumber,
+        transaction_id: txRef,
+        dpo_trans_token: record.dpo_trans_token,
+        dpo_trans_ref: record.dpo_trans_ref,
+        payment_url: record.payment_url,
+        payment_method: req.paymentMethod,
+        masked_phone: record.phone,
+        status: record.status,
+        dpo_result_code: record.dpo_result_code,
+        dpo_result_explanation: record.dpo_result_explanation,
+        environment: env,
+        created_at: now,
+        updated_at: new Date().toISOString(),
+      });
       return record;
     });
   }
@@ -775,13 +855,35 @@ export class PaymentService {
       try {
         result = await DpoPayGateway.verifyToken(payment.dpo_trans_token, payment.transaction_id);
       } catch (err: any) {
-        // Network timeout: outcome unknown — keep current status, record and retry later
+        // Network timeout: outcome unknown — keep current status, record and retry later via outbox
         this.appendAudit(payment, { event: 'verification_error', source, actor: opts.actor, note: 'DPO unreachable; status left unchanged for reconciliation.' });
+        await FinancialOutboxService.enqueueJob({
+          jobType: 'DPO_VERIFY_PAYMENT',
+          dedupeKey: `verify_retry_${payment.id}_${Math.floor(Date.now() / 60000)}`,
+          payload: { paymentId: payment.id, source: 'reconciler' },
+        }).catch(() => {});
         await this.persist(payment);
         return payment;
       }
 
       const now = new Date().toISOString();
+      const verifId = `pver_${Date.now()}_${uuidv4().substring(0, 6)}`;
+      localStore.payment_verifications.set(verifId, {
+        id: verifId,
+        payment_id: payment.id,
+        dpo_trans_token: payment.dpo_trans_token,
+        result_code: result.resultCode,
+        result_explanation: result.resultExplanation,
+        trans_amount: result.transAmount,
+        trans_currency: result.transCurrency,
+        transaction_approval: result.transactionApproval,
+        fraud_alert: result.fraudAlert,
+        settlement_date: result.settlementDate,
+        verified_status: result.lifecycleStatus,
+        source,
+        actor: opts.actor || 'SYSTEM',
+        created_at: now,
+      });
       payment.last_verified_at = now;
       payment.dpo_result_code = result.resultCode;
       payment.dpo_result_explanation = result.resultExplanation;
@@ -923,6 +1025,18 @@ export class PaymentService {
       const p = this.hydrate(localStore.payments.get(payment.id));
       p.callback_count = (p.callback_count || 0) + 1;
       p.last_callback_at = new Date().toISOString();
+      const evtId = `ppe_${Date.now()}_${uuidv4().substring(0, 6)}`;
+      localStore.payment_provider_events.set(evtId, {
+        id: evtId,
+        payment_id: p.id,
+        dpo_trans_token: transToken || p.dpo_trans_token,
+        company_ref: companyRef || p.transaction_id,
+        event_source: source,
+        raw_payload: { transToken, companyRef, callbackCount: p.callback_count },
+        processed: true,
+        processed_at: p.last_callback_at,
+        created_at: p.last_callback_at,
+      });
       this.appendAudit(p, {
         event: p.callback_count > 1 ? 'duplicate_callback_received' : 'callback_received',
         source,
@@ -1105,9 +1219,20 @@ export class PaymentService {
       }
     }
 
-    // Record platform earnings & commission ledger for paid services
+    // Record booking escrow liability & platform earnings / commission ledger for paid services
     if (reference_type === 'TRIP' || reference_type === 'TOUR' || reference_type === 'DELIVERY') {
       try {
+        if (payment_method !== 'WALLET') {
+          await FinancialService.recordBookingPaymentEscrow({
+            bookingType: reference_type as any,
+            bookingId: reference_id,
+            paymentId: payment.id,
+            payerUserId: user_id,
+            amountUgx: amount_ugx,
+            environment,
+          });
+        }
+
         let beneficiaryId: string | undefined = undefined;
         let commissionRate = 15.0; // 15% standard
         if (reference_type === 'TRIP') {
@@ -1137,6 +1262,14 @@ export class PaymentService {
       } catch (err: any) {
         console.warn('[PaymentService] Failed to record platform earning:', err);
       }
+    }
+
+    const intentId = `pi_${reference_type.toLowerCase()}_${reference_id}`;
+    const existingIntent = localStore.payment_intents.get(intentId);
+    if (existingIntent) {
+      existingIntent.status = 'SUCCESSFUL';
+      existingIntent.updated_at = now;
+      localStore.payment_intents.set(intentId, existingIntent);
     }
 
     payment.fulfilled_at = now;

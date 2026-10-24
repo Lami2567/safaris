@@ -162,19 +162,48 @@ export const ENV = {
     return (process.env.DPO_SUPPORT_TICKET_REF || '2777504').trim();
   },
   get DPO_SANDBOX_COMPANY_TOKEN(): string {
-    return (process.env.DPO_SANDBOX_COMPANY_TOKEN || process.env.DPO_COMPANY_TOKEN || 'B3F59BE7-0756-420E-BB88-1D98E7A6B040').trim();
+    return (process.env.DPO_SANDBOX_COMPANY_TOKEN || process.env.DPO_COMPANY_TOKEN || '').trim();
   },
   get DPO_SANDBOX_SERVICE_TYPE_ID(): string {
     return (process.env.DPO_SANDBOX_SERVICE_TYPE_ID || process.env.DPO_SERVICE_TYPE || '54841').trim();
   },
   get DPO_LIVE_COMPANY_TOKEN(): string {
-    return (process.env.DPO_LIVE_COMPANY_TOKEN || '').trim();
+    return (process.env.DPO_LIVE_COMPANY_TOKEN || (this.DPO_ENVIRONMENT === 'production' ? process.env.DPO_COMPANY_TOKEN || '' : '')).trim();
   },
   get DPO_LIVE_SERVICE_TYPE_ID(): string {
-    return (process.env.DPO_LIVE_SERVICE_TYPE_ID || '').trim();
+    return (process.env.DPO_LIVE_SERVICE_TYPE_ID || (this.DPO_ENVIRONMENT === 'production' ? process.env.DPO_SERVICE_TYPE || '' : '')).trim();
   },
   get DPO_LIVE_ACTIVATION_CONFIRMED(): boolean {
-    return (process.env.DPO_LIVE_ACTIVATION_CONFIRMED || '').trim().toLowerCase() === 'true';
+    return (
+      (process.env.DPO_LIVE_ACTIVATION_CONFIRMED || '').trim().toLowerCase() === 'true' &&
+      (process.env.LIVE_PAYMENTS_ENABLED || '').trim().toLowerCase() !== 'false'
+    );
+  },
+  get PAYMENTS_ENABLED(): boolean {
+    return (process.env.PAYMENTS_ENABLED || 'true').trim().toLowerCase() !== 'false';
+  },
+  get LIVE_PAYMENTS_ENABLED(): boolean {
+    return (process.env.LIVE_PAYMENTS_ENABLED || 'false').trim().toLowerCase() === 'true';
+  },
+  get WALLET_TOPUPS_ENABLED(): boolean {
+    if (process.env.WALLET_TOPUPS_ENABLED !== undefined) {
+      return process.env.WALLET_TOPUPS_ENABLED.trim().toLowerCase() === 'true';
+    }
+    return this.DPO_ENVIRONMENT === 'sandbox';
+  },
+  get WALLET_CUSTODY_APPROVED(): boolean {
+    return (process.env.WALLET_CUSTODY_APPROVED || 'false').trim().toLowerCase() === 'true';
+  },
+  get PAYOUTS_ENABLED(): boolean {
+    return (process.env.PAYOUTS_ENABLED || 'false').trim().toLowerCase() === 'true';
+  },
+  get DEVELOPER_COMMISSION_RATE(): number {
+    const val = Number(process.env.DEVELOPER_COMMISSION_RATE);
+    return Number.isFinite(val) && val >= 0 && val <= 50 ? val : 5.0;
+  },
+  get PLATFORM_COMMISSION_RATE(): number {
+    const val = Number(process.env.PLATFORM_COMMISSION_RATE);
+    return Number.isFinite(val) && val >= 0 && val <= 50 ? val : 0.0;
   },
   get DPO_COMPANY_TOKEN(): string {
     // Strictly separate sandbox and live tokens; never fall back from live to sandbox or vice versa
@@ -213,10 +242,16 @@ export const ENV = {
     if (env === 'sandbox' && process.env.DPO_SANDBOX_PAY_URL) {
       return process.env.DPO_SANDBOX_PAY_URL.trim();
     }
-    return (process.env.DPO_PAY_URL || 'https://secure.3gdirectpay.com/payv3.php').trim();
+    return (process.env.DPO_PAYMENT_URL || process.env.DPO_PAY_URL || 'https://secure.3gdirectpay.com/payv3.php').trim();
+  },
+  get DPO_PAYMENT_URL(): string {
+    return this.DPO_PAY_URL;
   },
   get DPO_CALLBACK_URL(): string {
-    return (process.env.DPO_CALLBACK_URL || 'https://admin.mumwesafarisuganda.com/api/v1/payments/dpo/callback').trim();
+    return (process.env.DPO_REDIRECT_URL || process.env.DPO_CALLBACK_URL || 'https://admin.mumwesafarisuganda.com/api/v1/payments/dpo/callback').trim();
+  },
+  get DPO_REDIRECT_URL(): string {
+    return this.DPO_CALLBACK_URL;
   },
   get DPO_CANCEL_URL(): string {
     return (process.env.DPO_CANCEL_URL || 'https://admin.mumwesafarisuganda.com/api/v1/payments/dpo/cancel').trim();

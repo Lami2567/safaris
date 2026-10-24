@@ -63,10 +63,11 @@ export class DriverController {
     }
   }
 
-  public static cashOut(req: AuthenticatedRequest, res: Response) {
+  public static async cashOut(req: AuthenticatedRequest, res: Response) {
     try {
       const driverId = req.user!.userId;
-      const result = DriverService.cashOut(driverId);
+      const { amountUgx, idempotencyKey } = req.body || {};
+      const result = await DriverService.cashOut(driverId, amountUgx, idempotencyKey);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'CASHOUT_FAILED', err.message);

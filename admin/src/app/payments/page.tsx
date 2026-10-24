@@ -117,8 +117,22 @@ interface FinancialOverviewData {
   total_verified_payments_ugx: number;
   verified_payments_count: number;
   customer_wallet_liabilities_ugx: number;
+  booking_escrow_liabilities_ugx?: number;
   platform_commission_earned_ugx: number;
+  developer_commission_payable_ugx?: number;
+  driver_earnings_payable_ugx?: number;
+  guide_earnings_payable_ugx?: number;
   beneficiary_earnings_payable_ugx: number;
+  payout_reserve_liability_ugx?: number;
+  completed_payouts_ugx?: number;
+  pending_withdrawals_count?: number;
+  completed_withdrawals_count?: number;
+  failed_withdrawals_count?: number;
+  dpo_clearing_balance_ugx?: number;
+  reconciled_settlements_ugx?: number;
+  gateway_fees_ugx?: number;
+  unreconciled_discrepancies_count?: number;
+  trial_balance_balanced?: boolean;
   total_refunds_processed_ugx: number;
   refunds_processed_count: number;
   active_refund_requests_count: number;
@@ -164,6 +178,9 @@ export default function PaymentsPage() {
   const [policies, setPolicies] = useState<RefundPolicyItem[]>([]);
   const [refunds, setRefunds] = useState<any[]>([]);
   const [earningsLedger, setEarningsLedger] = useState<any[]>([]);
+  const [doubleEntryData, setDoubleEntryData] = useState<any>(null);
+  const [payoutRequests, setPayoutRequests] = useState<any[]>([]);
+  const [reconciliationData, setReconciliationData] = useState<any>(null);
   const [allUsers, setAllUsers] = useState<any[]>([]);
 
   // Loading States
@@ -239,7 +256,7 @@ export default function PaymentsPage() {
     if (!silent) setLoading(true);
     setRefreshing(true);
     try {
-      const [paymentsRes, statsRes, configRes, overviewRes, policiesRes, refundsRes, earningsRes, appConfigRes, usersRes] =
+      const [paymentsRes, statsRes, configRes, overviewRes, policiesRes, refundsRes, earningsRes, appConfigRes, usersRes, doubleEntryRes, payoutsRes, reconRes] =
         await Promise.allSettled([
           api.getPayments({
             limit: 100,
@@ -256,6 +273,9 @@ export default function PaymentsPage() {
           api.getEarningsLedger(),
           api.getConfig(),
           api.getUsers(),
+          api.getDoubleEntryLedger(),
+          api.getAdminPayouts(),
+          api.getReconciliationStatus(),
         ]);
 
       if (paymentsRes.status === 'fulfilled' && paymentsRes.value?.payments) {
@@ -287,6 +307,15 @@ export default function PaymentsPage() {
       }
       if (usersRes.status === 'fulfilled' && Array.isArray(usersRes.value)) {
         setAllUsers(usersRes.value);
+      }
+      if (doubleEntryRes.status === 'fulfilled' && doubleEntryRes.value) {
+        setDoubleEntryData(doubleEntryRes.value);
+      }
+      if (payoutsRes.status === 'fulfilled' && payoutsRes.value?.payouts) {
+        setPayoutRequests(payoutsRes.value.payouts);
+      }
+      if (reconRes.status === 'fulfilled' && reconRes.value) {
+        setReconciliationData(reconRes.value);
       }
     } catch (err: any) {
       console.error('Failed to load financial data:', err);
@@ -1059,19 +1088,67 @@ export default function PaymentsPage() {
                 {formatUGX(overview?.platform_commission_earned_ugx ?? 0)}
               </div>
               <p className="text-[11px] text-black/50 dark:text-white/50">
-                Mumwe Safaris company net gross earnings (15-20% margin).
+                SAFARIS platform net commission revenue (Account 4010).
               </p>
             </div>
 
             <div className="p-5 rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black space-y-2 shadow-sm">
               <div className="text-xs font-semibold uppercase tracking-wider text-black/60 dark:text-white/60 flex items-center gap-2">
-                <Users className="w-4 h-4" /> Beneficiary Driver/Guide Payable
+                <Sparkles className="w-4 h-4" /> 5% Developer Commission Payable
+              </div>
+              <div className="text-2xl font-black text-black dark:text-white">
+                {formatUGX(overview?.developer_commission_payable_ugx ?? 0)}
+              </div>
+              <p className="text-[11px] text-black/50 dark:text-white/50">
+                Separated 5% developer royalty liability (Account 2050).
+              </p>
+            </div>
+
+            <div className="p-5 rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black space-y-2 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wider text-black/60 dark:text-white/60 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4" /> Booking Escrow Liability
+              </div>
+              <div className="text-2xl font-black text-black dark:text-white">
+                {formatUGX(overview?.booking_escrow_liabilities_ugx ?? 0)}
+              </div>
+              <p className="text-[11px] text-black/50 dark:text-white/50">
+                Unearned customer payments held in escrow (Account 2020).
+              </p>
+            </div>
+
+            <div className="p-5 rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black space-y-2 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wider text-black/60 dark:text-white/60 flex items-center gap-2">
+                <Users className="w-4 h-4" /> Driver & Guide Payables
               </div>
               <div className="text-2xl font-black text-black dark:text-white">
                 {formatUGX(overview?.beneficiary_earnings_payable_ugx ?? 0)}
               </div>
               <p className="text-[11px] text-black/50 dark:text-white/50">
-                Total earnings owed to drivers & tour guides.
+                Drivers: {formatUGX(overview?.driver_earnings_payable_ugx ?? 0)} | Guides: {formatUGX(overview?.guide_earnings_payable_ugx ?? 0)}
+              </p>
+            </div>
+
+            <div className="p-5 rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black space-y-2 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wider text-black/60 dark:text-white/60 flex items-center gap-2">
+                <ArrowUpRight className="w-4 h-4" /> Payout Reserve & Withdrawals
+              </div>
+              <div className="text-2xl font-black text-black dark:text-white">
+                {formatUGX(overview?.payout_reserve_liability_ugx ?? 0)}
+              </div>
+              <p className="text-[11px] text-black/50 dark:text-white/50">
+                Pending: {overview?.pending_withdrawals_count ?? 0} | Completed: {overview?.completed_withdrawals_count ?? 0} ({formatUGX(overview?.completed_payouts_ugx ?? 0)})
+              </p>
+            </div>
+
+            <div className="p-5 rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black space-y-2 shadow-sm">
+              <div className="text-xs font-semibold uppercase tracking-wider text-black/60 dark:text-white/60 flex items-center gap-2">
+                <CreditCard className="w-4 h-4" /> DPO Clearing & Settlements
+              </div>
+              <div className="text-2xl font-black text-black dark:text-white">
+                {formatUGX(overview?.dpo_clearing_balance_ugx ?? 0)}
+              </div>
+              <p className="text-[11px] text-black/50 dark:text-white/50">
+                Settled: {formatUGX(overview?.reconciled_settlements_ugx ?? 0)} | Gateway Fees: {formatUGX(overview?.gateway_fees_ugx ?? 0)}
               </p>
             </div>
 
@@ -1164,6 +1241,134 @@ export default function PaymentsPage() {
                         </td>
                         <td className="px-4 py-3 text-black/50 dark:text-white/50 font-mono text-[11px]">
                           {new Date(e.created_at).toLocaleString('en-GB')}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Double-Entry Journal & Trial Balance Inspector */}
+          <div className="rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black overflow-hidden shadow-sm">
+            <div className="px-5 py-3 border-b border-black/10 dark:border-white/10 flex items-center justify-between bg-black/[0.02] dark:bg-white/[0.02]">
+              <div className="text-xs font-bold uppercase tracking-wider text-black/60 dark:text-white/60 flex items-center gap-2">
+                <span>Double-Entry General Ledger & Trial Balance ({doubleEntryData?.transactionsCount ?? 0} Journals)</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded border border-black/20 dark:border-white/20">
+                  {doubleEntryData?.trialBalance?.balanced !== false
+                    ? `TRIAL BALANCE OK (Debits = Credits = ${formatUGX(doubleEntryData?.trialBalance?.totalDebitsUgx ?? 0)})`
+                    : `IMBALANCE DETECTED (${formatUGX(doubleEntryData?.trialBalance?.differenceUgx ?? 0)})`}
+                </span>
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await api.runReconciliationEngine();
+                      showToast(`Reconciliation run completed: ${res.discrepancies.length} discrepancy(ies) found.`, 'success');
+                      await loadData(true);
+                    } catch (err: any) {
+                      showToast(err.message || 'Reconciliation failed', 'error');
+                    }
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-semibold rounded bg-black text-white dark:bg-white dark:text-black"
+                >
+                  Run Ledger Reconciliation
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto max-h-80">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 bg-black/[0.02] dark:bg-white/[0.02]">
+                    <th className="px-4 py-2.5 font-semibold">Journal ID</th>
+                    <th className="px-4 py-2.5 font-semibold">Event Type</th>
+                    <th className="px-4 py-2.5 font-semibold">Reference</th>
+                    <th className="px-4 py-2.5 font-semibold">Balanced Postings (DEBIT / CREDIT)</th>
+                    <th className="px-4 py-2.5 font-semibold">Description</th>
+                    <th className="px-4 py-2.5 font-semibold">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                  {!doubleEntryData?.transactions || doubleEntryData.transactions.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-black/40 dark:text-white/40">
+                        No double-entry journal postings in this environment yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    doubleEntryData.transactions.slice(0, 30).map((tx: any) => (
+                      <tr key={tx.id} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
+                        <td className="px-4 py-2.5 font-mono text-[11px]">{tx.id}</td>
+                        <td className="px-4 py-2.5 font-bold uppercase text-[11px]">{tx.event_type}</td>
+                        <td className="px-4 py-2.5 font-mono text-[11px]">
+                          {tx.reference_type}:{tx.reference_id}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-[10px] space-y-0.5">
+                          {(tx.entries || []).map((en: any) => (
+                            <div key={en.id}>
+                              <span className="font-bold">{en.direction}</span> {en.account_id}: {formatUGX(en.amount_ugx)}
+                            </div>
+                          ))}
+                        </td>
+                        <td className="px-4 py-2.5 text-black/70 dark:text-white/70">{tx.description}</td>
+                        <td className="px-4 py-2.5 font-mono text-[11px] text-black/50 dark:text-white/50">
+                          {new Date(tx.created_at).toLocaleString('en-GB')}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Driver & Guide Withdrawal Queue */}
+          <div className="rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-black overflow-hidden shadow-sm">
+            <div className="px-5 py-3 border-b border-black/10 dark:border-white/10 flex items-center justify-between bg-black/[0.02] dark:bg-white/[0.02]">
+              <div className="text-xs font-bold uppercase tracking-wider text-black/60 dark:text-white/60">
+                <span>Driver & Tour-Guide Withdrawal Requests ({payoutRequests.length})</span>
+              </div>
+              <span className="text-xs font-mono text-black/40 dark:text-white/40">
+                Fail-closed payout adapter (PAYOUTS_ENABLED=false until live provider configured)
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 bg-black/[0.02] dark:bg-white/[0.02]">
+                    <th className="px-4 py-2.5 font-semibold">Payout ID</th>
+                    <th className="px-4 py-2.5 font-semibold">Beneficiary</th>
+                    <th className="px-4 py-2.5 font-semibold">Amount</th>
+                    <th className="px-4 py-2.5 font-semibold">Destination</th>
+                    <th className="px-4 py-2.5 font-semibold">Status</th>
+                    <th className="px-4 py-2.5 font-semibold">Provider Note</th>
+                    <th className="px-4 py-2.5 font-semibold">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                  {payoutRequests.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-black/40 dark:text-white/40">
+                        No withdrawal requests submitted yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    payoutRequests.map((pr: any) => (
+                      <tr key={pr.id} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
+                        <td className="px-4 py-2.5 font-mono text-[11px]">{pr.payout_reference || pr.id}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="font-bold uppercase">{pr.beneficiary_role || pr.beneficiary_type}</span>: <span className="font-mono">{pr.user_id || pr.beneficiary_id}</span>
+                        </td>
+                        <td className="px-4 py-2.5 font-bold">{formatUGX(pr.amount_ugx)}</td>
+                        <td className="px-4 py-2.5 font-mono text-[11px]">{pr.account_number || pr.destination_summary || 'MOMO'}</td>
+                        <td className="px-4 py-2.5 font-mono font-bold text-[11px]">{pr.status}</td>
+                        <td className="px-4 py-2.5 text-black/60 dark:text-white/60">{pr.failure_reason || pr.provider_tx_ref || 'Reserved in 2060'}</td>
+                        <td className="px-4 py-2.5 font-mono text-[11px] text-black/50 dark:text-white/50">
+                          {new Date(pr.created_at).toLocaleString('en-GB')}
                         </td>
                       </tr>
                     ))

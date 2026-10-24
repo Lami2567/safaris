@@ -1,5 +1,9 @@
 import { Request, Response } from 'express';
 import { FinancialService, FinancialError } from './financial.service';
+import { LedgerService } from './ledger.service';
+import { PayoutService } from './payout.service';
+import { ReconciliationService } from './reconciliation.service';
+import { FinancialOutboxService } from './outbox.service';
 import { DpoPayGateway } from '../payment/dpo_gateway';
 import { localStore } from '../../config/database';
 
@@ -33,6 +37,96 @@ export class FinancialController {
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to retrieve wallet balance.' });
+    }
+  }
+
+  /**
+   * GET /wallet/summary
+   * Returns complete wallet summary: available, reserved, pending topups, deposits, spending, refunds, compliance status.
+   */
+  public static async getWalletSummary(req: Request, res: Response): Promise<void> {
+    try {
+      const authUser = (req as any).user;
+      const userId = authUser?.userId || authUser?.id || (req.query.userId as string);
+      if (!userId) {
+        res.status(401).json({ error: 'Authentication required.' });
+        return;
+      }
+
+      const env = (req.query.environment as any) || DpoPayGateway.environment;
+      const summary = FinancialService.getWalletAccountSummary(userId, env);
+      res.json(summary);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve wallet summary.' });
+    }
+  }
+
+  /**
+   * GET /payouts
+   * Returns beneficiary earnings summary and withdrawal history for the authenticated driver/guide.
+   */
+  public static async getUserPayouts(req: Request, res: Response): Promise<void> {
+    try {
+      const authUser = (req as any).user;
+      const userId = authUser?.userId || authUser?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Authentication required.' });
+        return;
+      }
+
+      const env = (req.query.environment as any) || DpoPayGateway.environment;
+      const role = String(authUser?.role || 'driver').toLowerCase();
+      const beneficiaryRole: 'driver' | 'tour_guide' = role.includes('guide') ? 'tour_guide' : 'driver';
+      const summary = PayoutService.getBeneficiaryEarningsSummary(userId, beneficiaryRole, env);
+      const requests = PayoutService.getPayoutRequests({ userId, environment: env });
+      res.json({
+        beneficiaryId: userId,
+        beneficiaryRole,
+        environment: env,
+        summary,
+        payoutRequests: requests,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve payouts.' });
+    }
+  }
+
+  /**
+   * POST /payouts/request
+   * Submits an auditable withdrawal request for verified net driver/guide earnings.
+   */
+  public static async requestPayout(req: Request, res: Response): Promise<void> {
+    try {
+      const authUser = (req as any).user;
+      const userId = authUser?.userId || authUser?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Authentication required.' });
+        return;
+      }
+
+      const env = (req.body.environment as any) || DpoPayGateway.environment;
+      const role = String(authUser?.role || req.body.beneficiaryType || 'driver').toLowerCase();
+      const beneficiaryRole: 'driver' | 'tour_guide' = role.includes('guide') ? 'tour_guide' : 'driver';
+      const amountUgx = Number(req.body.amountUgx);
+      const user = localStore.users.get(userId);
+      const accountNumber = req.body.destinationSummary || req.body.accountNumber || user?.phone || '+256770000000';
+
+      const payoutReq = await PayoutService.requestWithdrawal({
+        userId,
+        beneficiaryRole,
+        amountUgx,
+        destinationId: req.body.destinationId,
+        accountNumber,
+        accountName: user?.full_name || 'Beneficiary',
+        environment: env,
+        idempotencyKey: req.body.idempotencyKey || `payout_req_${userId}_${Date.now()}`,
+      });
+
+      const executed = await PayoutService.executePayout(payoutReq.id, userId);
+      res.json({ success: true, payout: executed });
+    } catch (err: any) {
+      const status = err instanceof FinancialError ? err.httpStatus : 400;
+      res.status(status).json({ error: err.message || 'Failed to request payout.' });
     }
   }
 
@@ -259,6 +353,182 @@ export class FinancialController {
     } catch (err: any) {
       const status = err instanceof FinancialError ? err.httpStatus : 500;
       res.status(status).json({ error: err.message || 'Failed to record adjustment.' });
+    }
+  }
+
+  /**
+   * GET /admin/financials/double-entry
+   * Returns double-entry journal transactions, postings, account projections, and trial balance verification.
+   */
+  public static async getDoubleEntryLedger(req: Request, res: Response): Promise<void> {
+    try {
+      const env = (req.query.environment as any) || DpoPayGateway.environment;
+      const limit = Math.min(Number(req.query.limit || 200), 500);
+      const trialBalance = LedgerService.verifyTrialBalance(env);
+
+      const transactions = Array.from(localStore.ledger_transactions.values())
+        .filter((t) => !env || t.environment === env)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, limit);
+
+      const txIds = new Set(transactions.map((t) => t.id));
+      const entries = Array.from(localStore.ledger_entries.values()).filter((e) => txIds.has(e.transaction_id));
+      const accounts = Array.from(localStore.ledger_accounts.values()).filter((a) => !env || a.environment === env);
+      const projections = Array.from(localStore.account_balance_projections.values());
+
+      res.json({
+        environment: env,
+        trialBalance,
+        accountsCount: accounts.length,
+        transactionsCount: transactions.length,
+        entriesCount: entries.length,
+        accounts,
+        projections,
+        transactions: transactions.map((tx) => ({
+          ...tx,
+          entries: entries.filter((e) => e.transaction_id === tx.id),
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve double-entry ledger.' });
+    }
+  }
+
+  /**
+   * GET /admin/financials/payouts
+   */
+  public static async adminGetPayouts(req: Request, res: Response): Promise<void> {
+    try {
+      const env = (req.query.environment as any) || DpoPayGateway.environment;
+      const status = req.query.status as string | undefined;
+      const payouts = PayoutService.getPayoutRequests({ environment: env, status });
+      res.json({
+        environment: env,
+        count: payouts.length,
+        payouts,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve payout requests.' });
+    }
+  }
+
+  /**
+   * POST /admin/financials/payouts/:id/execute
+   */
+  public static async adminExecutePayout(req: Request, res: Response): Promise<void> {
+    try {
+      const adminId = (req as any).user?.id || 'ADMIN';
+      const { id } = req.params;
+      const result = await PayoutService.executePayout(id, `ADMIN_${adminId}`);
+      res.json({ success: true, payout: result });
+    } catch (err: any) {
+      const status = err instanceof FinancialError ? err.httpStatus : 400;
+      res.status(status).json({ error: err.message || 'Failed to execute payout.' });
+    }
+  }
+
+  /**
+   * POST /admin/financials/payouts/:id/reconcile
+   */
+  public static async adminReconcilePayout(req: Request, res: Response): Promise<void> {
+    try {
+      const adminId = (req as any).user?.id || 'ADMIN';
+      const { id } = req.params;
+      const result = await PayoutService.reconcileUncertainPayout(id, `ADMIN_${adminId}`);
+      res.json({ success: true, payout: result });
+    } catch (err: any) {
+      const status = err instanceof FinancialError ? err.httpStatus : 400;
+      res.status(status).json({ error: err.message || 'Failed to reconcile payout.' });
+    }
+  }
+
+  /**
+   * GET /admin/financials/reconciliation
+   */
+  public static async getReconciliationStatus(req: Request, res: Response): Promise<void> {
+    try {
+      const env = (req.query.environment as any) || DpoPayGateway.environment;
+      const runs = Array.from(localStore.reconciliation_runs.values())
+        .filter((r) => !env || r.environment === env)
+        .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+        .slice(0, 25);
+      const discrepancies = ReconciliationService.getDiscrepancies(env);
+      const settlements = Array.from(localStore.payment_settlements.values())
+        .filter((s) => !env || s.environment === env)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      res.json({
+        environment: env,
+        runs,
+        discrepancies,
+        settlements,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve reconciliation status.' });
+    }
+  }
+
+  /**
+   * POST /admin/financials/reconciliation/run
+   */
+  public static async runReconciliation(req: Request, res: Response): Promise<void> {
+    try {
+      const adminId = (req as any).user?.id || 'ADMIN';
+      const env = (req.body.environment as any) || (req.query.environment as any) || DpoPayGateway.environment;
+      const result = await ReconciliationService.runReconciliation(env, `ADMIN_${adminId}`);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to run reconciliation.' });
+    }
+  }
+
+  /**
+   * POST /admin/financials/settlements/import
+   */
+  public static async importSettlementReport(req: Request, res: Response): Promise<void> {
+    try {
+      const adminId = (req as any).user?.id || 'ADMIN';
+      const env = (req.body.environment as any) || DpoPayGateway.environment;
+      const { rows, records } = req.body;
+      const settlementRows = Array.isArray(rows) ? rows : Array.isArray(records) ? records : null;
+      if (!settlementRows) {
+        res.status(400).json({ error: 'rows or records array is required.' });
+        return;
+      }
+      const result = await ReconciliationService.importSettlementReport({
+        rows: settlementRows,
+        environment: env,
+        actorId: `ADMIN_${adminId}`,
+      });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to import settlement report.' });
+    }
+  }
+
+  /**
+   * GET /admin/financials/audit-logs
+   */
+  public static async getFinancialAuditLogs(req: Request, res: Response): Promise<void> {
+    try {
+      const logs = Array.from(localStore.financial_audit_logs.values())
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 200);
+      res.json({ count: logs.length, logs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve financial audit logs.' });
+    }
+  }
+
+  /**
+   * GET /admin/financials/outbox
+   */
+  public static async getOutboxStatus(req: Request, res: Response): Promise<void> {
+    try {
+      const jobs = FinancialOutboxService.getAllJobs();
+      res.json({ count: jobs.length, jobs: jobs.slice(0, 100) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to retrieve outbox status.' });
     }
   }
 }

@@ -1,6 +1,7 @@
 import { db, localStore } from '../../config/database';
 import { ENV } from '../../config/env';
 import { FinancialService } from '../financial/financial.service';
+import { PayoutService } from '../financial/payout.service';
 import { broadcastDriverSnapshot, emitToTrip, emitToUser } from '../../realtime/socket_server';
 
 export class DriverService {
@@ -359,11 +360,10 @@ export class DriverService {
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
 
+    const activeEnv = (ENV.DPO_ENVIRONMENT || 'sandbox') as 'sandbox' | 'production';
+    const earningsSummary = PayoutService.getBeneficiaryEarningsSummary(driverId, 'driver', activeEnv);
     const completedCount = completedTrips.filter((t) => t.status === 'TRIP_COMPLETED').length;
-    const todayEarningsUGX = Math.max(
-      Number(driver?.today_earnings_ugx ?? 0),
-      calculatedCompletedEarnings
-    );
+    const todayEarningsUGX = earningsSummary.availableEarningsUgx;
 
     return {
       driverId,
@@ -374,7 +374,8 @@ export class DriverService {
       totalTrips: Math.max(Number(user?.total_trips ?? 0), completedCount),
       completedTripsCount: completedCount,
       completedTripsToday: completedCount,
-      walletBalanceUGX: FinancialService.calculateWalletBalance(driverId, (ENV.DPO_ENVIRONMENT || 'sandbox') as any),
+      walletBalanceUGX: FinancialService.calculateWalletBalance(driverId, activeEnv),
+      earningsSummary,
       isApproved,
       approvalStatus,
       isOnline: driver ? Boolean(driver.is_online) : false,
@@ -401,29 +402,45 @@ export class DriverService {
     };
   }
 
-  public static cashOut(driverId: string) {
-    const driver = localStore.drivers.get(driverId);
+  public static async cashOut(driverId: string, requestedAmountUgx?: number, idempotencyKey?: string) {
+    const driver = this.ensureDriverRecord(driverId);
     const user = localStore.users.get(driverId);
     if (!driver || !user) {
       throw new Error('Driver not found.');
     }
 
-    const payoutAmount = Number(driver.today_earnings_ugx || 0);
-    if (payoutAmount <= 0) {
-      throw new Error('No earnings available for cashout.');
+    const activeEnv = (ENV.DPO_ENVIRONMENT || 'sandbox') as 'sandbox' | 'production';
+    const summary = PayoutService.getBeneficiaryEarningsSummary(driverId, 'driver', activeEnv);
+    const amountUgx = requestedAmountUgx !== undefined ? Math.round(Number(requestedAmountUgx)) : summary.availableEarningsUgx;
+    if (amountUgx <= 0) {
+      throw new Error('No verified withdrawable earnings available for cashout.');
     }
 
-    driver.today_earnings_ugx = 0;
-    user.wallet_balance_ugx = Number(user.wallet_balance_ugx || 0) + payoutAmount;
+    const payoutRequest = await PayoutService.requestWithdrawal({
+      userId: driverId,
+      beneficiaryRole: 'driver',
+      amountUgx,
+      accountNumber: user.phone || 'Mobile Money',
+      accountName: user.full_name || 'Driver',
+      environment: activeEnv,
+      idempotencyKey: idempotencyKey || `cashout_${driverId}_${Date.now()}`,
+    });
 
-    db.persistDriver(driver).catch(() => {});
-    db.persistUser(user).catch(() => {});
+    const executed = await PayoutService.executePayout(payoutRequest.id, driverId);
+    driver.today_earnings_ugx = PayoutService.getBeneficiaryEarningsSummary(driverId, 'driver', activeEnv).availableEarningsUgx;
+    await db.persistDriver(driver).catch(() => {});
 
     return {
-      success: true,
-      amountUGX: payoutAmount,
+      success: executed.status === 'COMPLETED' || executed.status === 'MANUAL_DISBURSEMENT_REQUIRED',
+      payoutRequestId: executed.id,
+      status: executed.status,
+      amountUGX: executed.amount_ugx,
       targetPhone: user.phone,
-      message: `Dispatched UGX ${payoutAmount.toLocaleString()} to ${user.phone} via Mobile Money.`,
+      providerReference: executed.provider_tx_ref,
+      message:
+        executed.status === 'COMPLETED'
+          ? `Dispatched UGX ${executed.amount_ugx.toLocaleString()} to ${user.phone}.`
+          : `Withdrawal of UGX ${executed.amount_ugx.toLocaleString()} reserved (${executed.status}): ${executed.failure_reason || 'Awaiting payout provider execution.'}`,
     };
   }
 }

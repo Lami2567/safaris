@@ -9,6 +9,9 @@ import {
 } from '../../realtime/socket_server';
 import { NotificationService } from '../notification/notification.service';
 import { AdminService } from '../admin/admin.service';
+import { FinancialService } from '../financial/financial.service';
+import { PayoutService } from '../financial/payout.service';
+import { ENV } from '../../config/env';
 
 export interface EstimateRequest {
   pickupLat: number;
@@ -373,11 +376,32 @@ export class TripService {
     trip.status = status;
     trip.updated_at = new Date().toISOString();
 
+    if (status === 'DRIVER_ARRIVED' && !trip.driver_arrived_at) {
+      trip.driver_arrived_at = trip.updated_at;
+    }
+
     if (status === 'TRIP_COMPLETED' && previousStatus !== 'TRIP_COMPLETED') {
       const driver = trip.driver_id ? localStore.drivers.get(trip.driver_id) : null;
+      const activeEnv = (trip.payment_environment || ENV.DPO_ENVIRONMENT || 'sandbox') as 'sandbox' | 'production';
+      if (trip.payment_status === 'PAID' || trip.payment_status === 'COMPLETED') {
+        const hasEarning = Array.from(localStore.platform_earnings.values()).some(
+          (e: any) => e.booking_type === 'TRIP' && e.booking_id === tripId && e.environment === activeEnv
+        );
+        if (!hasEarning && trip.driver_id) {
+          FinancialService.recordPlatformEarning({
+            bookingType: 'TRIP',
+            bookingId: tripId,
+            payerUserId: trip.customer_id,
+            beneficiaryId: trip.driver_id,
+            grossAmountUgx: Number(trip.fare_ugx || 0) + Number(trip.tip_ugx || 0),
+            commissionRate: 15.0,
+            paymentMethod: trip.payment_method || 'WALLET',
+            environment: activeEnv,
+          }).catch((err) => console.warn('[TripService] recordPlatformEarning error:', err));
+        }
+      }
       if (driver) {
-        driver.today_earnings_ugx =
-          Number(driver.today_earnings_ugx || 0) + Number(trip.fare_ugx || 0);
+        driver.today_earnings_ugx = PayoutService.getBeneficiaryEarningsSummary(driver.id, 'driver', activeEnv).availableEarningsUgx;
         driver.is_available = Boolean(driver.is_online);
         driver.updated_at = new Date().toISOString();
         db.persistDriver(driver).catch(() => {});

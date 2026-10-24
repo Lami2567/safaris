@@ -622,3 +622,404 @@ ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS refund_status VARCHAR(32) DEFAUL
 ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS refunded_amount_ugx NUMERIC(14, 2) DEFAULT 0.0;
 ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS refund_id VARCHAR(64);
 
+-- ==========================================================
+-- 19. PRODUCTION DOUBLE-ENTRY FINANCIAL ENGINE SCHEMA
+-- ==========================================================
+
+-- 19a. CHART OF ACCOUNTS (ledger_accounts)
+CREATE TABLE IF NOT EXISTS ledger_accounts (
+    id VARCHAR(64) PRIMARY KEY,
+    account_code VARCHAR(64) NOT NULL UNIQUE,
+    account_name VARCHAR(128) NOT NULL,
+    account_type VARCHAR(32) NOT NULL CHECK (account_type IN ('ASSET', 'LIABILITY', 'REVENUE', 'EXPENSE', 'EQUITY')),
+    normal_balance VARCHAR(16) NOT NULL CHECK (normal_balance IN ('DEBIT', 'CREDIT')),
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    owner_type VARCHAR(32) DEFAULT 'PLATFORM',
+    owner_id VARCHAR(64),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_accounts_owner ON ledger_accounts(owner_type, owner_id);
+
+-- 19b. IMMUTABLE LEDGER TRANSACTIONS HEADER (ledger_transactions)
+CREATE TABLE IF NOT EXISTS ledger_transactions (
+    id VARCHAR(64) PRIMARY KEY,
+    event_id VARCHAR(128) NOT NULL UNIQUE,
+    idempotency_key VARCHAR(128) UNIQUE,
+    transaction_type VARCHAR(64) NOT NULL,
+    reference_type VARCHAR(64) NOT NULL,
+    reference_id VARCHAR(64) NOT NULL,
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    total_debit_ugx BIGINT NOT NULL CHECK (total_debit_ugx > 0),
+    total_credit_ugx BIGINT NOT NULL CHECK (total_credit_ugx > 0),
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    status VARCHAR(32) NOT NULL DEFAULT 'POSTED' CHECK (status IN ('POSTED', 'REVERSED')),
+    description TEXT NOT NULL,
+    posted_by VARCHAR(64) DEFAULT 'SYSTEM',
+    reversal_of_transaction_id VARCHAR(64) REFERENCES ledger_transactions(id),
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_double_entry_balanced CHECK (total_debit_ugx = total_credit_ugx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_tx_ref ON ledger_transactions(reference_type, reference_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_tx_env_created ON ledger_transactions(environment, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ledger_tx_type ON ledger_transactions(transaction_type, environment);
+
+-- 19c. IMMUTABLE LEDGER ENTRIES (ledger_entries)
+CREATE TABLE IF NOT EXISTS ledger_entries (
+    id VARCHAR(64) PRIMARY KEY,
+    transaction_id VARCHAR(64) NOT NULL REFERENCES ledger_transactions(id) ON DELETE RESTRICT,
+    account_id VARCHAR(64) NOT NULL REFERENCES ledger_accounts(id) ON DELETE RESTRICT,
+    account_code VARCHAR(64) NOT NULL,
+    owner_id VARCHAR(64),
+    direction VARCHAR(16) NOT NULL CHECK (direction IN ('DEBIT', 'CREDIT')),
+    amount_ugx BIGINT NOT NULL CHECK (amount_ugx > 0),
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_tx ON ledger_entries(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_account ON ledger_entries(account_code, environment);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_owner ON ledger_entries(owner_id, environment);
+
+-- Enforce immutability of posted ledger entries at PostgreSQL boundary
+CREATE OR REPLACE FUNCTION prevent_ledger_entry_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Ledger entries are immutable and cannot be modified or deleted. Use a compensating ledger transaction.';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_immutable_ledger_entries ON ledger_entries;
+CREATE TRIGGER trg_immutable_ledger_entries
+BEFORE UPDATE OR DELETE ON ledger_entries
+FOR EACH ROW EXECUTE FUNCTION prevent_ledger_entry_mutation();
+
+-- 19d. ACCOUNT BALANCE PROJECTIONS (account_balance_projections)
+CREATE TABLE IF NOT EXISTS account_balance_projections (
+    id VARCHAR(128) PRIMARY KEY,
+    account_id VARCHAR(64) NOT NULL REFERENCES ledger_accounts(id),
+    account_code VARCHAR(64) NOT NULL,
+    owner_id VARCHAR(64) NOT NULL DEFAULT 'PLATFORM',
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    debit_total_ugx BIGINT NOT NULL DEFAULT 0,
+    credit_total_ugx BIGINT NOT NULL DEFAULT 0,
+    net_balance_ugx BIGINT NOT NULL DEFAULT 0,
+    last_transaction_id VARCHAR(64),
+    version BIGINT NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(account_code, owner_id, currency, environment)
+);
+
+-- 19e. CUSTOMER & BENEFICIARY WALLETS (wallets & wallet_holds)
+CREATE TABLE IF NOT EXISTS wallets (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    owner_role VARCHAR(32) NOT NULL DEFAULT 'customer',
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    available_balance_ugx BIGINT NOT NULL DEFAULT 0 CHECK (available_balance_ugx >= 0),
+    reserved_balance_ugx BIGINT NOT NULL DEFAULT 0 CHECK (reserved_balance_ugx >= 0),
+    pending_topups_ugx BIGINT NOT NULL DEFAULT 0 CHECK (pending_topups_ugx >= 0),
+    total_verified_deposits_ugx BIGINT NOT NULL DEFAULT 0 CHECK (total_verified_deposits_ugx >= 0),
+    total_completed_spending_ugx BIGINT NOT NULL DEFAULT 0 CHECK (total_completed_spending_ugx >= 0),
+    total_refunded_ugx BIGINT NOT NULL DEFAULT 0 CHECK (total_refunded_ugx >= 0),
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'FROZEN', 'SUSPENDED', 'COMPLIANCE_RESTRICTED')),
+    custody_partner_status VARCHAR(64) DEFAULT 'INTERNAL_LEDGER_ONLY',
+    version BIGINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, currency, environment)
+);
+
+CREATE TABLE IF NOT EXISTS wallet_holds (
+    id VARCHAR(64) PRIMARY KEY,
+    wallet_id VARCHAR(64) NOT NULL REFERENCES wallets(id) ON DELETE RESTRICT,
+    user_id VARCHAR(64) NOT NULL REFERENCES users(id),
+    amount_ugx BIGINT NOT NULL CHECK (amount_ugx > 0),
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    reference_type VARCHAR(64) NOT NULL,
+    reference_id VARCHAR(64) NOT NULL,
+    idempotency_key VARCHAR(128) UNIQUE,
+    status VARCHAR(32) NOT NULL DEFAULT 'HELD' CHECK (status IN ('HELD', 'CAPTURED', 'RELEASED', 'EXPIRED')),
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_holds_user_status ON wallet_holds(user_id, status, environment);
+
+-- 19f. PAYMENT INTENTS, ATTEMPTS, PROVIDER EVENTS, VERIFICATIONS & SETTLEMENTS
+CREATE TABLE IF NOT EXISTS payment_intents (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL REFERENCES users(id),
+    reference_type VARCHAR(32) NOT NULL,
+    reference_id VARCHAR(64) NOT NULL,
+    amount_ugx BIGINT NOT NULL CHECK (amount_ugx > 0),
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    payment_method VARCHAR(64) NOT NULL,
+    idempotency_key VARCHAR(128) UNIQUE,
+    status VARCHAR(32) NOT NULL DEFAULT 'CREATED',
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    ledger_transaction_id VARCHAR(64),
+    policy_version_id VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS payment_attempts (
+    id VARCHAR(64) PRIMARY KEY,
+    payment_intent_id VARCHAR(64) REFERENCES payment_intents(id),
+    payment_id VARCHAR(64),
+    merchant_reference VARCHAR(128) NOT NULL UNIQUE,
+    dpo_trans_token VARCHAR(128) UNIQUE,
+    dpo_trans_ref VARCHAR(128),
+    amount_ugx BIGINT NOT NULL CHECK (amount_ugx > 0),
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    payment_method VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'INITIATED',
+    result_code VARCHAR(32),
+    result_explanation TEXT,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS payment_provider_events (
+    id VARCHAR(64) PRIMARY KEY,
+    provider VARCHAR(32) NOT NULL DEFAULT 'DPO',
+    event_type VARCHAR(64) NOT NULL,
+    dpo_trans_token VARCHAR(128),
+    merchant_reference VARCHAR(128),
+    payment_id VARCHAR(64),
+    raw_payload JSONB DEFAULT '{}',
+    processed BOOLEAN DEFAULT FALSE,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    received_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS payment_verifications (
+    id VARCHAR(64) PRIMARY KEY,
+    payment_id VARCHAR(64) NOT NULL,
+    dpo_trans_token VARCHAR(128) NOT NULL,
+    merchant_reference VARCHAR(128) NOT NULL,
+    result_code VARCHAR(32) NOT NULL,
+    result_explanation TEXT,
+    verified_amount_ugx BIGINT,
+    verified_currency VARCHAR(8),
+    is_amount_matched BOOLEAN NOT NULL DEFAULT FALSE,
+    is_currency_matched BOOLEAN NOT NULL DEFAULT FALSE,
+    verification_status VARCHAR(32) NOT NULL,
+    source VARCHAR(32) NOT NULL DEFAULT 'server',
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    verified_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS payment_settlements (
+    id VARCHAR(64) PRIMARY KEY,
+    settlement_reference VARCHAR(128) NOT NULL UNIQUE,
+    provider VARCHAR(32) NOT NULL DEFAULT 'DPO',
+    payment_id VARCHAR(64),
+    dpo_trans_token VARCHAR(128),
+    gross_amount_ugx BIGINT NOT NULL,
+    gateway_fee_ugx BIGINT NOT NULL DEFAULT 0,
+    net_settled_ugx BIGINT NOT NULL,
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    settlement_status VARCHAR(32) NOT NULL DEFAULT 'SETTLED',
+    settlement_date TIMESTAMP WITH TIME ZONE,
+    ledger_transaction_id VARCHAR(64),
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 19g. REFUND ATTEMPTS & POLICY VERSIONS
+CREATE TABLE IF NOT EXISTS financial_policy_versions (
+    id VARCHAR(64) PRIMARY KEY,
+    policy_id VARCHAR(64) NOT NULL,
+    version_number INT NOT NULL,
+    policy_name VARCHAR(128) NOT NULL,
+    max_waiting_minutes INT NOT NULL DEFAULT 15,
+    refund_percentage NUMERIC(5, 2) NOT NULL DEFAULT 100.00,
+    developer_commission_rate NUMERIC(5, 2) NOT NULL DEFAULT 5.00,
+    platform_ride_commission_rate NUMERIC(5, 2) NOT NULL DEFAULT 10.00,
+    platform_tour_commission_rate NUMERIC(5, 2) NOT NULL DEFAULT 15.00,
+    rules_snapshot JSONB NOT NULL DEFAULT '{}',
+    created_by VARCHAR(64) DEFAULT 'SYSTEM',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(policy_id, version_number)
+);
+
+CREATE TABLE IF NOT EXISTS refund_attempts (
+    id VARCHAR(64) PRIMARY KEY,
+    refund_id VARCHAR(64) NOT NULL REFERENCES refunds(id),
+    attempt_number INT NOT NULL DEFAULT 1,
+    refund_method VARCHAR(32) NOT NULL,
+    amount_ugx BIGINT NOT NULL CHECK (amount_ugx > 0),
+    provider_reference VARCHAR(128),
+    status VARCHAR(32) NOT NULL,
+    failure_reason TEXT,
+    ledger_transaction_id VARCHAR(64),
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 19h. WITHDRAWALS, PAYOUT DESTINATIONS, REQUESTS & ATTEMPTS
+CREATE TABLE IF NOT EXISTS payout_destinations (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL REFERENCES users(id),
+    beneficiary_role VARCHAR(32) NOT NULL,
+    channel VARCHAR(32) NOT NULL CHECK (channel IN ('MTN_MOMO', 'AIRTEL_MONEY', 'BANK_TRANSFER')),
+    account_number VARCHAR(64) NOT NULL,
+    account_name VARCHAR(128) NOT NULL,
+    bank_name VARCHAR(128),
+    is_verified BOOLEAN DEFAULT TRUE,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS payout_requests (
+    id VARCHAR(64) PRIMARY KEY,
+    payout_reference VARCHAR(128) NOT NULL UNIQUE,
+    user_id VARCHAR(64) NOT NULL REFERENCES users(id),
+    beneficiary_role VARCHAR(32) NOT NULL CHECK (beneficiary_role IN ('driver', 'tour_guide')),
+    destination_id VARCHAR(64) REFERENCES payout_destinations(id),
+    amount_ugx BIGINT NOT NULL CHECK (amount_ugx > 0),
+    fee_ugx BIGINT NOT NULL DEFAULT 0 CHECK (fee_ugx >= 0),
+    net_amount_ugx BIGINT NOT NULL CHECK (net_amount_ugx > 0),
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    status VARCHAR(32) NOT NULL DEFAULT 'REQUESTED' CHECK (status IN ('REQUESTED', 'APPROVED', 'PROCESSING', 'UNCERTAIN_TIMEOUT', 'COMPLETED', 'FAILED', 'REJECTED', 'CANCELLED', 'MANUAL_DISBURSEMENT_REQUIRED')),
+    idempotency_key VARCHAR(128) UNIQUE,
+    hold_id VARCHAR(64),
+    ledger_transaction_id VARCHAR(64),
+    provider_name VARCHAR(64) DEFAULT 'DISABLED_PENDING_PROVIDER',
+    provider_tx_ref VARCHAR(128) UNIQUE,
+    approved_by VARCHAR(64),
+    approved_at TIMESTAMP WITH TIME ZONE,
+    failure_reason TEXT,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    audit_trail JSONB DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_payout_requests_user ON payout_requests(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payout_requests_status ON payout_requests(status, environment);
+
+CREATE TABLE IF NOT EXISTS payout_attempts (
+    id VARCHAR(64) PRIMARY KEY,
+    payout_request_id VARCHAR(64) NOT NULL REFERENCES payout_requests(id),
+    attempt_number INT NOT NULL DEFAULT 1,
+    provider_name VARCHAR(64) NOT NULL,
+    provider_reference VARCHAR(128) NOT NULL UNIQUE,
+    status VARCHAR(32) NOT NULL,
+    response_code VARCHAR(32),
+    response_message TEXT,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 19i. COMMISSION RECORDS, OUTBOX, RECONCILIATION & FINANCIAL AUDIT LOGS
+CREATE TABLE IF NOT EXISTS commission_records (
+    id VARCHAR(64) PRIMARY KEY,
+    booking_type VARCHAR(32) NOT NULL,
+    booking_id VARCHAR(64) NOT NULL,
+    milestone_id VARCHAR(64) NOT NULL DEFAULT 'FULL_COMPLETION',
+    payment_id VARCHAR(64),
+    beneficiary_id VARCHAR(64),
+    beneficiary_role VARCHAR(32) NOT NULL,
+    gross_amount_ugx BIGINT NOT NULL CHECK (gross_amount_ugx > 0),
+    developer_commission_rate NUMERIC(5, 2) NOT NULL DEFAULT 5.00,
+    developer_commission_ugx BIGINT NOT NULL DEFAULT 0 CHECK (developer_commission_ugx >= 0),
+    platform_commission_rate NUMERIC(5, 2) NOT NULL DEFAULT 0.00,
+    platform_commission_ugx BIGINT NOT NULL DEFAULT 0 CHECK (platform_commission_ugx >= 0),
+    beneficiary_net_ugx BIGINT NOT NULL CHECK (beneficiary_net_ugx >= 0),
+    currency VARCHAR(8) NOT NULL DEFAULT 'UGX',
+    status VARCHAR(32) NOT NULL DEFAULT 'EARNED' CHECK (status IN ('PENDING_MILESTONE', 'EARNED', 'REVERSED', 'DISPUTED')),
+    ledger_transaction_id VARCHAR(64),
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_commission_allocation_sum CHECK (developer_commission_ugx + platform_commission_ugx + beneficiary_net_ugx = gross_amount_ugx),
+    UNIQUE(booking_type, booking_id, milestone_id, environment)
+);
+
+CREATE TABLE IF NOT EXISTS financial_outbox (
+    id VARCHAR(64) PRIMARY KEY,
+    job_type VARCHAR(64) NOT NULL,
+    dedupe_key VARCHAR(128) UNIQUE,
+    payload JSONB NOT NULL DEFAULT '{}',
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED_RETRY', 'DEAD_LETTER')),
+    attempts INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 5,
+    next_run_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_error TEXT,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_outbox_poll ON financial_outbox(status, next_run_at ASC);
+
+CREATE TABLE IF NOT EXISTS reconciliation_runs (
+    id VARCHAR(64) PRIMARY KEY,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    triggered_by VARCHAR(64) NOT NULL DEFAULT 'SCHEDULED_WORKER',
+    status VARCHAR(32) NOT NULL DEFAULT 'COMPLETED',
+    total_payments_checked INT NOT NULL DEFAULT 0,
+    total_ledger_tx_checked INT NOT NULL DEFAULT 0,
+    total_wallets_checked INT NOT NULL DEFAULT 0,
+    discrepancies_found INT NOT NULL DEFAULT 0,
+    summary JSONB NOT NULL DEFAULT '{}',
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS reconciliation_discrepancies (
+    id VARCHAR(64) PRIMARY KEY,
+    run_id VARCHAR(64) REFERENCES reconciliation_runs(id),
+    discrepancy_type VARCHAR(64) NOT NULL,
+    severity VARCHAR(16) NOT NULL CHECK (severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+    reference_type VARCHAR(64) NOT NULL,
+    reference_id VARCHAR(64) NOT NULL,
+    expected_amount_ugx BIGINT,
+    actual_amount_ugx BIGINT,
+    currency VARCHAR(8) DEFAULT 'UGX',
+    description TEXT NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'INVESTIGATING', 'RESOLVED', 'FALSE_POSITIVE')),
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    resolved_by VARCHAR(64),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    resolution_notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_recon_discrepancies_open ON reconciliation_discrepancies(status, severity, environment);
+
+CREATE TABLE IF NOT EXISTS financial_audit_logs (
+    id VARCHAR(64) PRIMARY KEY,
+    actor_id VARCHAR(64) NOT NULL,
+    actor_role VARCHAR(32) NOT NULL,
+    action VARCHAR(128) NOT NULL,
+    entity_type VARCHAR(64) NOT NULL,
+    entity_id VARCHAR(64) NOT NULL,
+    amount_ugx BIGINT,
+    currency VARCHAR(8) DEFAULT 'UGX',
+    previous_state JSONB DEFAULT '{}',
+    new_state JSONB DEFAULT '{}',
+    reason TEXT,
+    ip_address VARCHAR(64) DEFAULT '',
+    signature_hash VARCHAR(128) NOT NULL,
+    environment VARCHAR(16) NOT NULL DEFAULT 'sandbox',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fin_audit_logs_created ON financial_audit_logs(created_at DESC);
+
+

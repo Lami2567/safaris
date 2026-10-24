@@ -29,6 +29,27 @@ export const localStore = {
   refunds: new Map<string, any>(),
   platform_earnings: new Map<string, any>(),
   financial_adjustments: new Map<string, any>(),
+  ledger_accounts: new Map<string, any>(),
+  ledger_transactions: new Map<string, any>(),
+  ledger_entries: new Map<string, any>(),
+  account_balance_projections: new Map<string, any>(),
+  wallets: new Map<string, any>(),
+  wallet_holds: new Map<string, any>(),
+  payment_intents: new Map<string, any>(),
+  payment_attempts: new Map<string, any>(),
+  payment_provider_events: new Map<string, any>(),
+  payment_verifications: new Map<string, any>(),
+  payment_settlements: new Map<string, any>(),
+  financial_policy_versions: new Map<string, any>(),
+  refund_attempts: new Map<string, any>(),
+  payout_destinations: new Map<string, any>(),
+  payout_requests: new Map<string, any>(),
+  payout_attempts: new Map<string, any>(),
+  commission_records: new Map<string, any>(),
+  financial_outbox: new Map<string, any>(),
+  reconciliation_runs: new Map<string, any>(),
+  reconciliation_discrepancies: new Map<string, any>(),
+  financial_audit_logs: new Map<string, any>(),
 };
 
 function resolveCandidatePaths(fileName: string): string[] {
@@ -1289,6 +1310,41 @@ class DatabaseManager {
       }
     }
     return { rows: [], rowCount: 0 };
+  }
+
+  /**
+   * Executes a callback inside an atomic PostgreSQL transaction with automatic bounded retries
+   * on serialization failure (40001) or deadlock detected (40P01).
+   */
+  public async withTransaction<T>(fn: (client: any | null) => Promise<T>, maxRetries = 4): Promise<T> {
+    if (!this.isPostgresConnected || !this.pool) {
+      return fn(null);
+    }
+
+    let attempt = 0;
+    while (true) {
+      attempt++;
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await fn(client);
+        await client.query('COMMIT');
+        return result;
+      } catch (err: any) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (_) {}
+        const pgCode = err?.code;
+        if ((pgCode === '40001' || pgCode === '40P01') && attempt < maxRetries) {
+          const delayMs = Math.min(200, 15 * Math.pow(2, attempt)) + Math.floor(Math.random() * 15);
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
   }
 
   public async close() {

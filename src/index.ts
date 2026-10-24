@@ -68,6 +68,8 @@ import { TourismService } from './services/tourism/tourism.service';
 import { TourGuideService } from './services/tour_guide/tour_guide.service';
 import { PaymentService } from './services/payment/payment.service';
 import { FinancialService } from './services/financial/financial.service';
+import { FinancialOutboxService } from './services/financial/outbox.service';
+import { ReconciliationService } from './services/financial/reconciliation.service';
 
 // Mount API Gateway routes under /api/v1
 app.use('/api/v1', apiRouter);
@@ -92,6 +94,15 @@ async function startServer() {
     PaymentService.startReconciler();
     await FinancialService.ensureDefaultRefundPolicy();
     FinancialService.startRefundScheduler();
+    FinancialOutboxService.registerHandler('DPO_VERIFY_PAYMENT', async (job) => {
+      if (job.payload?.paymentId) {
+        await PaymentService.verifyPayment(job.payload.paymentId, { source: 'reconciler' });
+      }
+    });
+    FinancialOutboxService.registerHandler('RUN_RECONCILIATION', async (job) => {
+      await ReconciliationService.runReconciliation(job.payload?.environment || ENV.DPO_ENVIRONMENT);
+    });
+    FinancialOutboxService.startWorker();
     console.log('✅ Persistent configurations, tourism records, and tour guides loaded.');
     console.log(`💳 DPO Pay Reconciler started (${ENV.DPO_ENVIRONMENT.toUpperCase()} mode).`);
     console.log('💰 Financial Engine initialized with default No-Show Refund Policy and background scheduler.');

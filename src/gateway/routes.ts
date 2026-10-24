@@ -208,10 +208,23 @@ apiRouter.post('/admin/payments/reconcile-open', authenticate, requireRole('admi
 // Financial Engine: Customer Wallets, Platform Earnings & Automatic Refunds
 // -------------------------------------------------------------
 apiRouter.get('/wallet/balance', authenticate, FinancialController.getBalance);
+apiRouter.get('/wallet/summary', authenticate, FinancialController.getWalletSummary);
 apiRouter.get('/wallet/transactions', authenticate, FinancialController.getTransactions);
+
+apiRouter.get('/payouts', authenticate, FinancialController.getUserPayouts);
+apiRouter.post('/payouts/request', authenticate, FinancialController.requestPayout);
 
 apiRouter.get('/admin/financials/overview', authenticate, requireRole('admin'), FinancialController.getOverview);
 apiRouter.get('/admin/financials/ledger', authenticate, requireRole('admin'), FinancialController.getEarningsLedger);
+apiRouter.get('/admin/financials/double-entry', authenticate, requireRole('admin'), FinancialController.getDoubleEntryLedger);
+apiRouter.get('/admin/financials/payouts', authenticate, requireRole('admin'), FinancialController.adminGetPayouts);
+apiRouter.post('/admin/financials/payouts/:id/execute', authenticate, requireRole('admin'), FinancialController.adminExecutePayout);
+apiRouter.post('/admin/financials/payouts/:id/reconcile', authenticate, requireRole('admin'), FinancialController.adminReconcilePayout);
+apiRouter.get('/admin/financials/reconciliation', authenticate, requireRole('admin'), FinancialController.getReconciliationStatus);
+apiRouter.post('/admin/financials/reconciliation/run', authenticate, requireRole('admin'), FinancialController.runReconciliation);
+apiRouter.post('/admin/financials/settlements/import', authenticate, requireRole('admin'), FinancialController.importSettlementReport);
+apiRouter.get('/admin/financials/audit-logs', authenticate, requireRole('admin'), FinancialController.getFinancialAuditLogs);
+apiRouter.get('/admin/financials/outbox', authenticate, requireRole('admin'), FinancialController.getOutboxStatus);
 apiRouter.get('/admin/refund-policies', authenticate, requireRole('admin'), FinancialController.getPolicies);
 apiRouter.put('/admin/refund-policies/:id', authenticate, requireRole('admin'), FinancialController.updatePolicy);
 apiRouter.get('/admin/refunds', authenticate, requireRole('admin'), FinancialController.getRefunds);
