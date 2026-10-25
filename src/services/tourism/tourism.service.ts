@@ -1,3 +1,4 @@
+import { resolveDataFilePaths } from '../../config/paths';
 import fs from 'fs';
 import path from 'path';
 import { localStore, db } from '../../config/database';
@@ -54,19 +55,8 @@ export interface CreateBookingRequest {
   paymentMethod: string;
 }
 
-const PERSISTENT_DESTINATIONS_FILES = [
-  path.resolve(__dirname, '../../database/persistent_destinations.json'),
-  path.resolve(process.cwd(), 'src/database/persistent_destinations.json'),
-  path.resolve(process.cwd(), 'backend/src/database/persistent_destinations.json'),
-  path.resolve(process.cwd(), 'persistent_destinations.json'),
-];
-
-const PERSISTENT_PACKAGES_FILES = [
-  path.resolve(__dirname, '../../database/persistent_packages.json'),
-  path.resolve(process.cwd(), 'src/database/persistent_packages.json'),
-  path.resolve(process.cwd(), 'backend/src/database/persistent_packages.json'),
-  path.resolve(process.cwd(), 'persistent_packages.json'),
-];
+const PERSISTENT_DESTINATIONS_FILES = resolveDataFilePaths('persistent_destinations.json');
+const PERSISTENT_PACKAGES_FILES = resolveDataFilePaths('persistent_packages.json');
 
 export class TourismService {
   private static isInitialized = false;

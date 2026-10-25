@@ -145,7 +145,7 @@ async function runTests() {
     console.log(`✅ 8. Tour Guides verified (0 unapproved/mock guides present).`);
 
     // 7. Test Express Parcel Delivery
-    const delivery = DeliveryService.createDelivery({
+    const delivery = await DeliveryService.createDelivery({
       senderId: loginRes.user.id,
       senderName: 'KATO SURAIMAN',
       senderPhone: '+256 704 127185',
@@ -393,7 +393,7 @@ async function runTests() {
   }
 }
 
-runTests().catch((err) => {
+runTests().then(() => { process.exit(0); }).catch((err) => {
   console.error('\n❌ Verification Suite Failed:', err);
   process.exit(1);
 });

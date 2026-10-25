@@ -408,11 +408,43 @@ export class LedgerService {
           );
         }
 
-        for (const ve of validatedEntries) {
+        // Deterministically sort entries by account and owner to prevent concurrent deadlocks
+        const sortedEntries = [...validatedEntries].sort((a, b) => {
+          const keyA = `${a.account.account_code}:${a.ownerId}`;
+          const keyB = `${b.account.account_code}:${b.ownerId}`;
+          return keyA.localeCompare(keyB);
+        });
+
+        for (const ve of sortedEntries) {
           const projKey = `${environment}:${ve.account.account_code}:${ve.ownerId}`;
-          const existingProj = localStore.account_balance_projections.get(projKey);
-          const prevDebit = BigInt(existingProj?.debit_total_ugx || 0);
-          const prevCredit = BigInt(existingProj?.credit_total_ugx || 0);
+          let prevDebit = 0n;
+          let prevCredit = 0n;
+          let prevVersion = 0;
+          let existingId: string | null = null;
+
+          if (client) {
+            // Lock row in PostgreSQL for authoritative serialization across nodes
+            const lockRes = await client.query(
+              `SELECT id, debit_total_ugx, credit_total_ugx, net_balance_ugx, version
+               FROM account_balance_projections
+               WHERE account_code = $1 AND owner_id = $2 AND currency = 'UGX' AND environment = $3
+               FOR UPDATE`,
+              [ve.account.account_code, ve.ownerId, environment]
+            );
+
+            if (lockRes && lockRes.rows && lockRes.rows.length > 0) {
+              const row = lockRes.rows[0];
+              existingId = row.id;
+              prevDebit = BigInt(row.debit_total_ugx || 0);
+              prevCredit = BigInt(row.credit_total_ugx || 0);
+              prevVersion = Number(row.version || 0);
+            }
+          } else {
+            const existingProj = stagedProjections.get(projKey) || localStore.account_balance_projections.get(projKey);
+            prevDebit = BigInt(existingProj?.debit_total_ugx || 0);
+            prevCredit = BigInt(existingProj?.credit_total_ugx || 0);
+            prevVersion = Number(existingProj?.version || 0);
+          }
 
           const newDebit = ve.direction === 'DEBIT' ? prevDebit + ve.amountBig : prevDebit;
           const newCredit = ve.direction === 'CREDIT' ? prevCredit + ve.amountBig : prevCredit;
@@ -423,8 +455,13 @@ export class LedgerService {
           const netBig =
             ve.account.normal_balance === 'DEBIT' ? newDebit - newCredit : newCredit - newDebit;
 
+          // Enforce non-negative constraint on liability / wallet accounts
+          if (['2001', '2002', '2003'].includes(ve.account.account_code) && netBig < 0n) {
+            throw new Error(`Insufficient balance: resulting balance for account ${ve.account.account_code} (${ve.ownerId}) cannot be negative (${netBig} UGX).`);
+          }
+
           const updatedProj: AccountBalanceProjection = {
-            id: projKey,
+            id: existingId || projKey,
             account_id: ve.account.id,
             account_code: ve.account.account_code,
             owner_id: ve.ownerId,
@@ -434,36 +471,52 @@ export class LedgerService {
             credit_total_ugx: Number(newCredit),
             net_balance_ugx: Number(netBig),
             last_transaction_id: txRecord.id,
-            version: (existingProj?.version || 0) + 1,
+            version: prevVersion + 1,
             updated_at: now,
           };
           stagedProjections.set(projKey, updatedProj);
 
           if (client) {
-            await client.query(
-              `INSERT INTO account_balance_projections (
-                 id, account_id, account_code, owner_id, currency, environment,
-                 debit_total_ugx, credit_total_ugx, net_balance_ugx, last_transaction_id, version, updated_at
-               ) VALUES ($1, $2, $3, $4, 'UGX', $5, $6, $7, $8, $9, 1, CURRENT_TIMESTAMP)
-               ON CONFLICT (account_code, owner_id, currency, environment) DO UPDATE SET
-                 debit_total_ugx = EXCLUDED.debit_total_ugx,
-                 credit_total_ugx = EXCLUDED.credit_total_ugx,
-                 net_balance_ugx = EXCLUDED.net_balance_ugx,
-                 last_transaction_id = EXCLUDED.last_transaction_id,
-                 version = account_balance_projections.version + 1,
-                 updated_at = CURRENT_TIMESTAMP`,
-              [
-                updatedProj.id,
-                updatedProj.account_id,
-                updatedProj.account_code,
-                updatedProj.owner_id,
-                updatedProj.environment,
-                updatedProj.debit_total_ugx,
-                updatedProj.credit_total_ugx,
-                updatedProj.net_balance_ugx,
-                updatedProj.last_transaction_id,
-              ]
-            );
+            if (existingId) {
+              await client.query(
+                `UPDATE account_balance_projections
+                 SET debit_total_ugx = $1, credit_total_ugx = $2, net_balance_ugx = $3,
+                     last_transaction_id = $4, version = version + 1, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $5`,
+                [
+                  updatedProj.debit_total_ugx,
+                  updatedProj.credit_total_ugx,
+                  updatedProj.net_balance_ugx,
+                  updatedProj.last_transaction_id,
+                  existingId,
+                ]
+              );
+            } else {
+              await client.query(
+                `INSERT INTO account_balance_projections (
+                   id, account_id, account_code, owner_id, currency, environment,
+                   debit_total_ugx, credit_total_ugx, net_balance_ugx, last_transaction_id, version, updated_at
+                 ) VALUES ($1, $2, $3, $4, 'UGX', $5, $6, $7, $8, $9, 1, CURRENT_TIMESTAMP)
+                 ON CONFLICT (account_code, owner_id, currency, environment) DO UPDATE SET
+                   debit_total_ugx = EXCLUDED.debit_total_ugx,
+                   credit_total_ugx = EXCLUDED.credit_total_ugx,
+                   net_balance_ugx = EXCLUDED.net_balance_ugx,
+                   last_transaction_id = EXCLUDED.last_transaction_id,
+                   version = account_balance_projections.version + 1,
+                   updated_at = CURRENT_TIMESTAMP`,
+                [
+                  updatedProj.id,
+                  updatedProj.account_id,
+                  updatedProj.account_code,
+                  updatedProj.owner_id,
+                  updatedProj.environment,
+                  updatedProj.debit_total_ugx,
+                  updatedProj.credit_total_ugx,
+                  updatedProj.net_balance_ugx,
+                  updatedProj.last_transaction_id,
+                ]
+              );
+            }
           }
         }
 

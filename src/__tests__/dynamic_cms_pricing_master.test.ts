@@ -515,6 +515,7 @@ async function runMasterVerification() {
   // ---------------------------------------------------------------------------
   const trip = await TripService.createTrip({
     customerId: 'cust_test_01',
+    quotationId: rideQuoteMed.quotationId,
     pickupTitle: 'Kampala Serena',
     pickupAddress: 'Kintu Rd',
     pickupLat: 0.3136,
@@ -530,6 +531,7 @@ async function runMasterVerification() {
   assert(trip.fareUgx === rideQuoteMed.totalPriceUgx, `Trip authoritative fare must equal server quote, got ${trip.fareUgx}`);
   const delivOrder = await DeliveryService.createDelivery({
     senderId: 'cust_test_01',
+    quotationId: delivDocsBoda.quotationId,
     senderName: 'John',
     senderPhone: '+256700000000',
     recipientName: 'Mary',
@@ -577,7 +579,7 @@ async function runMasterVerification() {
   process.exit(0);
 }
 
-runMasterVerification().catch((err) => {
+runMasterVerification().then(() => { process.exit(0); }).catch((err) => {
   console.error('❌ Verification failed:', err);
   process.exit(1);
 });

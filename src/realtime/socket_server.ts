@@ -154,6 +154,11 @@ export function initSocketServer(httpServer: HttpServer): Server {
       if (liveUser && liveUser.approval_status === 'SUSPENDED') {
         return next(new Error('Authentication error: Account suspended.'));
       }
+      const tokenVer = Number(decoded.tokenVersion ?? 1);
+      const userVer = Number(liveUser?.token_version ?? 1);
+      if (tokenVer < userVer) {
+        return next(new Error('Authentication error: Session revoked.'));
+      }
       (socket as any).userId = decoded.userId;
       (socket as any).role = liveUser?.role || decoded.role || 'customer';
       next();
@@ -516,3 +521,19 @@ export function broadcastConfigUpdate(payload: any, event = 'config:update') {
 
 
 
+
+export function disconnectUserSockets(userId: string, reason = 'SESSION_REVOKED'): void {
+  const socketIds = userSockets.get(userId);
+  if (socketIds && ioInstance) {
+    for (const sid of Array.from(socketIds)) {
+      const s = ioInstance.sockets.sockets.get(sid);
+      if (s) {
+        try {
+          s.emit('force_disconnect', { reason });
+          s.disconnect(true);
+        } catch (_) {}
+      }
+    }
+    userSockets.delete(userId);
+  }
+}

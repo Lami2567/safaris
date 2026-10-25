@@ -1,3 +1,5 @@
+import { resolveDataFilePaths } from '../../config/paths';
+import { disconnectUserSockets } from '../../realtime/socket_server';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
@@ -22,14 +24,10 @@ export class AuthService {
   private static emailOtpStore = new Map<string, OtpRecord>();
   private static otpsInitialized = false;
   private static usedSetupTokens = new Set<string>();
+  private static setupAttempts = new Map<string, { count: number; lockedUntil: number }>();
 
   private static getOtpFilePath(): string {
-    const candidates = [
-      path.resolve(__dirname, '../../database/persistent_otps.json'),
-      path.resolve(process.cwd(), 'src/database/persistent_otps.json'),
-      path.resolve(process.cwd(), 'backend/src/database/persistent_otps.json'),
-      path.resolve(process.cwd(), 'persistent_otps.json'),
-    ];
+    const candidates = resolveDataFilePaths('persistent_otps.json');
     for (const c of candidates) {
       if (fs.existsSync(c)) return c;
     }
@@ -404,7 +402,7 @@ export class AuthService {
 
     // Check if email is verified
     if (!foundUser.is_verified) {
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpCode = crypto.randomInt(100000, 1000000).toString();
       const expiresAt = Date.now() + 15 * 60 * 1000;
       const targetEmail = (foundUser.email || '').toLowerCase().trim();
 
@@ -592,11 +590,32 @@ export class AuthService {
       throw new Error('Email, setup token, and new password are required.');
     }
 
+    const cleanEmail = email.toLowerCase().trim();
+    const attemptKey = cleanEmail;
+    const attempt = this.setupAttempts.get(attemptKey);
+    if (attempt && attempt.lockedUntil > Date.now()) {
+      const waitMinutes = Math.ceil((attempt.lockedUntil - Date.now()) / (60 * 1000));
+      throw new Error(`Too many failed attempts. Account password setup is temporarily locked for ${waitMinutes} more minutes.`);
+    }
+
+    const recordFailedAttempt = () => {
+      const cur = this.setupAttempts.get(attemptKey) || { count: 0, lockedUntil: 0 };
+      cur.count += 1;
+      if (cur.count >= 5) {
+        cur.lockedUntil = Date.now() + 15 * 60 * 1000;
+      }
+      this.setupAttempts.set(attemptKey, cur);
+    };
+
     if (newPassword.length < 6) {
+      recordFailedAttempt();
       throw new Error('Password must be at least 6 characters long.');
     }
 
-    if (this.usedSetupTokens.has(setupToken)) {
+    const tokenHash = crypto.createHash('sha256').update(setupToken).digest('hex');
+    const isConsumed = this.usedSetupTokens.has(tokenHash) || this.usedSetupTokens.has(setupToken) || await db.isAuthTokenConsumed(tokenHash);
+    if (isConsumed) {
+      recordFailedAttempt();
       throw new Error('This setup token has already been used.');
     }
 
@@ -604,14 +623,15 @@ export class AuthService {
     try {
       decoded = jwt.verify(setupToken, ENV.JWT_SECRET);
     } catch {
+      recordFailedAttempt();
       throw new Error('Session or setup token has expired. Please log in with your OTP again.');
     }
 
-    if (decoded.scope !== 'setup_password' || decoded.email?.toLowerCase() !== email.toLowerCase().trim()) {
+    if (decoded.scope !== 'setup_password' || decoded.email?.toLowerCase() !== cleanEmail) {
+      recordFailedAttempt();
       throw new Error('Invalid setup token for this account.');
     }
 
-    const cleanEmail = email.toLowerCase().trim();
     let user: any = null;
     for (const u of localStore.users.values()) {
       if (u.email && u.email.toLowerCase() === cleanEmail) {
@@ -628,6 +648,7 @@ export class AuthService {
     }
 
     if (!user) {
+      recordFailedAttempt();
       throw new Error('User account not found.');
     }
 
@@ -639,10 +660,16 @@ export class AuthService {
     user.token_version = (Number(user.token_version) || 1) + 1;
     await db.persistUser(user);
 
-    // Clear used OTP and invalidate setup token
+    // Clear used OTP and invalidate setup token in memory and database
+    this.usedSetupTokens.add(tokenHash);
     this.usedSetupTokens.add(setupToken);
+    await db.markAuthTokenConsumed(tokenHash, 'setup_password', user.id, decoded.exp ? new Date(decoded.exp * 1000) : undefined);
     this.emailOtpStore.delete(cleanEmail);
     this.saveOtps();
+    this.setupAttempts.delete(attemptKey);
+
+    // Disconnect active user sockets to enforce clean re-authentication
+    disconnectUserSockets(user.id, 'PASSWORD_SETUP');
 
     // Generate production tokens
     const tokens = this.generateTokens(user);

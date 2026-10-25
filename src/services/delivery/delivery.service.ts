@@ -77,11 +77,24 @@ export class DeliveryService {
     return Math.round(enforcedMin / 100) * 100;
   }
 
-  public static createDelivery(data: CreateDeliveryRequest) {
+  public static async createDelivery(data: CreateDeliveryRequest): Promise<any> {
     const deliveryId = data.id || `del_${uuidv4().substring(0, 8)}`;
     const trackingNumber = `SAF-${Math.floor(100000 + Math.random() * 900000)}`;
 
     let fareUGX = 0;
+    const pickupLat = Number(data.pickupLat ?? 0.3136);
+    const pickupLng = Number(data.pickupLng ?? 32.5811);
+    const dropoffLat = Number(data.dropoffLat ?? 0.0424);
+    const dropoffLng = Number(data.dropoffLng ?? 32.4435);
+
+    const serverDistKm = PricingEngineService.calculateServerDistanceKm(
+      pickupLat,
+      pickupLng,
+      dropoffLat,
+      dropoffLng
+    );
+    const distanceKm = serverDistKm;
+
     let quotationId: string | null = data.quotationId || null;
     let pricingVersion = 1;
     let quotationSnapshot: any = {};
@@ -93,19 +106,15 @@ export class DeliveryService {
         expectedServiceType: 'DELIVERY',
         customerId: data.senderId,
         vehicleId: data.vehicleId,
+        pickupLat,
+        pickupLng,
+        destLat: dropoffLat,
+        destLng: dropoffLng,
       });
       fareUGX = Number(existingQuote.total_price_ugx || existingQuote.totalPriceUgx || 0);
       pricingVersion = Number(existingQuote.pricing_version || existingQuote.pricingVersion || 1);
       quotationSnapshot = existingQuote;
     } else {
-      const serverDistKm = PricingEngineService.calculateServerDistanceKm(
-        Number(data.pickupLat ?? 0.3136),
-        Number(data.pickupLng ?? 32.5811),
-        Number(data.dropoffLat ?? 0.0424),
-        Number(data.dropoffLng ?? 32.4435)
-      );
-      const clientDist = Number(data.distanceKm || 0);
-      const distanceKm = (!clientDist || clientDist < 0.5 * serverDistKm) ? serverDistKm : clientDist;
       fareUGX = this.calculateDeliveryFare(
         data.packageCategory,
         data.packageWeightKg,
@@ -134,7 +143,7 @@ export class DeliveryService {
       dropoff_address: data.dropoffAddress,
       dropoff_lat: data.dropoffLat,
       dropoff_lng: data.dropoffLng,
-      distance_km: Number(data.distanceKm || 5),
+      distance_km: distanceKm,
       package_category: data.packageCategory,
       category: data.packageCategory,
       package_weight_kg: data.packageWeightKg,

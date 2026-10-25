@@ -5,13 +5,9 @@ import { ENV } from '../../config/env';
 import { FinancialService } from '../financial/financial.service';
 import { PayoutService } from '../financial/payout.service';
 import { broadcastToFleet, emitToUser } from '../../realtime/socket_server';
+import { resolveDataFilePaths } from '../../config/paths';
 
-const PERSISTENT_GUIDES_FILES = [
-  path.resolve(__dirname, '../../database/persistent_tour_guides.json'),
-  path.resolve(process.cwd(), 'src/database/persistent_tour_guides.json'),
-  path.resolve(process.cwd(), 'backend/src/database/persistent_tour_guides.json'),
-  path.resolve(process.cwd(), 'persistent_tour_guides.json'),
-];
+const PERSISTENT_GUIDES_FILES = resolveDataFilePaths('persistent_tour_guides.json');
 
 export class TourGuideService {
   private static isInitialized = false;

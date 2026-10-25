@@ -16,6 +16,7 @@ export interface PresignedUploadResponse {
   expiresIn: number;
   fileType: string;
   mediaCategory: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
+  requiredHeaders?: Record<string, string>;
 }
 
 export interface MediaUrlValidationResult {
@@ -325,22 +326,22 @@ export class StorageService {
     const credentialScope = `${dateStamp}/${region}/s3/aws4_request`;
 
     // Query parameters must be alphabetical for SigV4
+    const signedHeaders = 'content-type;host';
+    const canonicalHeaders = `content-type:${normalizedType}\nhost:${host}\n`;
+
+    // Query parameters must be alphabetical for SigV4
     const queryParams: Record<string, string> = {
       'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
       'X-Amz-Credential': `${accessKeyId}/${credentialScope}`,
       'X-Amz-Date': amzDate,
       'X-Amz-Expires': expiresIn.toString(),
-      'X-Amz-SignedHeaders': 'host',
+      'X-Amz-SignedHeaders': signedHeaders,
     };
 
     const canonicalQueryString = Object.keys(queryParams)
       .sort()
       .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(queryParams[k])}`)
       .join('&');
-
-    // Canonical request: HTTP Method, Canonical URI, Query string, Headers, Signed headers, Payload hash
-    const canonicalHeaders = `host:${host}\n`;
-    const signedHeaders = 'host';
     const payloadHash = 'UNSIGNED-PAYLOAD';
 
     const canonicalRequest = [
@@ -390,6 +391,9 @@ export class StorageService {
       expiresIn,
       fileType: normalizedType,
       mediaCategory,
+      requiredHeaders: {
+        'Content-Type': normalizedType,
+      },
     };
   }
 
@@ -441,6 +445,9 @@ export class StorageService {
    * Given an object key, returns the public CDN URL.
    */
   public static getPublicUrl(key: string): string {
+    if (key.startsWith('private/') || key.startsWith('/private/')) {
+      throw new Error('Private documents cannot be accessed via public CDN URLs. Use presigned download URLs.');
+    }
     if (ENV.CLOUDFLARE_R2_PUBLIC_URL && ENV.CLOUDFLARE_R2_PUBLIC_URL.trim()) {
       const publicBase = ENV.CLOUDFLARE_R2_PUBLIC_URL.trim().replace(/\/$/, '');
       return `${publicBase}/${key.replace(/^\//, '')}`;

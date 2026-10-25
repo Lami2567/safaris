@@ -855,10 +855,19 @@ export class PricingEngineService {
   // ---------------------------------------------------------------------------
   // Centralized Server-Side Quotation Engine (Phase 11)
   // ---------------------------------------------------------------------------
-  public static calculateServerDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    if (!Number.isFinite(lat1) || !Number.isFinite(lon1) || !Number.isFinite(lat2) || !Number.isFinite(lon2)) {
-      return 5.0;
+  public static validateCoordinateBounds(lat: number, lon: number, name = 'Coordinate'): void {
+    if (typeof lat !== 'number' || !Number.isFinite(lat) || isNaN(lat) || lat < -90 || lat > 90) {
+      throw new Error(`Invalid latitude for ${name}: ${lat}. Must be a finite number between -90 and +90.`);
     }
+    if (typeof lon !== 'number' || !Number.isFinite(lon) || isNaN(lon) || lon < -180 || lon > 180) {
+      throw new Error(`Invalid longitude for ${name}: ${lon}. Must be a finite number between -180 and +180.`);
+    }
+  }
+
+  public static calculateServerDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    this.validateCoordinateBounds(lat1, lon1, 'pickup');
+    this.validateCoordinateBounds(lat2, lon2, 'destination');
+
     const R = 6371; // Earth radius in km
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -869,11 +878,16 @@ export class PricingEngineService {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     const aerialKm = R * c;
     const roadKm = aerialKm * 1.35; // 1.35x road curvature multiplier for Uganda
-    return Math.max(0.5, Math.round(roadKm * 10) / 10);
+    return Math.max(0.1, Math.round(roadKm * 10) / 10);
   }
 
   public static async calculateQuote(params: {
     customerId?: string;
+    sessionId?: string;
+    pickupLat?: number;
+    pickupLng?: number;
+    destLat?: number;
+    destLng?: number;
     serviceType: QuoteServiceType | string;
     vehicleId?: string;
     vehicleTier?: string;
@@ -908,7 +922,15 @@ export class PricingEngineService {
         : 'RIDE';
 
     const guestCount = Math.max(1, Math.floor(Number(params.guestCount || 1)));
-    const distanceKm = Math.max(0, Number(params.distanceKm || 0));
+    let distanceKm = Math.max(0, Number(params.distanceKm || 0));
+    if (params.pickupLat !== undefined && params.destLat !== undefined) {
+      distanceKm = this.calculateServerDistanceKm(
+        Number(params.pickupLat),
+        Number(params.pickupLng ?? 0),
+        Number(params.destLat),
+        Number(params.destLng ?? 0)
+      );
+    }
     const weightKg = Math.max(0, Number(params.weightKg || 0));
     let durationDays = Math.max(1, Math.floor(Number(params.durationDays || 1)));
 
@@ -1486,11 +1508,16 @@ export class PricingEngineService {
     quotationId: string;
     expectedServiceType: QuoteServiceType;
     customerId?: string;
+    sessionId?: string;
     vehicleId?: string;
     referenceId?: string;
+    pickupLat?: number;
+    pickupLng?: number;
+    destLat?: number;
+    destLng?: number;
     allowConsumed?: boolean;
   }): any {
-    const { quotationId, expectedServiceType, customerId, vehicleId, referenceId, allowConsumed = false } = params;
+    const { quotationId, expectedServiceType, customerId, sessionId, vehicleId, referenceId, pickupLat, pickupLng, destLat, destLng, allowConsumed = false } = params;
     if (!quotationId) {
       throw new Error('Quotation ID is required.');
     }
@@ -1506,9 +1533,12 @@ export class PricingEngineService {
       throw new Error(`Quotation '${quotationId}' was issued for '${quote.service_type}' and cannot be used for '${expectedServiceType}'.`);
     }
 
-    // 2. Customer ownership validation
+    // 2. Customer ownership / Checkout session validation
     if (quote.customer_id && customerId && quote.customer_id !== customerId) {
       throw new Error(`Quotation '${quotationId}' was issued to another customer and cannot be used by this account.`);
+    }
+    if (quote.request_params?.sessionId && sessionId && quote.request_params.sessionId !== sessionId) {
+      throw new Error(`Quotation '${quotationId}' was bound to another checkout session.`);
     }
 
     // 3. Expiration validation (calculated explicitly from stored timestamp)
@@ -1523,20 +1553,49 @@ export class PricingEngineService {
     }
 
     // 5. Vehicle / Reference consistency validation if provided
-    if (vehicleId && quote.vehicle_id && quote.vehicle_id !== vehicleId && quote.request_params?.vehicleTier !== vehicleId) {
-      throw new Error(`Quotation '${quotationId}' was issued for vehicle '${quote.vehicle_id}', not '${vehicleId}'.`);
+    if (vehicleId && quote.vehicle_id) {
+      const catVehicle = this.getCatalogueVehicleByIdOrCode(vehicleId);
+      const isMatch =
+        quote.vehicle_id === vehicleId ||
+        quote.request_params?.vehicleTier === vehicleId ||
+        quote.request_params?.vehicleId === vehicleId ||
+        (catVehicle && (catVehicle.id === quote.vehicle_id || catVehicle.code.toLowerCase() === String(quote.vehicle_id).toLowerCase()));
+      if (!isMatch) {
+        throw new Error(`Quotation '${quotationId}' was issued for vehicle '${quote.vehicle_id}', not '${vehicleId}'.`);
+      }
     }
     if (referenceId && quote.reference_id && quote.reference_id !== referenceId) {
       throw new Error(`Quotation '${quotationId}' was issued for destination/reference '${quote.reference_id}', not '${referenceId}'.`);
     }
 
-    // Atomically mark quotation as consumed
+    // 6. Route / Coordinates validation if coordinates provided on both quote and consumption
+    if (pickupLat !== undefined && quote.request_params?.pickupLat !== undefined) {
+      const qpLat = Number(quote.request_params.pickupLat);
+      const qpLng = Number(quote.request_params.pickupLng);
+      const qdLat = Number(quote.request_params.destLat);
+      const qdLng = Number(quote.request_params.destLng);
+      const pLat = Number(pickupLat);
+      const pLng = Number(pickupLng);
+      const dLat = Number(destLat);
+      const dLng = Number(destLng);
+
+      const tolerance = 0.02; // ~2.2km street-level GPS radius
+      const pDiff = Math.abs(pLat - qpLat) + Math.abs(pLng - qpLng);
+      const dDiff = Math.abs(dLat - qdLat) + Math.abs(dLng - qdLng);
+      if (pDiff > tolerance || dDiff > tolerance) {
+        throw new Error(`Quotation '${quotationId}' route coordinates do not match the requested trip/delivery.`);
+      }
+    }
+
+    // Mark quotation as consumed atomically in memory
     quote.consumed = true;
     quote.status = 'CONSUMED';
     quote.consumed_at = new Date().toISOString();
-    quote.consumed_by = customerId || quote.customer_id || 'UNKNOWN';
+    quote.consumed_by = customerId || quote.customer_id || sessionId || 'UNKNOWN';
 
-    db.persistPriceQuotation(quote).catch(() => {});
+    // Persist to PostgreSQL atomically in background
+    db.consumeQuotationAtomic(quotationId, quote.consumed_by).catch(() => {});
+
     return quote;
   }
 

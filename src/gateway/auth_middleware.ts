@@ -19,6 +19,88 @@ export interface AuthUserPayload {
 
 export interface AuthenticatedRequest extends Request {
   user?: AuthUserPayload;
+  liveUser?: any;
+}
+
+export interface AuthValidationResult {
+  valid: boolean;
+  user?: any;
+  payload?: AuthUserPayload;
+  error?: string;
+  code?: string;
+  status?: number;
+}
+
+/**
+ * Validates a JWT session token across HTTP, WebSockets, and SSE transports.
+ * Verifies signature, expiration, scope, live account suspension, token_version, and role integrity.
+ */
+export async function validateAuthSession(rawToken: string): Promise<AuthValidationResult> {
+  if (!rawToken || typeof rawToken !== 'string') {
+    return { valid: false, error: 'Authentication token missing or invalid.', code: 'UNAUTHORIZED', status: 401 };
+  }
+
+  try {
+    const payload = jwt.verify(rawToken, ENV.JWT_SECRET) as AuthUserPayload;
+
+    // Reject non-access scoped tokens (e.g., setup_password, recruitment)
+    if (payload.scope && payload.scope !== 'access') {
+      return {
+        valid: false,
+        error: `Tokens with scope '${payload.scope}' cannot be used for general API access.`,
+        code: 'INVALID_TOKEN_SCOPE',
+        status: 403,
+      };
+    }
+
+    // Live user validation: look up in authoritative store, check suspension, token version, and role
+    if (payload.userId) {
+      const liveUser = await db.getUserById(payload.userId);
+      if (!liveUser) {
+        return { valid: false, error: 'User account does not exist or has been removed.', code: 'USER_NOT_FOUND', status: 401 };
+      }
+
+      if (liveUser.approval_status === 'SUSPENDED') {
+        return { valid: false, error: 'Your account has been suspended. Please contact support.', code: 'ACCOUNT_SUSPENDED', status: 403 };
+      }
+
+      // Check token revocation version
+      const tokenVer = Number(payload.tokenVersion ?? 1);
+      const userVer = Number(liveUser.token_version ?? 1);
+      if (tokenVer < userVer) {
+        return {
+          valid: false,
+          error: 'Session has been invalidated due to a security update or password change. Please log in again.',
+          code: 'SESSION_REVOKED',
+          status: 401,
+        };
+      }
+
+      // If token claims elevated privileges but live user role has changed/been revoked
+      if (payload.role !== liveUser.role) {
+        const wasPrivileged = ['admin', 'driver', 'tour_guide'].includes(payload.role);
+        const isPrivileged = ['admin', 'driver', 'tour_guide'].includes(liveUser.role);
+        if (wasPrivileged || isPrivileged) {
+          return {
+            valid: false,
+            error: 'Your account role or permissions have been updated. Please log in again to continue.',
+            code: 'PRIVILEGES_REVOKED',
+            status: 403,
+          };
+        }
+        payload.role = liveUser.role;
+      }
+
+      return { valid: true, user: liveUser, payload };
+    }
+
+    return { valid: true, payload };
+  } catch (err: any) {
+    if (err.name === 'TokenExpiredError') {
+      return { valid: false, error: 'Your session token has expired. Please log in again.', code: 'TOKEN_EXPIRED', status: 401 };
+    }
+    return { valid: false, error: 'Malformed or invalid authentication token.', code: 'INVALID_TOKEN', status: 401 };
+  }
 }
 
 export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
@@ -31,66 +113,13 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
       : queryToken;
 
   if (rawToken) {
-    try {
-      const payload = jwt.verify(rawToken, ENV.JWT_SECRET) as AuthUserPayload;
-
-      // Reject non-access scoped tokens (e.g., setup_password, recruitment)
-      if (payload.scope && payload.scope !== 'access') {
-        return sendError(
-          res,
-          'INVALID_TOKEN_SCOPE',
-          `Tokens with scope '${payload.scope}' cannot be used for general API access.`,
-          403
-        );
-      }
-
-      // Live user validation: look up in authoritative store, check suspension, token version, and role
-      if (payload.userId) {
-        const liveUser = await db.getUserById(payload.userId);
-        if (!liveUser) {
-          return sendError(res, 'USER_NOT_FOUND', 'User account does not exist or has been removed.', 401);
-        }
-
-        if (liveUser.approval_status === 'SUSPENDED') {
-          return sendError(res, 'ACCOUNT_SUSPENDED', 'Your account has been suspended. Please contact support.', 403);
-        }
-
-        // Check token revocation version
-        const tokenVer = Number(payload.tokenVersion ?? 1);
-        const userVer = Number(liveUser.token_version ?? 1);
-        if (tokenVer < userVer) {
-          return sendError(
-            res,
-            'SESSION_REVOKED',
-            'Session has been invalidated due to a security update or password change. Please log in again.',
-            401
-          );
-        }
-
-        // If token claims elevated privileges but live user role has changed/been revoked
-        if (payload.role !== liveUser.role) {
-          const wasPrivileged = ['admin', 'driver', 'tour_guide'].includes(payload.role);
-          const isPrivileged = ['admin', 'driver', 'tour_guide'].includes(liveUser.role);
-          if (wasPrivileged || isPrivileged) {
-            return sendError(
-              res,
-              'PRIVILEGES_REVOKED',
-              'Your account role or permissions have been updated. Please log in again to continue.',
-              403
-            );
-          }
-          payload.role = liveUser.role;
-        }
-      }
-
-      req.user = payload;
-      return next();
-    } catch (err: any) {
-      if (err.name === 'TokenExpiredError') {
-        return sendError(res, 'TOKEN_EXPIRED', 'Your session token has expired. Please log in again.', 401);
-      }
-      return sendError(res, 'INVALID_TOKEN', 'Malformed or invalid authentication token.', 401);
+    const val = await validateAuthSession(rawToken);
+    if (!val.valid) {
+      return sendError(res, val.code || 'UNAUTHORIZED', val.error || 'Authentication failed', val.status || 401);
     }
+    req.user = val.payload;
+    req.liveUser = val.user;
+    return next();
   }
 
   // Fallback for pre-configuration admin bootstrap ONLY in non-production environments

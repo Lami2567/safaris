@@ -52,11 +52,26 @@ if grep -q "CHANGE_THIS_TO_A_STRONG_RANDOM_SECRET" .env.production; then
   exit 1
 fi
 
-# 3. Pull latest code from GitHub (Clean tracking just like Vercel / Render)
-echo "📥 Syncing latest codebase from GitHub (origin/main)..."
-git fetch origin main
-git reset --hard origin/main
+# 3. Pull latest code from GitHub and verify target commit
+TARGET_COMMIT="${1:-}"
+
+if [ -n "$TARGET_COMMIT" ]; then
+  echo "📥 Fetching and checking out exact commit SHA: ${TARGET_COMMIT}..."
+  git fetch origin main
+  git checkout "$TARGET_COMMIT" || git reset --hard "$TARGET_COMMIT"
+else
+  echo "📥 Syncing latest codebase from GitHub (origin/main)..."
+  git fetch origin main
+  git reset --hard origin/main
+fi
 git clean -fd -e .env.production -e backups -e autodeploy.log
+
+DEPLOYED_SHA=$(git rev-parse HEAD)
+echo "✅ Deployed working tree is at commit: ${DEPLOYED_SHA}"
+if [ -n "$TARGET_COMMIT" ] && [ "${DEPLOYED_SHA:0:7}" != "${TARGET_COMMIT:0:7}" ]; then
+  echo "❌ Error: Deployed commit (${DEPLOYED_SHA}) does not match expected target commit (${TARGET_COMMIT})!"
+  exit 1
+fi
 
 # 4. Build Docker Production Images
 echo "🔨 Building Docker production containers..."
@@ -65,7 +80,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.production build
 # 5. Start / Update Services Gracefully
 echo "🚀 Starting production service stack..."
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
-docker exec safaris_nginx_prod nginx -s reload 2>/dev/null || true
+docker exec safaris_nginx_prod nginx -t && docker exec safaris_nginx_prod nginx -s reload
 
 # 6. Wait for Database Readiness
 echo "⏳ Waiting for PostgreSQL to initialize..."
@@ -87,11 +102,18 @@ echo "✅ PostgreSQL is ready."
 echo "🔄 Executing database migrations..."
 docker compose -f docker-compose.prod.yml --env-file .env.production exec -T backend node dist/database/migrate.js
 
-# 8. Verify API Health Endpoint
+# 8. Verify API Health Endpoint & Database Readiness
 echo "🩺 Verifying API Gateway health check..."
 sleep 3
-HEALTH_RESPONSE=$(curl -s http://localhost/health || curl -s http://localhost:3000/health || echo "FAILED")
+HEALTH_RESPONSE=$(curl -sS --max-time 10 http://localhost/health 2>/dev/null || curl -sS --max-time 10 http://localhost:3000/health 2>/dev/null || echo '{"status":"failed"}')
 echo "   Health Check Response: ${HEALTH_RESPONSE}"
+
+if ! echo "${HEALTH_RESPONSE}" | grep -q '"status":"ok"'; then
+  echo "❌ Error: API Gateway health check failed! Response: ${HEALTH_RESPONSE}"
+  docker compose -f docker-compose.prod.yml --env-file .env.production logs backend --tail=30
+  exit 1
+fi
+echo "✅ API Gateway verified healthy."
 
 # 9. Report Container Status and Memory Usage
 echo ""

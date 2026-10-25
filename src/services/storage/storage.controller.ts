@@ -132,4 +132,38 @@ export class StorageController {
       });
     }
   }
+  /**
+   * GET /api/v1/storage/private-url
+   * Query params: { key: string, expiresIn?: number }
+   * Returns: { downloadUrl: string, key: string, expiresIn: number }
+   */
+  public static async getPresignedDownloadUrl(req: Request, res: Response): Promise<void> {
+    try {
+      const key = typeof req.query.key === 'string' ? req.query.key : undefined;
+      const expiresIn = req.query.expiresIn ? Number(req.query.expiresIn) : 900;
+
+      if (!key) {
+        res.status(400).json({
+          success: false,
+          error: 'key query parameter is required.',
+        });
+        return;
+      }
+
+      const downloadUrl = StorageService.generatePresignedDownloadUrl(key, expiresIn);
+      res.status(200).json({
+        success: true,
+        data: {
+          downloadUrl,
+          key,
+          expiresIn,
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({
+        success: false,
+        error: err.message || 'Failed to generate presigned download URL.',
+      });
+    }
+  }
 }

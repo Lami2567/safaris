@@ -82,7 +82,7 @@ def get_remote_commit() -> str:
         log(f"Error checking remote origin/main: {e}")
         return ""
 
-def run_deployment(trigger: str = "webhook") -> bool:
+def run_deployment(trigger: str = "webhook", target_commit: str = None) -> bool:
     if not deploy_lock.acquire(blocking=False):
         log(f"Deployment already in progress. Skipping duplicate trigger ({trigger}).")
         return False
@@ -103,8 +103,11 @@ def run_deployment(trigger: str = "webhook") -> bool:
             env = os.environ.copy()
             env["CI"] = "true"
 
+            cmd = ["/bin/bash", DEPLOY_SCRIPT]
+            if target_commit:
+                cmd.append(target_commit)
             process = subprocess.Popen(
-                ["/bin/bash", DEPLOY_SCRIPT],
+                cmd,
                 cwd=REPO_DIR,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -145,7 +148,12 @@ def run_deployment(trigger: str = "webhook") -> bool:
     return True
 
 def poll_github_worker():
-    """Continuously monitors GitHub for new pushes to main every POLL_INTERVAL_SECONDS."""
+    """Monitors GitHub for new pushes to main every POLL_INTERVAL_SECONDS if ENABLE_POLLING_DEPLOY is set."""
+    enable_polling = os.environ.get("ENABLE_POLLING_DEPLOY", "false").lower() in ("true", "1")
+    if not enable_polling:
+        log("GitHub polling auto-deploy is disabled by policy. Deployments strictly require authenticated webhook trigger post-CI.")
+        return
+
     log(f"Started GitHub polling thread (interval: {POLL_INTERVAL_SECONDS}s).")
     while True:
         try:
@@ -273,8 +281,18 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+        target_commit = None
+        if body:
+            try:
+                payload = json.loads(body)
+                target_commit = payload.get("commit") or payload.get("after")
+                if not target_commit and "head_commit" in payload and isinstance(payload["head_commit"], dict):
+                    target_commit = payload["head_commit"].get("id")
+            except Exception:
+                pass
+
         if is_push:
-            triggered = run_deployment(trigger="github-webhook-push")
+            triggered = run_deployment(trigger=f"github-webhook-push ({target_commit[:8] if target_commit else 'latest'})", target_commit=target_commit)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

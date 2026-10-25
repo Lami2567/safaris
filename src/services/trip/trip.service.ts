@@ -103,16 +103,20 @@ export class TripService {
     const serviceKey = serviceCategory === 'AIRPORT_SHUTTLE' ? 'airport_shuttle' : 'ride_hailing';
 
     // Calculate server-authoritative route distance based on coordinates
+    const pickupLat = Number(data.pickupLat ?? 0.3136);
+    const pickupLng = Number(data.pickupLng ?? 32.5811);
+    const destLat = Number(data.destLat ?? 0.0424);
+    const destLng = Number(data.destLng ?? 32.4435);
+
     const serverDistanceKm = PricingEngineService.calculateServerDistanceKm(
-      Number(data.pickupLat ?? 0.3136),
-      Number(data.pickupLng ?? 32.5811),
-      Number(data.destLat ?? 0.0424),
-      Number(data.destLng ?? 32.4435)
+      pickupLat,
+      pickupLng,
+      destLat,
+      destLng
     );
 
-    // If client provides a distance smaller than 70% of server-calculated distance, enforce server distance
-    const clientDist = Number(data.distanceKm || 0);
-    const distanceKm = (!clientDist || clientDist < 0.5 * serverDistanceKm) ? serverDistanceKm : clientDist;
+    // Authoritative chargeable distance server-side; client distance parameter is ignored
+    const distanceKm = serverDistanceKm;
 
     let fareUGX = 0;
     let quotationId: string | null = data.quotationId || null;
@@ -126,6 +130,10 @@ export class TripService {
         expectedServiceType: serviceCategory,
         customerId: data.customerId,
         vehicleId: data.vehicleId || data.vehicleTier,
+        pickupLat,
+        pickupLng,
+        destLat,
+        destLng,
       });
       fareUGX = Number(existingQuote.total_price_ugx || existingQuote.totalPriceUgx || 0);
       pricingVersion = Number(existingQuote.pricing_version || existingQuote.pricingVersion || 1);

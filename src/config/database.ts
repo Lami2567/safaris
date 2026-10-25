@@ -1,5 +1,6 @@
 import { Pool, QueryResult } from 'pg';
 import { ENV } from './env';
+import { resolveDataFilePaths } from './paths';
 import fs from 'fs';
 import path from 'path';
 
@@ -57,12 +58,7 @@ export const localStore = {
 };
 
 function resolveCandidatePaths(fileName: string): string[] {
-  return [
-    path.resolve(__dirname, `../database/${fileName}`),
-    path.resolve(process.cwd(), `src/database/${fileName}`),
-    path.resolve(process.cwd(), `backend/src/database/${fileName}`),
-    path.resolve(process.cwd(), fileName),
-  ];
+  return resolveDataFilePaths(fileName);
 }
 
 const PERSISTENT_USERS_FILES = resolveCandidatePaths('persistent_users.json');
@@ -101,6 +97,12 @@ class DatabaseManager {
   }
 
   public async init(): Promise<void> {
+    if (process.env.DISABLE_DATABASE === 'true' || (!process.env.DATABASE_URL && process.env.NODE_ENV === 'test')) {
+      this.isPostgresConnected = false;
+      this.loadAllFromDisk();
+      return;
+    }
+
     this.pool = new Pool({
       connectionString: ENV.DATABASE_URL,
       connectionTimeoutMillis: 5000,
@@ -1658,6 +1660,75 @@ class DatabaseManager {
       }
     }
     this.saveTableToDisk(PERSISTENT_PRICE_QUOTATIONS_FILES, localStore.price_quotations);
+  }
+
+  public async consumeQuotationAtomic(quotationId: string, consumedBy: string): Promise<any | null> {
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        const res = await this.pool.query(
+          `UPDATE price_quotations
+           SET consumed = TRUE, consumed_at = CURRENT_TIMESTAMP, consumed_by = $2
+           WHERE id = $1 AND consumed = FALSE AND expires_at > CURRENT_TIMESTAMP
+           RETURNING *`,
+          [quotationId, consumedBy]
+        );
+        if (res && res.rowCount && res.rowCount > 0) {
+          const row = res.rows[0];
+          const updated = {
+            ...row,
+            consumed: true,
+            consumed_at: row.consumed_at,
+            consumed_by: row.consumed_by,
+          };
+          localStore.price_quotations.set(quotationId, updated);
+          return updated;
+        }
+        return null;
+      } catch (err) {
+        console.warn('[Database] consumeQuotationAtomic PostgreSQL error:', err);
+      }
+    }
+
+    const quote = localStore.price_quotations.get(quotationId);
+    if (!quote || quote.consumed === true || new Date(quote.expires_at).getTime() < Date.now()) {
+      return null;
+    }
+    quote.consumed = true;
+    quote.status = 'CONSUMED';
+    quote.consumed_at = new Date().toISOString();
+    quote.consumed_by = consumedBy;
+    this.saveTableToDisk(PERSISTENT_PRICE_QUOTATIONS_FILES, localStore.price_quotations);
+    return quote;
+  }
+
+  public async isAuthTokenConsumed(tokenHash: string): Promise<boolean> {
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        const res = await this.pool.query(
+          'SELECT token_hash FROM consumed_auth_tokens WHERE token_hash = $1',
+          [tokenHash]
+        );
+        return Boolean(res && res.rowCount && res.rowCount > 0);
+      } catch (err) {
+        console.warn('[Database] isAuthTokenConsumed PostgreSQL error:', err);
+      }
+    }
+    return false;
+  }
+
+  public async markAuthTokenConsumed(tokenHash: string, tokenType: string, userId?: string, expiresAt?: Date): Promise<void> {
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO consumed_auth_tokens (token_hash, token_type, user_id, expires_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (token_hash) DO NOTHING`,
+          [tokenHash, tokenType, userId || null, expiresAt || null]
+        );
+      } catch (err) {
+        console.warn('[Database] markAuthTokenConsumed PostgreSQL error:', err);
+      }
+    }
   }
 
   public async persistDestinationMedia(media: any): Promise<void> {

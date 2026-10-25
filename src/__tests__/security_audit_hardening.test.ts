@@ -491,9 +491,14 @@ async function runSecurityAuditHardeningTestSuite() {
   const calculatedDistance = PricingEngineService.calculateServerDistanceKm(0.3476, 32.5825, 0.0447, 32.4435);
   assert(calculatedDistance > 30 && calculatedDistance < 60, `Calculated road distance must be realistic (~40km), got ${calculatedDistance}`);
 
-  // Invalid coordinates fallback safely
-  const fallbackDist = PricingEngineService.calculateServerDistanceKm(NaN as any, 32.5, 0.0, 32.0);
-  assert(fallbackDist === 5.0, 'Invalid coordinate calculation must fall back safely to 5.0 km');
+  // Invalid coordinates are strictly rejected instead of substituting arbitrary fallback
+  let invalidCoordsRejected = false;
+  try {
+    PricingEngineService.calculateServerDistanceKm(NaN as any, 32.5, 0.0, 32.0);
+  } catch (err: any) {
+    invalidCoordsRejected = err.message.includes('Invalid latitude') || err.message.includes('Invalid geographic coordinates');
+  }
+  assert(invalidCoordsRejected, 'Invalid coordinate calculation must strictly reject invalid/NaN values');
   pass(13, 'Server-side route distance calculation and geometric bounds verified');
 
   // ---------------------------------------------------------------------------
@@ -622,7 +627,7 @@ async function runSecurityAuditHardeningTestSuite() {
   console.log('===================================================================\n');
 }
 
-runSecurityAuditHardeningTestSuite().catch((err) => {
+runSecurityAuditHardeningTestSuite().then(() => { process.exit(0); }).catch((err) => {
   console.error('\n❌ SECURITY HARDENING TEST FAILED:', err);
   process.exit(1);
 });

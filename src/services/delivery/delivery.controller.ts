@@ -17,7 +17,7 @@ export class DeliveryController {
     }
   }
 
-  public static createDelivery(req: Request, res: Response) {
+  public static async createDelivery(req: Request, res: Response) {
     try {
       const senderId = (req as any).user?.userId;
       if (!senderId) {
@@ -46,7 +46,7 @@ export class DeliveryController {
         distanceKm,
       } = req.body || {};
 
-      const delivery = DeliveryService.createDelivery({
+      const delivery = await DeliveryService.createDelivery({
         senderId,
         senderName: String(senderName || (req as any).user?.fullName || 'Sender'),
         senderPhone: String(senderPhone || (req as any).user?.phone || '+256700000000'),

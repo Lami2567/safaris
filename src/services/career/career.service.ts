@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 import { localStore, db } from '../../config/database';
@@ -369,7 +370,7 @@ export class CareerService {
       }
 
       // 4. Generate 6-digit One-Time Passcode (OTP) and register in AuthService
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpCode = crypto.randomInt(100000, 1000000).toString();
       generatedOtp = otpCode;
       AuthService.setLoginOtp(app.email, otpCode, 48 * 3600 * 1000, app.full_name);
 

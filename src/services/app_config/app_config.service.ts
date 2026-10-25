@@ -5,14 +5,10 @@ import { ENV } from '../../config/env';
 import { AdminService } from '../admin/admin.service';
 import { PricingEngineService } from '../pricing/pricing_engine.service';
 import { encryptSecret, decryptSecret } from '../../shared/crypto';
+import { resolveDataFilePaths } from '../../config/paths';
 
 // Persistent fallback paths on disk for offline/development resilience
-const PERSISTENT_CONFIG_CANDIDATES = [
-  path.resolve(__dirname, '../../database/persistent_config.json'),
-  path.resolve(process.cwd(), 'backend/src/database/persistent_config.json'),
-  path.resolve(process.cwd(), 'src/database/persistent_config.json'),
-  path.resolve(process.cwd(), 'persistent_config.json'),
-];
+const PERSISTENT_CONFIG_CANDIDATES = resolveDataFilePaths('persistent_config.json');
 
 export class AppConfigService {
   private static isInitialized = false;

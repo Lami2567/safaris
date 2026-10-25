@@ -1084,7 +1084,7 @@ async function runMasterFinancialTestSuite() {
   console.log('===================================================================');
 }
 
-runMasterFinancialTestSuite().catch((err) => {
+runMasterFinancialTestSuite().then(() => { process.exit(0); }).catch((err) => {
   console.error('❌ MASTER FINANCIAL TEST SUITE FAILED:', err);
   process.exit(1);
 });

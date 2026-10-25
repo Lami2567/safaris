@@ -83,7 +83,14 @@ export class PricingEngineController {
    */
   public static async calculateQuote(req: Request, res: Response) {
     try {
-      const quote = await PricingEngineService.calculateQuote(req.body || {});
+      const user = (req as any).user;
+      const customerId = user ? user.id : (req.body?.customerId || undefined);
+      const sessionId = (req.headers['x-checkout-session'] as string) || req.body?.sessionId || undefined;
+      const quote = await PricingEngineService.calculateQuote({
+        ...(req.body || {}),
+        customerId,
+        sessionId,
+      });
       return sendSuccess(res, quote);
     } catch (err: any) {
       return sendError(res, 'QUOTE_CALCULATION_FAILED', err.message, 400);

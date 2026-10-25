@@ -1,3 +1,4 @@
+import { disconnectUserSockets } from '../../realtime/socket_server';
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
@@ -5,8 +6,11 @@ import jwt from 'jsonwebtoken';
 import { localStore, db } from '../../config/database';
 import { ENV } from '../../config/env';
 import { FinancialService } from '../financial/financial.service';
+import { getPrimaryDataFilePath } from '../../config/paths';
 
-const PERSISTENT_CONFIG_FILE = path.resolve(__dirname, '../../database/persistent_config.json');
+function getPersistentConfigFile(): string {
+  return getPrimaryDataFilePath('persistent_config.json');
+}
 
 export interface AdminAuthConfig {
   configured: boolean;
@@ -200,8 +204,9 @@ export class AdminService {
 
     // Try reading from persistent config file if available
     try {
-      if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
-        const raw = fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8');
+      const configFile = getPersistentConfigFile();
+      if (fs.existsSync(configFile)) {
+        const raw = fs.readFileSync(configFile, 'utf-8');
         const parsed = JSON.parse(raw);
         if (parsed && parsed.pricing_matrix) {
           localStore.app_config.set('pricing_matrix', {
@@ -276,17 +281,18 @@ export class AdminService {
     // 2. Persist to disk JSON file for restart durability
     try {
       let dump: Record<string, any> = {};
-      if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
+      const configFile = getPersistentConfigFile();
+      if (fs.existsSync(configFile)) {
         try {
-          dump = JSON.parse(fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8'));
+          dump = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
         } catch (_) {}
       }
       dump.pricing_matrix = merged;
-      const dir = path.dirname(PERSISTENT_CONFIG_FILE);
+      const dir = path.dirname(configFile);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      fs.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify(dump, null, 2), 'utf-8');
+      fs.writeFileSync(configFile, JSON.stringify(dump, null, 2), 'utf-8');
     } catch (e) {
       console.warn('[AdminService] Could not write persistent pricing_matrix', e);
     }
@@ -515,8 +521,9 @@ export class AdminService {
     }
 
     try {
-      if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
-        const raw = fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8');
+      const configFile = getPersistentConfigFile();
+      if (fs.existsSync(configFile)) {
+        const raw = fs.readFileSync(configFile, 'utf-8');
         const parsed = JSON.parse(raw);
         if (parsed?.admin_auth_config?.configured === true && parsed.admin_auth_config.username && parsed.admin_auth_config.passwordHash) {
           localStore.app_config.set('admin_auth_config', {
@@ -628,17 +635,18 @@ export class AdminService {
 
     try {
       let dump: Record<string, any> = {};
-      if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
+      const configFile = getPersistentConfigFile();
+      if (fs.existsSync(configFile)) {
         try {
-          dump = JSON.parse(fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8'));
+          dump = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
         } catch (_) {}
       }
       dump.admin_auth_config = newConfig;
-      const dir = path.dirname(PERSISTENT_CONFIG_FILE);
+      const dir = path.dirname(configFile);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      fs.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify(dump, null, 2), 'utf-8');
+      fs.writeFileSync(configFile, JSON.stringify(dump, null, 2), 'utf-8');
     } catch (e) {
       console.warn('[AdminService] Could not write persistent admin_auth_config', e);
     }
@@ -706,13 +714,16 @@ export class AdminService {
       throw new Error('Invalid username or password.');
     }
 
+    const adminUser = localStore.users.get('usr_adm_001');
     const token = jwt.sign(
       {
         userId: 'usr_adm_001',
         role: 'admin',
+        scope: 'access',
+        tokenVersion: Number(adminUser?.token_version ?? 1),
         username: config.username,
-        email: 'admin@safaris.ug',
-        phone: '+256 700 000001',
+        email: adminUser?.email || 'admin@safaris.ug',
+        phone: adminUser?.phone || '+256 700 000001',
         adminAuth: true,
         authVersion: config.updatedAt,
       },
@@ -771,9 +782,38 @@ export class AdminService {
     const newHash = await bcrypt.hash(newPassword, 10);
     user.password_hash = newHash;
     user.password_changed_at = new Date().toISOString();
+    user.token_version = (Number(user.token_version) || 1) + 1;
     user.updated_at = new Date().toISOString();
 
     await db.persistUser(user);
+
+    // Update admin_auth_config to keep in lockstep
+    const nowIso = new Date().toISOString();
+    const updatedAuthConfig: AdminAuthConfig = {
+      configured: true,
+      username: user.username || user.email || 'admin',
+      passwordHash: newHash,
+      updatedAt: nowIso,
+    };
+    localStore.app_config.set('admin_auth_config', {
+      key: 'admin_auth_config',
+      value: updatedAuthConfig,
+      updated_at: nowIso,
+    });
+    try {
+      let dump: Record<string, any> = {};
+      const configFile = getPersistentConfigFile();
+      if (fs.existsSync(configFile)) {
+        try { dump = JSON.parse(fs.readFileSync(configFile, 'utf-8')); } catch (_) {}
+      }
+      dump.admin_auth_config = updatedAuthConfig;
+      const dir = path.dirname(configFile);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(configFile, JSON.stringify(dump, null, 2), 'utf-8');
+    } catch (_) {}
+
+    // Invalidate any active socket connections immediately
+    disconnectUserSockets(user.id, 'PASSWORD_CHANGED');
 
     // Record in admin audit logs
     const auditId = `aud_${Date.now()}_pwd`;
