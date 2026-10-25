@@ -378,7 +378,9 @@ export class LedgerService {
         created_at: now,
       };
 
-      // 2. Update balance projections in memory & PostgreSQL transaction
+      // 2. Update balance projections in PostgreSQL transaction and stage memory updates
+      const stagedProjections = new Map<string, AccountBalanceProjection>();
+
       await db.withTransaction(async (client) => {
         if (client) {
           await client.query(
@@ -435,7 +437,7 @@ export class LedgerService {
             version: (existingProj?.version || 0) + 1,
             updated_at: now,
           };
-          localStore.account_balance_projections.set(projKey, updatedProj);
+          stagedProjections.set(projKey, updatedProj);
 
           if (client) {
             await client.query(
@@ -486,6 +488,11 @@ export class LedgerService {
           }
         }
       });
+
+      // 3. Atomically commit staged projections to memory store only after database transaction commit
+      for (const [k, v] of stagedProjections.entries()) {
+        localStore.account_balance_projections.set(k, v);
+      }
 
       localStore.ledger_transactions.set(txRecord.id, txRecord);
       for (const entry of entryRecords) {

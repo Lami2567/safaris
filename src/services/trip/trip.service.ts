@@ -99,18 +99,34 @@ export class TripService {
   public static createTrip(data: CreateTripRequest) {
     const tripId = `trp_${uuidv4().substring(0, 8)}`;
     const tierKey = (data.vehicleId || data.vehicleTier || 'go').toLowerCase();
-    const distanceKm = Math.max(0.5, Number(data.distanceKm || 2.5));
     const serviceCategory = data.serviceType === 'AIRPORT_SHUTTLE' ? 'AIRPORT_SHUTTLE' : 'RIDE';
     const serviceKey = serviceCategory === 'AIRPORT_SHUTTLE' ? 'airport_shuttle' : 'ride_hailing';
+
+    // Calculate server-authoritative route distance based on coordinates
+    const serverDistanceKm = PricingEngineService.calculateServerDistanceKm(
+      Number(data.pickupLat ?? 0.3136),
+      Number(data.pickupLng ?? 32.5811),
+      Number(data.destLat ?? 0.0424),
+      Number(data.destLng ?? 32.4435)
+    );
+
+    // If client provides a distance smaller than 70% of server-calculated distance, enforce server distance
+    const clientDist = Number(data.distanceKm || 0);
+    const distanceKm = (!clientDist || clientDist < 0.5 * serverDistanceKm) ? serverDistanceKm : clientDist;
 
     let fareUGX = 0;
     let quotationId: string | null = data.quotationId || null;
     let pricingVersion = 1;
     let quotationSnapshot: any = {};
 
-    // Check if an existing valid quotation was supplied
-    const existingQuote = quotationId ? PricingEngineService.getQuotationById(quotationId) : null;
-    if (existingQuote) {
+    // Check and atomically validate/consume quotation if supplied
+    if (quotationId) {
+      const existingQuote = PricingEngineService.validateAndConsumeQuotation({
+        quotationId,
+        expectedServiceType: serviceCategory,
+        customerId: data.customerId,
+        vehicleId: data.vehicleId || data.vehicleTier,
+      });
       fareUGX = Number(existingQuote.total_price_ugx || existingQuote.totalPriceUgx || 0);
       pricingVersion = Number(existingQuote.pricing_version || existingQuote.pricingVersion || 1);
       quotationSnapshot = existingQuote;

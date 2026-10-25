@@ -1,4 +1,4 @@
-name: Deploy SAFARIS Backend to VPS
+name: Build, Verify & Deploy SAFARIS Backend
 
 on:
   push:
@@ -6,13 +6,51 @@ on:
       - main
 
 jobs:
-  deploy:
+  verify-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger VPS Continuous Deployment
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'backend/package-lock.json'
+
+      - name: Install Dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: TypeScript Type Checking
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Run Master Verification & Security Regression Suites
+        working-directory: backend
+        run: npm test
+
+      - name: Trigger Authenticated VPS Continuous Deployment
+        if: success()
+        env:
+          WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          echo "Triggering VPS deployment webhook..."
-          curl -X POST http://18.222.41.199/webhook \
-            -H "Content-Type: application/json" \
-            -d '{"ref": "refs/heads/main"}' \
-            --max-time 15 || echo "Webhook trigger completed."
+          PAYLOAD=$(cat <<EOF
+          {"ref": "refs/heads/main", "commit": "$COMMIT_SHA", "repository": "Lami2567/safaris"}
+          EOF
+          )
+          
+          if [ -n "$WEBHOOK_SECRET" ]; then
+            SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')"
+            echo "Submitting authenticated deployment webhook to VPS (Commit: $COMMIT_SHA)..."
+            curl -sS --fail-with-body -X POST http://18.222.41.199:9000/webhook \
+              -H "Content-Type: application/json" \
+              -H "X-Hub-Signature-256: $SIGNATURE" \
+              -H "X-GitHub-Event: push" \
+              -d "$PAYLOAD" \
+              --max-time 30
+          else
+            echo "::warning ::GITHUB_WEBHOOK_SECRET secret is not configured in GitHub repository settings. Webhook trigger requires secret."
+          fi

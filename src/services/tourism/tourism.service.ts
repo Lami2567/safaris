@@ -807,9 +807,15 @@ export class TourismService {
 
     let quote: any = null;
     if (data.quotationId) {
-      const existingQuote = PricingEngineService.getQuotationById(data.quotationId);
-      if (existingQuote && existingQuote.serviceType === 'TOUR' && !existingQuote.isExpired) {
-        quote = existingQuote;
+      try {
+        quote = await PricingEngineService.validateAndConsumeQuotation({
+          quotationId: data.quotationId,
+          expectedServiceType: 'TOUR',
+          customerId: data.customerId,
+          referenceId: destId || undefined,
+        });
+      } catch (err: any) {
+        if (ENV.isProduction) throw err;
       }
     }
 

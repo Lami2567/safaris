@@ -6,8 +6,8 @@ import { PricingEngineService } from '../pricing/pricing_engine.service';
 export interface CreateDeliveryRequest {
   id?: string;
   senderId: string;
-  senderName: string;
-  senderPhone: string;
+  senderName?: string;
+  senderPhone?: string;
   recipientName: string;
   recipientPhone: string;
   pickupAddress: string;
@@ -85,17 +85,31 @@ export class DeliveryService {
     let quotationId: string | null = data.quotationId || null;
     let pricingVersion = 1;
     let quotationSnapshot: any = {};
+    let existingQuote: any = null;
 
-    const existingQuote = quotationId ? PricingEngineService.getQuotationById(quotationId) : null;
-    if (existingQuote) {
+    if (quotationId) {
+      existingQuote = PricingEngineService.validateAndConsumeQuotation({
+        quotationId,
+        expectedServiceType: 'DELIVERY',
+        customerId: data.senderId,
+        vehicleId: data.vehicleId,
+      });
       fareUGX = Number(existingQuote.total_price_ugx || existingQuote.totalPriceUgx || 0);
       pricingVersion = Number(existingQuote.pricing_version || existingQuote.pricingVersion || 1);
       quotationSnapshot = existingQuote;
     } else {
+      const serverDistKm = PricingEngineService.calculateServerDistanceKm(
+        Number(data.pickupLat ?? 0.3136),
+        Number(data.pickupLng ?? 32.5811),
+        Number(data.dropoffLat ?? 0.0424),
+        Number(data.dropoffLng ?? 32.4435)
+      );
+      const clientDist = Number(data.distanceKm || 0);
+      const distanceKm = (!clientDist || clientDist < 0.5 * serverDistKm) ? serverDistKm : clientDist;
       fareUGX = this.calculateDeliveryFare(
         data.packageCategory,
         data.packageWeightKg,
-        data.distanceKm,
+        distanceKm,
         data.vehicleId
       );
     }

@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { ENV } from '../config/env';
 import { sendError } from '../shared/response';
 import { AdminService } from '../services/admin/admin.service';
-import { localStore } from '../config/database';
+import { db, localStore } from '../config/database';
 
 export interface AuthUserPayload {
   userId: string;
@@ -13,6 +13,7 @@ export interface AuthUserPayload {
   username?: string;
   adminAuth?: boolean;
   authVersion?: string;
+  tokenVersion?: number;
   scope?: string;
 }
 
@@ -20,7 +21,7 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthUserPayload;
 }
 
-export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   const queryToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
 
@@ -43,28 +44,42 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
         );
       }
 
-      // Live user validation: check suspension and role revocation
+      // Live user validation: look up in authoritative store, check suspension, token version, and role
       if (payload.userId) {
-        const liveUser = localStore.users.get(payload.userId);
-        if (liveUser) {
-          if (liveUser.approval_status === 'SUSPENDED') {
-            return sendError(res, 'ACCOUNT_SUSPENDED', 'Your account has been suspended. Please contact support.', 403);
-          }
+        const liveUser = await db.getUserById(payload.userId);
+        if (!liveUser) {
+          return sendError(res, 'USER_NOT_FOUND', 'User account does not exist or has been removed.', 401);
+        }
 
-          // If token claims elevated privileges but live user role has changed/been revoked
-          if (payload.role !== liveUser.role) {
-            const wasPrivileged = ['admin', 'driver', 'tour_guide'].includes(payload.role);
-            const isPrivileged = ['admin', 'driver', 'tour_guide'].includes(liveUser.role);
-            if (wasPrivileged || isPrivileged) {
-              return sendError(
-                res,
-                'PRIVILEGES_REVOKED',
-                'Your account role or permissions have been updated. Please log in again to continue.',
-                403
-              );
-            }
-            payload.role = liveUser.role;
+        if (liveUser.approval_status === 'SUSPENDED') {
+          return sendError(res, 'ACCOUNT_SUSPENDED', 'Your account has been suspended. Please contact support.', 403);
+        }
+
+        // Check token revocation version
+        const tokenVer = Number(payload.tokenVersion ?? 1);
+        const userVer = Number(liveUser.token_version ?? 1);
+        if (tokenVer < userVer) {
+          return sendError(
+            res,
+            'SESSION_REVOKED',
+            'Session has been invalidated due to a security update or password change. Please log in again.',
+            401
+          );
+        }
+
+        // If token claims elevated privileges but live user role has changed/been revoked
+        if (payload.role !== liveUser.role) {
+          const wasPrivileged = ['admin', 'driver', 'tour_guide'].includes(payload.role);
+          const isPrivileged = ['admin', 'driver', 'tour_guide'].includes(liveUser.role);
+          if (wasPrivileged || isPrivileged) {
+            return sendError(
+              res,
+              'PRIVILEGES_REVOKED',
+              'Your account role or permissions have been updated. Please log in again to continue.',
+              403
+            );
           }
+          payload.role = liveUser.role;
         }
       }
 
@@ -78,9 +93,9 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
     }
   }
 
-  // Fallback for pre-configuration admin bootstrap ONLY via dedicated environment secret
+  // Fallback for pre-configuration admin bootstrap ONLY in non-production environments
   const isAdminLoginEnforced = AdminService.isAdminAuthConfiguredSync();
-  if (!isAdminLoginEnforced && process.env.ADMIN_ACCESS_KEY && process.env.ADMIN_ACCESS_KEY.trim()) {
+  if (process.env.NODE_ENV !== 'production' && !isAdminLoginEnforced && process.env.ADMIN_ACCESS_KEY && process.env.ADMIN_ACCESS_KEY.trim()) {
     const adminKey = req.headers['x-admin-key'] || req.query?.adminKey;
     if (adminKey && adminKey === process.env.ADMIN_ACCESS_KEY.trim()) {
       req.user = {

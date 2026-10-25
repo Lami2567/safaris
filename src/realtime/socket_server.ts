@@ -189,6 +189,13 @@ export function initSocketServer(httpServer: HttpServer): Server {
     socket.on('join_room', (room: string) => {
       if (!room || typeof room !== 'string') return;
 
+      const ALLOWED_ROOM_PREFIXES = ['admin:', 'user:', 'trip:', 'delivery:', 'safari:', 'chat:'];
+      const hasValidPrefix = ALLOWED_ROOM_PREFIXES.some((prefix) => room.startsWith(prefix));
+      if (!hasValidPrefix) {
+        socket.emit('error', { message: 'Invalid or unauthorized room channel name.' });
+        return;
+      }
+
       // Admin telemetry & financial streams
       if (room.startsWith('admin:')) {
         if (role !== 'admin') {
@@ -210,12 +217,14 @@ export function initSocketServer(httpServer: HttpServer): Server {
       if (room.startsWith('trip:')) {
         const tripId = room.split(':')[1];
         const trip = localStore.trips.get(tripId);
-        if (trip) {
-          const isParticipant = trip.customer_id === userId || trip.driver_id === userId || role === 'admin';
-          if (!isParticipant) {
-            socket.emit('error', { message: 'Unauthorized room access: not a participant in this trip.' });
-            return;
-          }
+        if (!trip) {
+          socket.emit('error', { message: 'Trip not found or unauthorized.' });
+          return;
+        }
+        const isParticipant = trip.customer_id === userId || trip.driver_id === userId || role === 'admin';
+        if (!isParticipant) {
+          socket.emit('error', { message: 'Unauthorized room access: not a participant in this trip.' });
+          return;
         }
       }
 
@@ -223,12 +232,14 @@ export function initSocketServer(httpServer: HttpServer): Server {
       if (room.startsWith('delivery:')) {
         const deliveryId = room.split(':')[1];
         const delivery = localStore.deliveries.get(deliveryId);
-        if (delivery) {
-          const isParticipant = delivery.sender_id === userId || delivery.courier_id === userId || role === 'admin';
-          if (!isParticipant) {
-            socket.emit('error', { message: 'Unauthorized room access: not a participant in this delivery.' });
-            return;
-          }
+        if (!delivery) {
+          socket.emit('error', { message: 'Delivery not found or unauthorized.' });
+          return;
+        }
+        const isParticipant = delivery.sender_id === userId || delivery.courier_id === userId || role === 'admin';
+        if (!isParticipant) {
+          socket.emit('error', { message: 'Unauthorized room access: not a participant in this delivery.' });
+          return;
         }
       }
 
@@ -270,7 +281,19 @@ export function initSocketServer(httpServer: HttpServer): Server {
         const speed = Number(data?.speed ?? 0);
         const accuracy = Number(data?.accuracy ?? 5);
         const batteryLevel = data?.batteryLevel !== undefined ? Number(data.batteryLevel) : undefined;
-        const packetTs = data?.timestamp ? Number(data.timestamp) : Date.now();
+        const now = Date.now();
+        let packetTs = data?.timestamp ? Number(data.timestamp) : now;
+        if (!Number.isFinite(packetTs) || packetTs > now + 300000) {
+          packetTs = now;
+        }
+
+        if (data?.tripId) {
+          const trip = localStore.trips.get(data.tripId);
+          if (!trip || trip.driver_id !== effectiveDriverId) {
+            socket.emit('driver:location_error', { message: 'Driver is not assigned to this trip.' });
+            return;
+          }
+        }
 
         if (!effectiveDriverId || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
           socket.emit('driver:location_error', { message: 'Invalid GPS coordinates.' });
@@ -372,13 +395,17 @@ export function initSocketServer(httpServer: HttpServer): Server {
         // Broadcast full enriched snapshot to Admin Fleet Stream (Socket.IO + SSE)
         broadcastDriverSnapshot(effectiveDriverId, 'fleet:telemetry_update');
 
-        // Broadcast to nearby listeners
-        socket.broadcast.emit('driver:nearby_location', {
-          driverId: effectiveDriverId,
-          lat,
-          lng,
-          heading,
-        });
+        // Broadcast to nearby listeners with coarse location (3 decimals ~110m) if not actively on a private trip
+        if (!effectiveTripId) {
+          const coarseLat = Math.round(lat * 1000) / 1000;
+          const coarseLng = Math.round(lng * 1000) / 1000;
+          socket.broadcast.emit('driver:nearby_location', {
+            driverId: effectiveDriverId,
+            lat: coarseLat,
+            lng: coarseLng,
+            heading,
+          });
+        }
       }
     );
 

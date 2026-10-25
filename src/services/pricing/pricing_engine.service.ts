@@ -855,7 +855,25 @@ export class PricingEngineService {
   // ---------------------------------------------------------------------------
   // Centralized Server-Side Quotation Engine (Phase 11)
   // ---------------------------------------------------------------------------
+  public static calculateServerDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    if (!Number.isFinite(lat1) || !Number.isFinite(lon1) || !Number.isFinite(lat2) || !Number.isFinite(lon2)) {
+      return 5.0;
+    }
+    const R = 6371; // Earth radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const aerialKm = R * c;
+    const roadKm = aerialKm * 1.35; // 1.35x road curvature multiplier for Uganda
+    return Math.max(0.5, Math.round(roadKm * 10) / 10);
+  }
+
   public static async calculateQuote(params: {
+    customerId?: string;
     serviceType: QuoteServiceType | string;
     vehicleId?: string;
     vehicleTier?: string;
@@ -1455,9 +1473,71 @@ export class PricingEngineService {
       request_params: params,
       expires_at: expiresAt,
       created_at: nowIso,
+      customer_id: params.customerId || null,
+      consumed: false,
+      consumed_at: null,
+      consumed_by: null,
     });
 
     return quoteResult;
+  }
+
+  public static validateAndConsumeQuotation(params: {
+    quotationId: string;
+    expectedServiceType: QuoteServiceType;
+    customerId?: string;
+    vehicleId?: string;
+    referenceId?: string;
+    allowConsumed?: boolean;
+  }): any {
+    const { quotationId, expectedServiceType, customerId, vehicleId, referenceId, allowConsumed = false } = params;
+    if (!quotationId) {
+      throw new Error('Quotation ID is required.');
+    }
+
+    let quote = this.getQuotationById(quotationId);
+
+    if (!quote) {
+      throw new Error(`Quotation '${quotationId}' not found.`);
+    }
+
+    // 1. Service type validation
+    if (quote.service_type !== expectedServiceType) {
+      throw new Error(`Quotation '${quotationId}' was issued for '${quote.service_type}' and cannot be used for '${expectedServiceType}'.`);
+    }
+
+    // 2. Customer ownership validation
+    if (quote.customer_id && customerId && quote.customer_id !== customerId) {
+      throw new Error(`Quotation '${quotationId}' was issued to another customer and cannot be used by this account.`);
+    }
+
+    // 3. Expiration validation (calculated explicitly from stored timestamp)
+    const expiresAtMs = new Date(quote.expires_at).getTime();
+    if (isNaN(expiresAtMs) || expiresAtMs < Date.now()) {
+      throw new Error(`Quotation '${quotationId}' has expired. Please obtain a fresh quotation.`);
+    }
+
+    // 4. Consumption validation (single-use enforcement)
+    if (!allowConsumed && (quote.consumed === true || quote.status === 'CONSUMED')) {
+      throw new Error(`Quotation '${quotationId}' has already been consumed by an existing booking.`);
+    }
+
+    // 5. Vehicle / Reference consistency validation if provided
+    if (vehicleId && quote.vehicle_id && quote.vehicle_id !== vehicleId && quote.request_params?.vehicleTier !== vehicleId) {
+      throw new Error(`Quotation '${quotationId}' was issued for vehicle '${quote.vehicle_id}', not '${vehicleId}'.`);
+    }
+    if (referenceId && quote.reference_id && quote.reference_id !== referenceId) {
+      throw new Error(`Quotation '${quotationId}' was issued for destination/reference '${quote.reference_id}', not '${referenceId}'.`);
+    }
+
+    // Atomically mark quotation as consumed
+    quote.consumed = true;
+    quote.status = 'CONSUMED';
+    quote.consumed_at = new Date().toISOString();
+    quote.consumed_by = customerId || quote.customer_id || 'UNKNOWN';
+
+    db.persistPriceQuotation(quote).catch(() => {});
+    return quote;
   }
 
   public static getQuotationById(quotationId: string): any | null {

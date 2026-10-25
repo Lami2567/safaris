@@ -45,6 +45,8 @@ async function runTests() {
     console.log('🧪 Starting SAFARIS Backend Automated Verification Suite...\n');
 
     // 1. Seed Database (Only Admin, Destinations, Packages, AppConfig — NO fake drivers/guides)
+    localStore.drivers.clear();
+    localStore.tour_guides.clear();
     await seedUgandaData();
     if (localStore.drivers.size !== 0 || localStore.tour_guides.size !== 0) {
       throw new Error('Seed should not create unapproved or fake drivers/tour guides.');
@@ -196,6 +198,7 @@ async function runTests() {
 
     const { TelemetryController } = await import('../services/telemetry/telemetry.controller');
     const mockReq: any = {
+      user: { userId: 'drv_ug_901', role: 'driver' },
       body: {
         batchId: 'batch_test_001',
         points: [

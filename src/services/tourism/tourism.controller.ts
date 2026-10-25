@@ -47,10 +47,43 @@ export class TourismController {
 
   public static async createBooking(req: Request, res: Response) {
     try {
-      const customerId = (req as any).user?.userId || req.body.customerId;
+      const customerId = (req as any).user?.userId;
+      if (!customerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required to create a booking.', 401);
+      }
+      const {
+        destinationId,
+        packageId,
+        guideId,
+        tourGuideId,
+        vehicleId,
+        guestsCount,
+        guestCount,
+        durationDays,
+        startDate,
+        specialRequests,
+        quotationId,
+        paymentMethod,
+        selectedAdditionalChargeIds,
+      } = req.body || {};
+
+      const effectiveGuideId = guideId || tourGuideId;
+      const effectiveGuests = Math.max(1, Math.floor(Number(guestsCount || guestCount || 1)));
+      const effectiveDays = Math.max(1, Math.floor(Number(durationDays || 1)));
+
       const booking = await TourismService.createBooking({
-        ...req.body,
         customerId,
+        destinationId: destinationId ? String(destinationId) : undefined,
+        packageId: packageId ? String(packageId) : undefined,
+        tourGuideId: effectiveGuideId ? String(effectiveGuideId) : undefined,
+        vehicleId: vehicleId ? String(vehicleId) : undefined,
+        guestsCount: effectiveGuests,
+        durationDays: effectiveDays,
+        travelDate: String(startDate || (req.body && req.body.travelDate) || new Date().toISOString().split('T')[0]),
+        specialRequests: specialRequests ? String(specialRequests) : '',
+        quotationId: quotationId ? String(quotationId) : undefined,
+        paymentMethod: String(paymentMethod || 'CARD'),
+        selectedAdditionalChargeIds: Array.isArray(selectedAdditionalChargeIds) ? selectedAdditionalChargeIds : undefined,
       });
       return sendSuccess(res, booking, 201);
     } catch (err: any) {

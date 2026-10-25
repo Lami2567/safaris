@@ -187,34 +187,48 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > 1024 * 1024:
+            self.send_response(413)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Payload too large (max 1MB)"}).encode("utf-8"))
+            return
+
         body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
 
-        # 1. Enforce HMAC Signature verification if GITHUB_WEBHOOK_SECRET is configured
+        # 1. Enforce mandatory HMAC Signature verification with fail-closed protection
         webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "").strip()
         signature_header = self.headers.get("X-Hub-Signature-256", "")
 
-        if webhook_secret:
-            if not signature_header:
-                log("Rejected webhook: missing X-Hub-Signature-256 header.")
-                self.send_response(401)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "Missing signature header"}).encode("utf-8"))
-                return
+        if not webhook_secret:
+            log("Rejected webhook: GITHUB_WEBHOOK_SECRET is not configured on server. Deployment webhook disabled.")
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Deployment webhook disabled: GITHUB_WEBHOOK_SECRET not configured on server"}).encode("utf-8"))
+            return
 
-            expected_sig = "sha256=" + hmac.new(
-                webhook_secret.encode("utf-8"),
-                body.encode("utf-8"),
-                hashlib.sha256
-            ).hexdigest()
+        if not signature_header:
+            log("Rejected webhook: missing X-Hub-Signature-256 header.")
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Missing signature header"}).encode("utf-8"))
+            return
 
-            if not hmac.compare_digest(signature_header, expected_sig):
-                log("Rejected webhook: HMAC signature mismatch.")
-                self.send_response(401)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "Invalid signature"}).encode("utf-8"))
-                return
+        expected_sig = "sha256=" + hmac.new(
+            webhook_secret.encode("utf-8"),
+            body.encode("utf-8"),
+            hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(signature_header, expected_sig):
+            log("Rejected webhook: HMAC signature mismatch.")
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Invalid signature"}).encode("utf-8"))
+            return
 
         # 2. Enforce GitHub event check
         event_type = self.headers.get("X-GitHub-Event", "push")

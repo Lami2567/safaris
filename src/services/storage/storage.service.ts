@@ -372,13 +372,15 @@ export class StorageService {
     // Construct full presigned upload URL
     const uploadUrl = `https://${host}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
 
-    // Construct public view URL (using public CDN domain or r2.dev URL)
-    let publicUrl: string;
-    if (ENV.CLOUDFLARE_R2_PUBLIC_URL && ENV.CLOUDFLARE_R2_PUBLIC_URL.trim()) {
-      const publicBase = ENV.CLOUDFLARE_R2_PUBLIC_URL.trim().replace(/\/$/, '');
-      publicUrl = `${publicBase}/${key}`;
-    } else {
-      publicUrl = `https://${bucketName}.${accountId}.r2.cloudflarestorage.com/${key}`;
+    // Construct public view URL (ONLY for non-private media assets)
+    let publicUrl = '';
+    if (!isPrivate) {
+      if (ENV.CLOUDFLARE_R2_PUBLIC_URL && ENV.CLOUDFLARE_R2_PUBLIC_URL.trim()) {
+        const publicBase = ENV.CLOUDFLARE_R2_PUBLIC_URL.trim().replace(/\/$/, '');
+        publicUrl = `${publicBase}/${key}`;
+      } else {
+        publicUrl = `https://${bucketName}.${accountId}.r2.cloudflarestorage.com/${key}`;
+      }
     }
 
     return {
@@ -446,5 +448,70 @@ export class StorageService {
     const bucket = ENV.CLOUDFLARE_R2_BUCKET_NAME || 'bucket';
     const account = ENV.CLOUDFLARE_R2_ACCOUNT_ID || 'account';
     return `https://${bucket}.${account}.r2.cloudflarestorage.com/${key.replace(/^\//, '')}`;
+  }
+  /**
+   * Generates a secure, short-lived presigned GET download URL for private documents.
+   * Private documents (applicant CVs, IDs, permits) are never served through public CDN URLs.
+   */
+  public static generatePresignedDownloadUrl(key: string, expiresIn = 900): string {
+    if (!this.isConfigured()) {
+      throw new Error('Cloudflare R2 is not fully configured.');
+    }
+
+    const accountId = ENV.CLOUDFLARE_R2_ACCOUNT_ID.trim();
+    const accessKeyId = ENV.CLOUDFLARE_R2_ACCESS_KEY_ID.trim();
+    const secretAccessKey = ENV.CLOUDFLARE_R2_SECRET_ACCESS_KEY.trim();
+    const bucketName = ENV.CLOUDFLARE_R2_BUCKET_NAME.trim();
+    const region = (ENV.CLOUDFLARE_R2_REGION || 'auto').trim();
+
+    const host = `${accountId}.r2.cloudflarestorage.com`;
+    const canonicalUri = `/${encodeURIComponent(bucketName)}/${key.replace(/^\//, '').split('/').map(encodeURIComponent).join('/')}`;
+
+    const date = new Date();
+    const amzDate = date.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const dateStamp = amzDate.slice(0, 8);
+    const credentialScope = `${dateStamp}/${region}/s3/aws4_request`;
+
+    const queryParams: Record<string, string> = {
+      'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+      'X-Amz-Credential': `${accessKeyId}/${credentialScope}`,
+      'X-Amz-Date': amzDate,
+      'X-Amz-Expires': Math.min(Math.max(60, expiresIn), 3600).toString(),
+      'X-Amz-SignedHeaders': 'host',
+    };
+
+    const canonicalQueryString = Object.keys(queryParams)
+      .sort()
+      .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(queryParams[k])}`)
+      .join('&');
+
+    const canonicalHeaders = `host:${host}\n`;
+    const signedHeaders = 'host';
+    const payloadHash = 'UNSIGNED-PAYLOAD';
+
+    const canonicalRequest = [
+      'GET',
+      canonicalUri,
+      canonicalQueryString,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+
+    const canonicalRequestHash = crypto.createHash('sha256').update(canonicalRequest, 'utf8').digest('hex');
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credentialScope,
+      canonicalRequestHash,
+    ].join('\n');
+
+    const kDate = crypto.createHmac('sha256', 'AWS4' + secretAccessKey).update(dateStamp, 'utf8').digest();
+    const kRegion = crypto.createHmac('sha256', kDate).update(region, 'utf8').digest();
+    const kService = crypto.createHmac('sha256', kRegion).update('s3', 'utf8').digest();
+    const kSigning = crypto.createHmac('sha256', kService).update('aws4_request', 'utf8').digest();
+
+    const signature = crypto.createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex');
+    return `https://${host}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
   }
 }

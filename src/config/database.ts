@@ -720,6 +720,26 @@ class DatabaseManager {
     }
   }
 
+  public async getUserById(id: string): Promise<any | null> {
+    if (!id) return null;
+    if (localStore.users.has(id)) {
+      return localStore.users.get(id);
+    }
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        const res = await this.pool.query('SELECT * FROM users WHERE id = $1', [id]);
+        if (res.rows.length > 0) {
+          const u = res.rows[0];
+          localStore.users.set(u.id, u);
+          return u;
+        }
+      } catch (err) {
+        console.warn('[Database] getUserById PostgreSQL notice:', err);
+      }
+    }
+    return null;
+  }
+
   public async persistUser(user: any): Promise<void> {
     // 1. Update in-memory cache
     localStore.users.set(user.id, user);
@@ -730,8 +750,8 @@ class DatabaseManager {
         await this.pool.query(
           `INSERT INTO users (
              id, full_name, phone, email, password_hash, role, avatar_url,
-             rating, total_trips, wallet_balance_ugx, is_verified, approval_status, application_id, created_at, updated_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CURRENT_TIMESTAMP)
+             rating, total_trips, wallet_balance_ugx, is_verified, approval_status, application_id, token_version, created_at, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)
            ON CONFLICT (id) DO UPDATE SET
              full_name = EXCLUDED.full_name,
              phone = EXCLUDED.phone,
@@ -745,6 +765,7 @@ class DatabaseManager {
              is_verified = EXCLUDED.is_verified,
              approval_status = EXCLUDED.approval_status,
              application_id = EXCLUDED.application_id,
+             token_version = EXCLUDED.token_version,
              updated_at = CURRENT_TIMESTAMP`,
           [
             user.id,
@@ -760,6 +781,7 @@ class DatabaseManager {
             user.is_verified === true,
             user.approval_status || 'APPROVED',
             user.application_id || null,
+            Number(user.token_version ?? 1),
             user.created_at || new Date().toISOString(),
           ]
         );
@@ -1514,11 +1536,15 @@ class DatabaseManager {
              distance_km, weight_kg, base_price_ugx, distance_price_ugx,
              vehicle_charge_ugx, tourist_count_charge_ugx, tour_guide_fee_ugx,
              additional_charges_ugx, discounts_ugx, taxes_ugx, total_price_ugx,
-             currency, pricing_version, breakdown, request_params, expires_at, created_at
+             currency, pricing_version, breakdown, request_params, expires_at, created_at,
+             customer_id, consumed, consumed_at, consumed_by
            ) VALUES (
              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-             $17, $18, $19, $20, $21, $22, $23
-           ) ON CONFLICT (id) DO NOTHING`,
+             $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+           ) ON CONFLICT (id) DO UPDATE SET
+             consumed = EXCLUDED.consumed,
+             consumed_at = EXCLUDED.consumed_at,
+             consumed_by = EXCLUDED.consumed_by`,
           [
             quote.id,
             quote.service_type,
@@ -1543,6 +1569,10 @@ class DatabaseManager {
             JSON.stringify(quote.request_params || {}),
             quote.expires_at || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
             quote.created_at || new Date().toISOString(),
+            quote.customer_id || null,
+            quote.consumed === true,
+            quote.consumed_at || null,
+            quote.consumed_by || null,
           ]
         );
       } catch (err) {
@@ -1608,6 +1638,9 @@ class DatabaseManager {
    */
   public async withTransaction<T>(fn: (client: any | null) => Promise<T>, maxRetries = 4): Promise<T> {
     if (!this.isPostgresConnected || !this.pool) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('DURABLE_STORAGE_REQUIRED: Financial transactions require an active, durable PostgreSQL connection in production.');
+      }
       return fn(null);
     }
 

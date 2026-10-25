@@ -23,9 +23,48 @@ export class DeliveryController {
       if (!senderId) {
         return sendError(res, 'UNAUTHORIZED', 'Authentication required to create a delivery.', 401);
       }
+      const {
+        senderName,
+        senderPhone,
+        pickupAddress,
+        pickupLat,
+        pickupLng,
+        recipientName,
+        recipientPhone,
+        destinationAddress,
+        dropoffAddress,
+        destinationLat,
+        dropoffLat,
+        destinationLng,
+        dropoffLng,
+        packageCategory,
+        packageWeightKg,
+        packageDescription,
+        quotationId,
+        vehicleId,
+        paymentMethod,
+        distanceKm,
+      } = req.body || {};
+
       const delivery = DeliveryService.createDelivery({
-        ...req.body,
         senderId,
+        senderName: String(senderName || (req as any).user?.fullName || 'Sender'),
+        senderPhone: String(senderPhone || (req as any).user?.phone || '+256700000000'),
+        pickupAddress: String(pickupAddress || ''),
+        pickupLat: Number(pickupLat ?? 0.3136),
+        pickupLng: Number(pickupLng ?? 32.5811),
+        recipientName: String(recipientName || ''),
+        recipientPhone: String(recipientPhone || ''),
+        dropoffAddress: String(dropoffAddress || destinationAddress || ''),
+        dropoffLat: Number(dropoffLat ?? destinationLat ?? 0.0424),
+        dropoffLng: Number(dropoffLng ?? destinationLng ?? 32.4435),
+        packageCategory: String(packageCategory || 'DOCUMENTS'),
+        packageWeightKg: Math.max(0.1, Number(packageWeightKg || 1)),
+        packageDescription: String(packageDescription || ''),
+        quotationId: quotationId ? String(quotationId) : undefined,
+        vehicleId: vehicleId ? String(vehicleId) : undefined,
+        paymentMethod: String(paymentMethod || 'CASH'),
+        distanceKm: distanceKm ? Number(distanceKm) : 5,
       });
       return sendSuccess(res, delivery, 201);
     } catch (err: any) {

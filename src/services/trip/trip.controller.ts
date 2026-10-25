@@ -17,13 +17,45 @@ export class TripController {
   public static createTrip(req: AuthenticatedRequest, res: Response) {
     try {
       const customerId = req.user!.userId;
+      const {
+        pickupTitle,
+        pickupAddress,
+        pickupLat,
+        pickupLng,
+        destTitle,
+        destAddress,
+        destLat,
+        destLng,
+        vehicleTier,
+        vehicleId,
+        serviceType,
+        quotationId,
+        routeCode,
+        distanceKm,
+        paymentMethod,
+      } = req.body || {};
+
       const trip = TripService.createTrip({
         customerId,
-        ...req.body,
+        pickupTitle: String(pickupTitle || 'Kampala Pickup'),
+        pickupAddress: String(pickupAddress || pickupTitle || 'Kampala'),
+        pickupLat: Number(pickupLat ?? 0.3136),
+        pickupLng: Number(pickupLng ?? 32.5811),
+        destTitle: String(destTitle || 'Entebbe Destination'),
+        destAddress: String(destAddress || destTitle || 'Entebbe'),
+        destLat: Number(destLat ?? 0.0424),
+        destLng: Number(destLng ?? 32.4435),
+        vehicleTier: String(vehicleTier || 'go'),
+        vehicleId: vehicleId ? String(vehicleId) : undefined,
+        serviceType: serviceType === 'AIRPORT_SHUTTLE' ? 'AIRPORT_SHUTTLE' : 'RIDE',
+        quotationId: quotationId ? String(quotationId) : undefined,
+        routeCode: routeCode ? String(routeCode) : undefined,
+        distanceKm: distanceKm ? Number(distanceKm) : 0,
+        paymentMethod: String(paymentMethod || 'CASH'),
       });
       return sendSuccess(res, trip, 201);
     } catch (err: any) {
-      return sendError(res, 'TRIP_CREATION_FAILED', err.message);
+      return sendError(res, 'TRIP_CREATION_FAILED', err.message, 400);
     }
   }
 

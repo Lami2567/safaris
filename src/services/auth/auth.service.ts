@@ -440,6 +440,7 @@ export class AuthService {
       role: user.role,
       phone: user.phone,
       email: user.email,
+      tokenVersion: Number(user.token_version ?? 1),
       scope: 'access',
     };
 
@@ -635,6 +636,7 @@ export class AuthService {
     user.password_changed_at = new Date().toISOString();
     user.is_verified = true;
     user.approval_status = 'APPROVED';
+    user.token_version = (Number(user.token_version) || 1) + 1;
     await db.persistUser(user);
 
     // Clear used OTP and invalidate setup token

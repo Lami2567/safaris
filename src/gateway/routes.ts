@@ -101,9 +101,9 @@ apiRouter.post('/admin/applicants/:id/suspend', authenticate, requireRole('admin
 // -------------------------------------------------------------
 // Real-time Telemetry & Offline Location Queue Sync
 // -------------------------------------------------------------
-apiRouter.post('/telemetry/batch', TelemetryController.batchUpload);
-apiRouter.get('/telemetry/drivers/:driverId/history', TelemetryController.getDriverHistory);
-apiRouter.get('/telemetry/trips/:tripId/history', TelemetryController.getTripHistory);
+apiRouter.post('/telemetry/batch', authenticate, TelemetryController.batchUpload);
+apiRouter.get('/telemetry/drivers/:driverId/history', authenticate, TelemetryController.getDriverHistory);
+apiRouter.get('/telemetry/trips/:tripId/history', authenticate, TelemetryController.getTripHistory);
 
 // -------------------------------------------------------------
 // Authentication

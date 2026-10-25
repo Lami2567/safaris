@@ -165,6 +165,7 @@ export class UserService {
 
     user.role = newRole;
     user.auth_version = uuidv4();
+    user.token_version = (Number(user.token_version) || 1) + 1;
     user.updated_at = new Date().toISOString();
     await db.persistUser(user);
 
