@@ -32,6 +32,11 @@ const baseTestEnv: NodeJS.ProcessEnv = {
   SAFARIS_TEST_DATA_DIR: testDataDir,
   DISABLE_DATABASE: 'true',
   JWT_SECRET: process.env.JWT_SECRET || 'test_jwt_secret_safaris_super_secure_32chars_min',
+  REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET || 'test_refresh_token_secret_safaris_32ch',
+  CONFIG_ENCRYPTION_SECRET: process.env.CONFIG_ENCRYPTION_SECRET || 'safaris_config_encryption_key_2026_uganda_32b',
+  DPO_ENVIRONMENT: 'sandbox',
+  DPO_SANDBOX_COMPANY_TOKEN: process.env.DPO_SANDBOX_COMPANY_TOKEN || 'B3F59BE7-0756-420E-BB88-1D98E7A6B040',
+  DPO_SANDBOX_SERVICE_TYPE_ID: process.env.DPO_SANDBOX_SERVICE_TYPE_ID || '54841',
   PORT: '0',
 };
 
@@ -59,6 +64,8 @@ let totalFailed = 0;
 const startTime = Date.now();
 
 try {
+  const tsNodeBin = path.resolve(__dirname, '../../node_modules/ts-node/dist/bin.js');
+
   for (const suite of testSuites) {
     console.log(`\n-------------------------------------------------------------------`);
     console.log(`▶ Running: ${suite.name}`);
@@ -66,9 +73,9 @@ try {
     console.log(`-------------------------------------------------------------------`);
 
     const filePath = path.resolve(__dirname, suite.file);
-    const result = spawnSync('npx', ['ts-node', '--transpile-only', filePath], {
+    const result = spawnSync(process.execPath, [tsNodeBin, '--transpile-only', filePath], {
       stdio: 'inherit',
-      shell: true,
+      shell: false,
       env: baseTestEnv,
     });
 
@@ -77,6 +84,9 @@ try {
       totalPassed++;
     } else {
       console.error(`\n❌ SUITE FAILED: ${suite.name} (Exit code: ${result.status})`);
+      if (result.error) {
+        console.error('Child spawn error:', result.error);
+      }
       totalFailed++;
       process.exit(result.status || 1);
     }
