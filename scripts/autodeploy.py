@@ -206,6 +206,21 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
 
         # 1. Enforce mandatory HMAC Signature verification with fail-closed protection
         webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "").strip()
+        if not webhook_secret:
+            for env_file in [os.path.join(REPO_DIR, ".env.production"), os.path.join(REPO_DIR, ".env")]:
+                if os.path.exists(env_file):
+                    try:
+                        with open(env_file, "r", encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if line.startswith("GITHUB_WEBHOOK_SECRET="):
+                                    webhook_secret = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                    break
+                    except Exception:
+                        pass
+                if webhook_secret:
+                    break
+
         signature_header = self.headers.get("X-Hub-Signature-256", "")
 
         if not webhook_secret:

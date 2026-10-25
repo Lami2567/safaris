@@ -31,7 +31,7 @@ jobs:
       - name: Trigger Authenticated VPS Continuous Deployment
         if: success()
         env:
-          WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
+          WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET || secrets.WEBHOOK_SECRET || secrets.DEPLOY_WEBHOOK_SECRET || secrets.DEPLOY_SECRET }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
           if [ -z "$WEBHOOK_SECRET" ]; then
