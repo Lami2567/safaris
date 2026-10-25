@@ -80,7 +80,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.production build
 # 5. Start / Update Services Gracefully
 echo "🚀 Starting production service stack..."
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
-docker exec safaris_nginx_prod nginx -t && docker exec safaris_nginx_prod nginx -s reload
+docker compose -f docker-compose.prod.yml --env-file .env.production restart nginx
+docker exec safaris_nginx_prod nginx -t
 
 # 6. Wait for Database Readiness
 echo "⏳ Waiting for PostgreSQL to initialize..."
