@@ -101,27 +101,49 @@ class DatabaseManager {
   }
 
   public async init(): Promise<void> {
+    this.pool = new Pool({
+      connectionString: ENV.DATABASE_URL,
+      connectionTimeoutMillis: 5000,
+      max: 20,
+    });
+
+    let connected = false;
+    let lastErr: any = null;
+    const isProd = process.env.NODE_ENV === 'production';
+    const maxRetries = isProd ? 5 : 1;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const client = await this.pool.connect();
+        client.release();
+        connected = true;
+        this.isPostgresConnected = true;
+        console.log('✅ [Database] Connected successfully to PostgreSQL instance.');
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxRetries) {
+          console.log(`⏳ [Database] PostgreSQL connection attempt ${attempt}/${maxRetries} failed. Retrying in 2s...`);
+          await new Promise((res) => setTimeout(res, 2000));
+        }
+      }
+    }
+
+    if (!connected) {
+      this.isPostgresConnected = false;
+      this.loadAllFromDisk();
+      console.log('⚡ [Database] PostgreSQL not detected locally. Initialized in-memory data store with disk persistence. Notice:', lastErr?.message || lastErr);
+      return;
+    }
+
     try {
-      this.pool = new Pool({
-        connectionString: ENV.DATABASE_URL,
-        connectionTimeoutMillis: 5000,
-        max: 20,
-      });
-
-      const client = await this.pool.connect();
-      client.release();
-      this.isPostgresConnected = true;
-      console.log('✅ [Database] Connected successfully to PostgreSQL instance.');
-
       // 1. Ensure Schema DDL exists in PostgreSQL & remove any legacy mock seed records
       await this.ensureSchema();
 
       // 2. Load all entities authoritatively from PostgreSQL into memory
       await this.loadAllFromPostgres();
     } catch (err) {
-      this.isPostgresConnected = false;
-      this.loadAllFromDisk();
-      console.log('⚡ [Database] PostgreSQL not detected locally. Initialized in-memory data store with disk persistence.');
+      console.error('⚠️ [Database] Error during schema/data synchronization:', err);
     }
   }
 
@@ -616,6 +638,62 @@ class DatabaseManager {
         }
       } catch (err) {
         console.warn('[Database] Destination media sync notice:', err);
+      }
+
+      // 15f. Destinations
+      try {
+        localStore.destinations.clear();
+        const destRes = await this.pool.query('SELECT * FROM destinations ORDER BY display_order ASC, created_at ASC');
+        if (destRes?.rows?.length > 0) {
+          for (const row of destRes.rows) {
+            localStore.destinations.set(row.id, {
+              ...row,
+              imageUrl: row.image_url || '',
+              image_url: row.image_url || '',
+              image_placeholder: row.image_placeholder || row.image_url || '',
+              gallery_images: Array.isArray(row.gallery_images) ? row.gallery_images : [],
+              galleryImages: Array.isArray(row.gallery_images) ? row.gallery_images : [],
+              content_blocks: Array.isArray(row.content_blocks) ? row.content_blocks : [],
+              contentBlocks: Array.isArray(row.content_blocks) ? row.content_blocks : [],
+              highlights: Array.isArray(row.highlights) ? row.highlights : [],
+              activities: Array.isArray(row.activities) ? row.activities : [],
+              inclusions: Array.isArray(row.inclusions) ? row.inclusions : [],
+              exclusions: Array.isArray(row.exclusions) ? row.exclusions : [],
+              assigned_vehicle_ids: Array.isArray(row.assigned_vehicle_ids) ? row.assigned_vehicle_ids : [],
+              assigned_guide_ids: Array.isArray(row.assigned_guide_ids) ? row.assigned_guide_ids : [],
+              tourist_pricing_tiers: Array.isArray(row.tourist_pricing_tiers) ? row.tourist_pricing_tiers : [],
+              itinerary: Array.isArray(row.itinerary) ? row.itinerary : [],
+              additional_charges: Array.isArray(row.additional_charges) ? row.additional_charges : [],
+            });
+          }
+          console.log(`🏞️ [Database] Synchronized ${destRes.rows.length} destinations from PostgreSQL.`);
+        }
+      } catch (err) {
+        console.warn('[Database] Destinations sync notice:', err);
+      }
+
+      // 15g. Tour Packages
+      try {
+        localStore.tour_packages.clear();
+        const pkgRes = await this.pool.query('SELECT * FROM tour_packages ORDER BY display_order ASC, created_at ASC');
+        if (pkgRes?.rows?.length > 0) {
+          for (const row of pkgRes.rows) {
+            localStore.tour_packages.set(row.id, {
+              ...row,
+              imageUrl: row.image_url || '',
+              image_url: row.image_url || '',
+              image_placeholder: row.image_placeholder || row.image_url || '',
+              gallery_images: Array.isArray(row.gallery_images) ? row.gallery_images : [],
+              inclusions: Array.isArray(row.inclusions) ? row.inclusions : [],
+              exclusions: Array.isArray(row.exclusions) ? row.exclusions : [],
+              itinerary_summary: Array.isArray(row.itinerary_summary) ? row.itinerary_summary : [],
+              tourist_pricing_tiers: Array.isArray(row.tourist_pricing_tiers) ? row.tourist_pricing_tiers : [],
+            });
+          }
+          console.log(`🎒 [Database] Synchronized ${pkgRes.rows.length} tour packages from PostgreSQL.`);
+        }
+      } catch (err) {
+        console.warn('[Database] Tour packages sync notice:', err);
       }
 
       // 16. Auto-reconcile any driver applications or driver users missing from drivers/vehicles tables

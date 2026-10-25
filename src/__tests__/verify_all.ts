@@ -9,7 +9,7 @@ import { DeliveryService } from '../services/delivery/delivery.service';
 import { PaymentService } from '../services/payment/payment.service';
 import { AppConfigService } from '../services/app_config/app_config.service';
 import { DriverService } from '../services/driver/driver.service';
-import { localStore } from '../config/database';
+import { db, localStore } from '../config/database';
 import { seedUgandaData } from '../database/seed';
 import { runFinancialEngineTests } from './financial_engine.test';
 
@@ -43,6 +43,7 @@ async function runTests() {
 
   try {
     console.log('🧪 Starting SAFARIS Backend Automated Verification Suite...\n');
+    await db.waitForReady();
 
     // 1. Seed Database (Only Admin, Destinations, Packages, AppConfig — NO fake drivers/guides)
     localStore.drivers.clear();
