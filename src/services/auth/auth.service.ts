@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
@@ -20,6 +21,7 @@ export class AuthService {
   // Persistent OTP store (backed by disk + memory)
   private static emailOtpStore = new Map<string, OtpRecord>();
   private static otpsInitialized = false;
+  private static usedSetupTokens = new Set<string>();
 
   private static getOtpFilePath(): string {
     const candidates = [
@@ -148,8 +150,8 @@ export class AuthService {
     await db.persistUser(newUser);
     console.log(`✅ [AuthService] New customer registered and permanently saved to database: ${newUser.full_name} (${cleanEmail})`);
 
-    // 4. Generate 6-digit email OTP
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // 4. Generate 6-digit email OTP using cryptographically secure randomInt
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
 
     this.emailOtpStore.set(cleanEmail, {
@@ -185,19 +187,18 @@ export class AuthService {
     const cleanOtp = otpCode.trim();
 
     const record = this.emailOtpStore.get(cleanEmail);
-    const isDevFallback = !ENV.isProduction && cleanOtp === '123456';
 
-    if (!record && !isDevFallback) {
+    if (!record) {
       throw new Error('No active verification code found for this email. Please request a new code.');
     }
 
-    if (record && Date.now() > record.expiresAt && !isDevFallback) {
+    if (Date.now() > record.expiresAt) {
       this.emailOtpStore.delete(cleanEmail);
       this.saveOtps();
       throw new Error('Verification code has expired. Please request a new one.');
     }
 
-    if (record && record.code !== cleanOtp && !isDevFallback) {
+    if (record.code !== cleanOtp) {
       throw new Error('Invalid verification code. Please check your email and try again.');
     }
 
@@ -314,7 +315,7 @@ export class AuthService {
       throw new Error(`Please wait ${waitSec} seconds before requesting a new code.`);
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = Date.now() + 15 * 60 * 1000;
 
     this.emailOtpStore.set(cleanEmail, {
@@ -439,6 +440,7 @@ export class AuthService {
       role: user.role,
       phone: user.phone,
       email: user.email,
+      scope: 'access',
     };
 
     const accessToken = jwt.sign(payload, ENV.JWT_SECRET, {
@@ -453,7 +455,7 @@ export class AuthService {
   }
 
   public static sanitizeUser(user: any) {
-    const { password_hash, ...sanitized } = user;
+    const { password_hash, password, otp, token, setupToken, setup_token, ...sanitized } = user;
     try {
       const env = (ENV.DPO_ENVIRONMENT || 'sandbox') as any;
       sanitized.wallet_balance_ugx = FinancialService.calculateWalletBalance(user.id, env);
@@ -491,19 +493,18 @@ export class AuthService {
     const cleanOtp = otpCode.trim();
 
     const record = this.emailOtpStore.get(cleanEmail);
-    const isDevFallback = !ENV.isProduction && cleanOtp === '123456';
 
-    if (!record && !isDevFallback) {
+    if (!record) {
       throw new Error('No active login OTP found for this email. Please ensure your application has been approved.');
     }
 
-    if (record && Date.now() > record.expiresAt && !isDevFallback) {
+    if (Date.now() > record.expiresAt) {
       this.emailOtpStore.delete(cleanEmail);
       this.saveOtps();
       throw new Error('The OTP code has expired. Please contact support or request a new activation link.');
     }
 
-    if (record && record.code !== cleanOtp && !isDevFallback) {
+    if (record.code !== cleanOtp) {
       throw new Error('Invalid OTP code. Please check your approval email and try again.');
     }
 
@@ -594,6 +595,10 @@ export class AuthService {
       throw new Error('Password must be at least 6 characters long.');
     }
 
+    if (this.usedSetupTokens.has(setupToken)) {
+      throw new Error('This setup token has already been used.');
+    }
+
     let decoded: any = null;
     try {
       decoded = jwt.verify(setupToken, ENV.JWT_SECRET);
@@ -632,7 +637,8 @@ export class AuthService {
     user.approval_status = 'APPROVED';
     await db.persistUser(user);
 
-    // Clear used OTP
+    // Clear used OTP and invalidate setup token
+    this.usedSetupTokens.add(setupToken);
     this.emailOtpStore.delete(cleanEmail);
     this.saveOtps();
 

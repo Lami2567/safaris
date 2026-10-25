@@ -44,7 +44,6 @@ export class StorageService {
     'image/png',
     'image/webp',
     'image/gif',
-    'image/svg+xml',
     'image/avif',
     'image/heic',
     'image/heif',
@@ -82,19 +81,95 @@ export class StorageService {
     const norm = (mimeType || '').toLowerCase().trim();
     const ext = (fileName.split('.').pop() || '').toLowerCase().trim();
 
-    if (this.ALLOWED_IMAGE_TYPES.has(norm) || norm.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'avif'].includes(ext)) {
+    // Reject SVG files due to active content / script injection vulnerabilities
+    if (norm === 'image/svg+xml' || ext === 'svg') {
+      throw new Error('SVG vector images are disallowed due to security restrictions (XSS/active content). Please use JPEG, PNG, or WEBP.');
+    }
+
+    if (this.ALLOWED_IMAGE_TYPES.has(norm) || ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'].includes(ext)) {
       return 'IMAGE';
     }
-    if (this.ALLOWED_VIDEO_TYPES.has(norm) || norm.startsWith('video/') || ['mp4', 'webm', 'mov', 'm4v'].includes(ext)) {
+    if (this.ALLOWED_VIDEO_TYPES.has(norm) || ['mp4', 'webm', 'mov', 'm4v'].includes(ext)) {
       return 'VIDEO';
     }
-    if (this.ALLOWED_AUDIO_TYPES.has(norm) || norm.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'aac', 'm4a'].includes(ext)) {
+    if (this.ALLOWED_AUDIO_TYPES.has(norm) || ['mp3', 'wav', 'ogg', 'aac', 'm4a'].includes(ext)) {
       return 'AUDIO';
     }
     if (this.ALLOWED_DOCUMENT_TYPES.has(norm) || ['pdf', 'doc', 'docx'].includes(ext)) {
       return 'DOCUMENT';
     }
     return null;
+  }
+
+  /**
+   * Cryptographically inspects binary header signatures (magic bytes) to prevent disguised scripts/HTML.
+   */
+  public static validateMagicBytes(buffer: Buffer, declaredMime: string): { valid: boolean; detectedType?: string; error?: string } {
+    if (!buffer || buffer.length < 4) {
+      return { valid: false, error: 'Empty or corrupt payload buffer.' };
+    }
+
+    // Inspect first 1024 bytes for active script, HTML, or SVG tags
+    const headerSlice = buffer.subarray(0, Math.min(buffer.length, 1024)).toString('utf-8').toLowerCase();
+    const DANGEROUS_PATTERNS = ['<svg', '<?xml', '<script', '<html', '<!doctype', 'javascript:', 'onload=', 'onerror='];
+    for (const pat of DANGEROUS_PATTERNS) {
+      if (headerSlice.includes(pat)) {
+        return { valid: false, error: `Malicious or active content detected in file payload (${pat}).` };
+      }
+    }
+
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+      return { valid: true, detectedType: 'image/jpeg' };
+    }
+
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+      return { valid: true, detectedType: 'image/png' };
+    }
+
+    // GIF: GIF87a or GIF89a
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) {
+      return { valid: true, detectedType: 'image/gif' };
+    }
+
+    // WEBP: RIFF....WEBP
+    if (
+      buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+      buffer.length >= 12 &&
+      buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+    ) {
+      return { valid: true, detectedType: 'image/webp' };
+    }
+
+    // PDF: %PDF- (25 50 44 46)
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+      return { valid: true, detectedType: 'application/pdf' };
+    }
+
+    // MP4 / MOV: bytes 4-7 equal 'ftyp'
+    if (buffer.length >= 8 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') {
+      return { valid: true, detectedType: 'video/mp4' };
+    }
+
+    // MP3: 'ID3' or 0xFF 0xFB/F3/F2
+    if (
+      (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) ||
+      (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0)
+    ) {
+      return { valid: true, detectedType: 'audio/mpeg' };
+    }
+
+    // WAV: RIFF....WAVE
+    if (
+      buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+      buffer.length >= 12 &&
+      buffer[8] === 0x57 && buffer[9] === 0x41 && buffer[10] === 0x56 && buffer[11] === 0x45
+    ) {
+      return { valid: true, detectedType: 'audio/wav' };
+    }
+
+    return { valid: false, error: 'File header does not match allowed binary signatures (JPEG, PNG, WEBP, GIF, PDF, MP4, MP3, WAV).' };
   }
 
   /**
@@ -219,14 +294,16 @@ export class StorageService {
       .replace(/[^a-zA-Z0-9_-]/g, '_')
       .slice(0, 40);
 
-    const prefixDir =
-      mediaCategory === 'VIDEO'
-        ? 'videos'
-        : mediaCategory === 'AUDIO'
-        ? 'audio'
-        : mediaCategory === 'DOCUMENT'
-        ? 'documents'
-        : 'images';
+    const isPrivate = ['careers', 'applicants', 'recruitment', 'identity', 'permits'].includes(cleanFolder);
+    const prefixDir = isPrivate
+      ? 'private/recruitment'
+      : mediaCategory === 'VIDEO'
+      ? 'videos'
+      : mediaCategory === 'AUDIO'
+      ? 'audio'
+      : mediaCategory === 'DOCUMENT'
+      ? 'documents'
+      : 'images';
 
     // Unique key: {prefixDir}/{folder}/{timestamp}-{short-uuid}-{name}.{ext}
     const key = `${prefixDir}/${cleanFolder}/${Date.now()}-${uuidv4().slice(0, 8)}-${cleanBaseName}.${extension}`;
@@ -334,6 +411,12 @@ export class StorageService {
       ? params.base64Data.split(',')[1]
       : params.base64Data;
     const buffer = Buffer.from(cleanBase64, 'base64');
+
+    // Cryptographic binary magic byte verification
+    const magicCheck = this.validateMagicBytes(buffer, params.fileType);
+    if (!magicCheck.valid) {
+      throw new Error(`File rejected by media security scanner: ${magicCheck.error}`);
+    }
 
     const putRes = await fetch(ticket.uploadUrl, {
       method: 'PUT',

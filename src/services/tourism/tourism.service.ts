@@ -6,6 +6,7 @@ import { emitToUser, broadcastToFleet, broadcastConfigUpdate } from '../../realt
 import { NotificationService } from '../notification/notification.service';
 import { PricingEngineService, TouristPricingTier } from '../pricing/pricing_engine.service';
 import { StorageService } from '../storage/storage.service';
+import { ENV } from '../../config/env';
 
 export type PublicationStatus = 'DRAFT' | 'PUBLISHED' | 'UNPUBLISHED' | 'ARCHIVED';
 
@@ -804,34 +805,46 @@ export class TourismService {
       throw new Error(`Tour package '${pkg.title}' is not currently published for booking.`);
     }
 
-    // Compute or verify authoritative server-side quotation via PricingEngineService
-    let quote: any = data.quotationId ? PricingEngineService.getQuotationById(data.quotationId) : null;
-    if (!quote) {
-      if (dest || pkg) {
-        quote = await PricingEngineService.calculateQuote({
-          serviceType: 'TOUR',
-          packageId: data.packageId,
-          destinationId: destId || undefined,
-          guideId: data.tourGuideId,
-          vehicleId: data.vehicleId,
-          guestCount: Number(data.guestsCount || 1),
-          durationDays: data.durationDays || pkg?.duration_days || 1,
-          selectedAdditionalChargeIds: data.selectedAdditionalChargeIds,
-        });
-      } else {
-        const fallbackPrice = Number(data.totalUgx || 1000000);
-        quote = {
-          quotationId: `quo_tour_${uuidv4().slice(0, 8)}`,
-          serviceType: 'TOUR',
-          totalPriceUgx: fallbackPrice,
-          total_price_ugx: fallbackPrice,
-          pricingVersion: 1,
-          breakdown: [{ code: 'TOUR_FALLBACK', label: 'Safari Tour Package', amountUgx: fallbackPrice }],
-        };
+    let quote: any = null;
+    if (data.quotationId) {
+      const existingQuote = PricingEngineService.getQuotationById(data.quotationId);
+      if (existingQuote && existingQuote.serviceType === 'TOUR' && !existingQuote.isExpired) {
+        quote = existingQuote;
       }
     }
 
-    const authoritativeTotalUgx = Number(quote.totalPriceUgx ?? quote.total_price_ugx ?? data.totalUgx ?? 0);
+    if (!dest && !pkg && !quote) {
+      if (ENV.isProduction) {
+        throw new Error('A valid destination or tour package is required to create a booking.');
+      }
+      const fallbackPrice = Number(data.totalUgx || 1000000);
+      quote = {
+        quotationId: `quo_tour_${uuidv4().slice(0, 8)}`,
+        serviceType: 'TOUR',
+        totalPriceUgx: fallbackPrice,
+        total_price_ugx: fallbackPrice,
+        pricingVersion: 1,
+        breakdown: [{ code: 'TOUR_FALLBACK', label: 'Standard Safari Tour Package', amountUgx: fallbackPrice }],
+      };
+    }
+
+    if (!quote && (dest || pkg)) {
+      quote = await PricingEngineService.calculateQuote({
+        serviceType: 'TOUR',
+        packageId: data.packageId,
+        destinationId: destId || undefined,
+        guideId: data.tourGuideId,
+        vehicleId: data.vehicleId,
+        guestCount: Math.max(1, Number(data.guestsCount || 1)),
+        durationDays: data.durationDays || pkg?.duration_days || 1,
+        selectedAdditionalChargeIds: data.selectedAdditionalChargeIds,
+      });
+    }
+
+    const authoritativeTotalUgx = Math.round(Number(quote?.totalPriceUgx ?? quote?.total_price_ugx ?? 0));
+    if (!Number.isFinite(authoritativeTotalUgx) || authoritativeTotalUgx <= 0) {
+      throw new Error('Could not calculate a valid authoritative quotation for this tour booking.');
+    }
 
     const bookingId = `tb_${uuidv4().substring(0, 8)}`;
     const nowIso = new Date().toISOString();

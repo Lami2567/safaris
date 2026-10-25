@@ -52,10 +52,23 @@ export class TripController {
     }
   }
 
-  public static getTrip(req: Request, res: Response) {
+  public static getTrip(req: AuthenticatedRequest, res: Response) {
     try {
       const { tripId } = req.params;
+      const callerId = req.user?.userId;
+      const callerRole = req.user?.role;
+
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+
       const trip = TripService.getTrip(tripId);
+
+      // Ownership authorization
+      if (callerRole !== 'admin' && trip.customer_id !== callerId && trip.driver_id !== callerId) {
+        return sendError(res, 'FORBIDDEN', 'Access denied to this trip record.', 403);
+      }
+
       return sendSuccess(res, trip);
     } catch (err: any) {
       return sendError(res, 'TRIP_NOT_FOUND', err.message, 404);

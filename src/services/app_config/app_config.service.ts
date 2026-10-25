@@ -120,8 +120,9 @@ export class AppConfigService {
     const master = localStore.app_config.get('master_config') || {};
     const configList = Array.from(localStore.app_config.values());
     const configMap: Record<string, any> = {};
+    const PRIVATE_KEYS = new Set(['admin_auth_config', 'master_config', 'dpo_config', 'auth_secrets', 'credentials']);
     for (const item of configList) {
-      if (item && item.key && item.key !== 'master_config') {
+      if (item && item.key && !PRIVATE_KEYS.has(item.key) && !item.key.includes('secret') && !item.key.includes('password') && !item.key.includes('hash')) {
         configMap[item.key] = item.value;
       }
     }
@@ -224,7 +225,6 @@ export class AppConfigService {
       .filter((m: any) => String(m?.id || '').toUpperCase().trim() !== 'CASH');
 
     return {
-      ...configMap,
       appName: 'SAFARIS',
       country: 'Uganda',
       currency: 'UGX',

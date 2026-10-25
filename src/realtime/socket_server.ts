@@ -131,30 +131,44 @@ export function initSocketServer(httpServer: HttpServer): Server {
     pingTimeout: 5000,
   });
 
-  ioInstance.on('connection', (socket: Socket) => {
-    let userId = (socket.handshake.query.userId as string) || '';
-    let role = (socket.handshake.query.role as string) || '';
+  // Enforce mandatory JWT authentication during handshake
+  ioInstance.use((socket, next) => {
     const token =
       (socket.handshake.auth?.token as string) ||
+      (socket.handshake.headers?.authorization?.replace(/^Bearer\s+/i, '') as string) ||
       (socket.handshake.query?.token as string);
 
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, ENV.JWT_SECRET) as any;
-        if (decoded?.userId) userId = decoded.userId;
-        if (decoded?.role) role = decoded.role;
-      } catch (err: any) {
-        if (err?.name === 'TokenExpiredError') {
-          try {
-            const decoded = jwt.verify(token, ENV.JWT_SECRET, { ignoreExpiration: true }) as any;
-            if (decoded?.role !== 'admin') {
-              if (decoded?.userId) userId = decoded.userId;
-              if (decoded?.role) role = decoded.role;
-            }
-          } catch (_) {}
-        }
-      }
+    if (!token) {
+      return next(new Error('Authentication error: Missing token.'));
     }
+
+    try {
+      const decoded = jwt.verify(token, ENV.JWT_SECRET) as any;
+      if (decoded?.scope && decoded.scope !== 'access') {
+        return next(new Error('Authentication error: Invalid token scope.'));
+      }
+      if (!decoded?.userId) {
+        return next(new Error('Authentication error: Missing userId in token.'));
+      }
+      const liveUser = localStore.users.get(decoded.userId);
+      if (liveUser && liveUser.approval_status === 'SUSPENDED') {
+        return next(new Error('Authentication error: Account suspended.'));
+      }
+      (socket as any).userId = decoded.userId;
+      (socket as any).role = liveUser?.role || decoded.role || 'customer';
+      next();
+    } catch (err: any) {
+      if (err.name === 'TokenExpiredError') {
+        return next(new Error('Authentication error: Token expired.'));
+      }
+      return next(new Error('Authentication error: Invalid token.'));
+    }
+  });
+
+  ioInstance.on('connection', (socket: Socket) => {
+    // Identity strictly derived from verified JWT payload
+    const userId = (socket as any).userId;
+    const role = (socket as any).role;
 
     if (userId) {
       if (!userSockets.has(userId)) {
@@ -168,15 +182,58 @@ export function initSocketServer(httpServer: HttpServer): Server {
         socket.join('admin:payments');
         socket.join('admin:financials');
       }
-      console.log(`[Socket] Connected: user=${userId} (${role || 'customer'}) socket=${socket.id}`);
-    } else {
-      console.log(`[Socket] Anonymous connection: socket=${socket.id}`);
+      console.log(`[Socket] Authenticated: user=${userId} (${role}) socket=${socket.id}`);
     }
 
-    // Join room for a trip, delivery, or admin fleet
+    // Guarded join_room with role & ownership checks
     socket.on('join_room', (room: string) => {
+      if (!room || typeof room !== 'string') return;
+
+      // Admin telemetry & financial streams
+      if (room.startsWith('admin:')) {
+        if (role !== 'admin') {
+          socket.emit('error', { message: 'Unauthorized room access: admin privileges required.' });
+          return;
+        }
+      }
+
+      // User personal channels
+      if (room.startsWith('user:')) {
+        const targetUserId = room.split(':')[1];
+        if (targetUserId !== userId && role !== 'admin') {
+          socket.emit('error', { message: 'Unauthorized room access: cannot subscribe to other user rooms.' });
+          return;
+        }
+      }
+
+      // Trip channels: only participants (customer/driver) or admin
+      if (room.startsWith('trip:')) {
+        const tripId = room.split(':')[1];
+        const trip = localStore.trips.get(tripId);
+        if (trip) {
+          const isParticipant = trip.customer_id === userId || trip.driver_id === userId || role === 'admin';
+          if (!isParticipant) {
+            socket.emit('error', { message: 'Unauthorized room access: not a participant in this trip.' });
+            return;
+          }
+        }
+      }
+
+      // Delivery channels: only sender, courier, or admin
+      if (room.startsWith('delivery:')) {
+        const deliveryId = room.split(':')[1];
+        const delivery = localStore.deliveries.get(deliveryId);
+        if (delivery) {
+          const isParticipant = delivery.sender_id === userId || delivery.courier_id === userId || role === 'admin';
+          if (!isParticipant) {
+            socket.emit('error', { message: 'Unauthorized room access: not a participant in this delivery.' });
+            return;
+          }
+        }
+      }
+
       socket.join(room);
-      console.log(`[Socket] Socket ${socket.id} joined ${room}`);
+      console.log(`[Socket] Authorized join: socket=${socket.id} (${userId}/${role}) -> ${room}`);
     });
 
     socket.on('leave_room', (room: string) => {
@@ -199,7 +256,14 @@ export function initSocketServer(httpServer: HttpServer): Server {
         safariLegId?: string;
         timestamp?: number;
       }) => {
-        const effectiveDriverId = data?.driverId || userId;
+        // Enforce server-derived driverId: client-supplied driverId is completely ignored
+        const effectiveDriverId = userId;
+
+        if (role !== 'driver' && role !== 'admin') {
+          socket.emit('driver:location_error', { message: 'Only active drivers can broadcast location.' });
+          return;
+        }
+
         const lat = Number(data?.lat);
         const lng = Number(data?.lng);
         const heading = Number(data?.heading ?? 0);
@@ -209,7 +273,12 @@ export function initSocketServer(httpServer: HttpServer): Server {
         const packetTs = data?.timestamp ? Number(data.timestamp) : Date.now();
 
         if (!effectiveDriverId || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-          socket.emit('driver:location_error', { message: 'Invalid driverId or GPS coordinates.' });
+          socket.emit('driver:location_error', { message: 'Invalid GPS coordinates.' });
+          return;
+        }
+
+        if (speed < 0 || speed > 250) {
+          socket.emit('driver:location_error', { message: 'Unrealistic speed reading rejected.' });
           return;
         }
 
@@ -313,23 +382,38 @@ export function initSocketServer(httpServer: HttpServer): Server {
       }
     );
 
-    // In-app live chat event
+    // In-app live chat event: strictly enforce senderId from authenticated socket
     socket.on(
       'chat:send_message',
-      (data: { tripId?: string; senderId: string; recipientId: string; text: string }) => {
+      (data: { tripId?: string; senderId?: string; recipientId: string; text: string }) => {
+        const senderId = userId;
+        const recipientId = data?.recipientId;
+        const text = String(data?.text || '').trim();
+        const tripId = data?.tripId;
+
+        if (!recipientId || !text) return;
+
+        if (tripId) {
+          const trip = localStore.trips.get(tripId);
+          if (trip && trip.customer_id !== senderId && trip.driver_id !== senderId && role !== 'admin') {
+            socket.emit('chat:error', { message: 'Unauthorized chat participant.' });
+            return;
+          }
+        }
+
         const messagePayload = {
           id: `msg_${Date.now()}`,
-          tripId: data.tripId,
-          senderId: data.senderId,
-          recipientId: data.recipientId,
-          text: data.text,
+          tripId,
+          senderId,
+          recipientId,
+          text,
           timestamp: new Date().toISOString(),
         };
 
-        if (data.tripId) {
-          emitToTrip(data.tripId, 'chat:new_message', messagePayload);
+        if (tripId) {
+          emitToTrip(tripId, 'chat:new_message', messagePayload);
         }
-        emitToUser(data.recipientId, 'chat:new_message', messagePayload);
+        emitToUser(recipientId, 'chat:new_message', messagePayload);
       }
     );
 

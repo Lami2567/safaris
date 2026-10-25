@@ -259,10 +259,15 @@ export class AdminAuditController {
     const { registerSseClient } = await import('../../realtime/socket_server');
     const unsubUser = registerSseClient(`user:${user.userId}`, res);
     const unsubAll = registerSseClient('all_users', res);
-    const unsubTrip =
-      typeof req.query.tripId === 'string' && req.query.tripId
-        ? registerSseClient(`trip:${req.query.tripId}`, res)
-        : () => {};
+    let unsubTrip = () => {};
+    if (typeof req.query.tripId === 'string' && req.query.tripId) {
+      const tripId = req.query.tripId;
+      const trip = localStore.trips.get(tripId);
+      // Strictly authorize trip telemetry streaming
+      if (trip && (trip.customer_id === user.userId || trip.driver_id === user.userId || user.role === 'admin')) {
+        unsubTrip = registerSseClient(`trip:${tripId}`, res);
+      }
+    }
 
     res.write(
       `event: connected\ndata: ${JSON.stringify({

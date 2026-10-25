@@ -24,11 +24,16 @@ export class TourGuideController {
 
   public static getDashboard(req: Request, res: Response) {
     try {
-      const guideId = (req as any).user?.userId || (req.query.guideId as string);
-      if (!guideId) {
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+      if (!callerId) {
         return sendError(res, 'UNAUTHORIZED', 'Authentication required for guide dashboard.', 401);
       }
-      const dashboard = TourGuideService.getGuideDashboard(guideId);
+      const requestedGuideId = (req.query.guideId as string) || callerId;
+      if (requestedGuideId !== callerId && callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Access denied to other guide dashboards.', 403);
+      }
+      const dashboard = TourGuideService.getGuideDashboard(requestedGuideId);
       return sendSuccess(res, dashboard);
     } catch (err: any) {
       return sendError(res, 'GUIDE_DASHBOARD_FAILED', err.message, 400);
@@ -37,9 +42,17 @@ export class TourGuideController {
 
   public static toggleAvailability(req: Request, res: Response) {
     try {
-      const guideId = (req as any).user?.userId || req.params.id;
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+      const targetGuideId = req.params.id || callerId;
+      if (targetGuideId !== callerId && callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Cannot modify another guide availability.', 403);
+      }
       const isAvailable = req.body.isAvailable !== undefined ? req.body.isAvailable : req.body.isOnline;
-      const updated = TourGuideService.toggleAvailability(guideId, Boolean(isAvailable));
+      const updated = TourGuideService.toggleAvailability(targetGuideId, Boolean(isAvailable));
       return sendSuccess(res, updated);
     } catch (err: any) {
       const status = err.message?.includes('not approved') || err.message?.includes('pending') ? 403 : 400;

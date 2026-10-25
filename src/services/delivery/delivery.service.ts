@@ -178,22 +178,74 @@ export class DeliveryService {
     }
   }
 
-  public static updateDeliveryStatus(deliveryId: string, status: string) {
+  public static updateDeliveryStatus(
+    deliveryId: string,
+    status: string,
+    actorId?: string,
+    actorRole?: string
+  ) {
     const delivery = localStore.deliveries.get(deliveryId);
     if (!delivery) throw new Error('Delivery not found.');
 
-    delivery.status = status;
+    if (!actorId) {
+      throw new Error('Authentication required to update delivery status.');
+    }
+
+    const currentStatus = String(delivery.status || 'SEARCHING_COURIER').toUpperCase();
+    const targetStatus = String(status || '').toUpperCase();
+
+    const ALLOWED_STATUSES = ['SEARCHING_COURIER', 'COURIER_ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'];
+    if (!ALLOWED_STATUSES.includes(targetStatus)) {
+      throw new Error(`Invalid delivery status '${status}'. Allowed statuses: ${ALLOWED_STATUSES.join(', ')}.`);
+    }
+
+    // Role and ownership authorization
+    if (actorRole !== 'admin') {
+      const isSender = delivery.sender_id === actorId || delivery.customer_id === actorId;
+      const isAssignedCourier = delivery.courier_id === actorId;
+
+      if (!isSender && !isAssignedCourier) {
+        throw new Error('You are not authorized to update this delivery.');
+      }
+
+      // Sender rules: Can only cancel while searching or assigned
+      if (isSender && !isAssignedCourier) {
+        if (targetStatus !== 'CANCELLED') {
+          throw new Error('Customers may only cancel a pending delivery. Status progression must be performed by the assigned courier.');
+        }
+        if (!['SEARCHING_COURIER', 'COURIER_ASSIGNED'].includes(currentStatus)) {
+          throw new Error(`Cannot cancel delivery once package is ${currentStatus.toLowerCase().replace('_', ' ')}.`);
+        }
+      }
+
+      // Courier rules: Enforce valid operational progression
+      if (isAssignedCourier) {
+        const validCourierTransitions: Record<string, string[]> = {
+          COURIER_ASSIGNED: ['PICKED_UP', 'CANCELLED'],
+          PICKED_UP: ['IN_TRANSIT', 'CANCELLED'],
+          IN_TRANSIT: ['DELIVERED', 'CANCELLED'],
+          DELIVERED: [],
+          CANCELLED: [],
+        };
+        const allowedNext = validCourierTransitions[currentStatus] || [];
+        if (!allowedNext.includes(targetStatus)) {
+          throw new Error(`Invalid status transition from ${currentStatus} to ${targetStatus} for assigned courier.`);
+        }
+      }
+    }
+
+    delivery.status = targetStatus;
     delivery.updated_at = new Date().toISOString();
 
     emitToRoom(`delivery:${deliveryId}`, 'delivery:status_update', {
       deliveryId,
       trackingNumber: delivery.tracking_number,
-      status,
+      status: targetStatus,
     });
 
     emitToUser(delivery.sender_id, 'delivery:status_update', {
       deliveryId,
-      status,
+      status: targetStatus,
     });
 
     return delivery;
@@ -220,10 +272,27 @@ export class DeliveryService {
     return { ...delivery, courier: courierDetails };
   }
 
+  /**
+   * Public tracking endpoint: Sanitizes response to protect customer PII
+   */
   public static trackByTrackingNumber(trackingNumber: string) {
     for (const delivery of localStore.deliveries.values()) {
       if (delivery.tracking_number === trackingNumber) {
-        return this.getDeliveryById(delivery.id);
+        const courierUser = delivery.courier_id ? localStore.users.get(delivery.courier_id) : null;
+        return {
+          tracking_number: delivery.tracking_number,
+          status: delivery.status,
+          package_category: delivery.package_category || delivery.category,
+          pickup_address: delivery.pickup_address,
+          dropoff_address: delivery.dropoff_address,
+          distance_km: delivery.distance_km,
+          created_at: delivery.created_at,
+          updated_at: delivery.updated_at,
+          courier: courierUser ? {
+            name: courierUser.full_name,
+            rating: Number(courierUser.rating || 4.9),
+          } : null,
+        };
       }
     }
     throw new Error(`Package with tracking number ${trackingNumber} not found.`);

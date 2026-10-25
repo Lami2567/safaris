@@ -36,8 +36,8 @@ apiRouter.get('/health', (req, res) => {
 // -------------------------------------------------------------
 // Cloudflare R2 Object Storage & Direct Client Uploads
 // -------------------------------------------------------------
-apiRouter.post('/storage/upload-url', StorageController.getPresignedUploadUrl);
-apiRouter.post('/storage/upload', StorageController.uploadDirect);
+apiRouter.post('/storage/upload-url', authenticate, StorageController.getPresignedUploadUrl);
+apiRouter.post('/storage/upload', authenticate, StorageController.uploadDirect);
 apiRouter.post('/storage/validate-media-url', StorageController.validateMediaUrl);
 apiRouter.get('/storage/status', StorageController.getStatus);
 
@@ -124,7 +124,8 @@ apiRouter.get('/users/me', authenticate, UserController.getProfile);
 apiRouter.get('/users/:id', authenticate, UserController.getProfile);
 apiRouter.put('/users/:id', authenticate, UserController.updateProfile);
 apiRouter.post('/users/wallet/topup', authenticate, UserController.topUpWallet);
-apiRouter.post('/users/role', authenticate, UserController.switchRole);
+apiRouter.post('/users/role', authenticate, requireRole('admin'), UserController.switchRole);
+apiRouter.get('/admin/privileged-accounts', authenticate, requireRole('admin'), UserController.getPrivilegedAccounts);
 
 // -------------------------------------------------------------
 // Drivers
@@ -143,7 +144,7 @@ apiRouter.post('/drivers/cashout', authenticate, DriverController.cashOut);
 apiRouter.post('/trips/estimate', TripController.estimateFare);
 apiRouter.post('/trips', authenticate, TripController.createTrip);
 apiRouter.get('/trips/active', authenticate, TripController.getActiveTrip);
-apiRouter.get('/trips/:tripId', TripController.getTrip);
+apiRouter.get('/trips/:tripId', authenticate, TripController.getTrip);
 apiRouter.post('/trips/:tripId/accept', authenticate, TripController.acceptTrip);
 apiRouter.post('/trips/:tripId/reject', authenticate, TripController.rejectTrip);
 apiRouter.post('/trips/:tripId/location', authenticate, TripController.updateLocation);
@@ -156,21 +157,21 @@ apiRouter.get('/users/trips', authenticate, TripController.getUserTrips);
 // -------------------------------------------------------------
 apiRouter.get('/tourism/destinations', TourismController.getAllDestinations);
 apiRouter.get('/tourism/destinations/:id', TourismController.getDestinationById);
-apiRouter.post('/tourism/destinations', TourismController.createDestination);
-apiRouter.put('/tourism/destinations/:id', TourismController.updateDestination);
-apiRouter.post('/tourism/destinations/:id/duplicate', TourismController.duplicateDestination);
-apiRouter.delete('/tourism/destinations/:id', TourismController.deleteDestination);
+apiRouter.post('/tourism/destinations', authenticate, requireRole('admin'), TourismController.createDestination);
+apiRouter.put('/tourism/destinations/:id', authenticate, requireRole('admin'), TourismController.updateDestination);
+apiRouter.post('/tourism/destinations/:id/duplicate', authenticate, requireRole('admin'), TourismController.duplicateDestination);
+apiRouter.delete('/tourism/destinations/:id', authenticate, requireRole('admin'), TourismController.deleteDestination);
 
 apiRouter.get('/tourism/packages', TourismController.getAllPackages);
 apiRouter.get('/tourism/packages/:id', TourismController.getPackageById);
-apiRouter.post('/tourism/packages', TourismController.createPackage);
-apiRouter.put('/tourism/packages/:id', TourismController.updatePackage);
-apiRouter.post('/tourism/packages/:id/duplicate', TourismController.duplicatePackage);
-apiRouter.delete('/tourism/packages/:id', TourismController.deletePackage);
+apiRouter.post('/tourism/packages', authenticate, requireRole('admin'), TourismController.createPackage);
+apiRouter.put('/tourism/packages/:id', authenticate, requireRole('admin'), TourismController.updatePackage);
+apiRouter.post('/tourism/packages/:id/duplicate', authenticate, requireRole('admin'), TourismController.duplicatePackage);
+apiRouter.delete('/tourism/packages/:id', authenticate, requireRole('admin'), TourismController.deletePackage);
 
 apiRouter.post('/tourism/bookings', authenticate, TourismController.createBooking);
-apiRouter.get('/tourism/bookings', TourismController.getAllBookings);
-apiRouter.get('/tourism/bookings/:id', TourismController.getBookingById);
+apiRouter.get('/tourism/bookings', authenticate, requireRole('admin', 'tour_guide'), TourismController.getAllBookings);
+apiRouter.get('/tourism/bookings/:id', authenticate, TourismController.getBookingById);
 apiRouter.put('/tourism/bookings/:id/assign-guide', authenticate, requireRole('admin'), TourismController.assignGuide);
 apiRouter.put('/tourism/bookings/:id/status', authenticate, TourismController.updateBookingStatus);
 apiRouter.get('/tourism/user/bookings', authenticate, TourismController.getUserBookings);
@@ -184,9 +185,9 @@ apiRouter.get('/guides/me/dashboard', authenticate, TourGuideController.getDashb
 apiRouter.put('/guides/me/availability', authenticate, TourGuideController.toggleAvailability);
 apiRouter.post('/guides/status', authenticate, TourGuideController.toggleAvailability);
 apiRouter.get('/guides/:id', TourGuideController.getGuideById);
-apiRouter.post('/guides', TourGuideController.createGuide);
-apiRouter.put('/guides/:id', TourGuideController.updateGuide);
-apiRouter.delete('/guides/:id', TourGuideController.deleteGuide);
+apiRouter.post('/guides', authenticate, requireRole('admin'), TourGuideController.createGuide);
+apiRouter.put('/guides/:id', authenticate, requireRole('admin'), TourGuideController.updateGuide);
+apiRouter.delete('/guides/:id', authenticate, requireRole('admin'), TourGuideController.deleteGuide);
 apiRouter.put('/guides/:id/availability', authenticate, TourGuideController.toggleAvailability);
 
 // -------------------------------------------------------------
@@ -194,9 +195,9 @@ apiRouter.put('/guides/:id/availability', authenticate, TourGuideController.togg
 // -------------------------------------------------------------
 apiRouter.post('/delivery/calculate-fare', DeliveryController.calculateFare);
 apiRouter.post('/delivery/dispatch', authenticate, DeliveryController.createDelivery);
-apiRouter.get('/delivery/:id', DeliveryController.getDeliveryById);
+apiRouter.get('/delivery/:id', authenticate, DeliveryController.getDeliveryById);
 apiRouter.get('/delivery/track/:trackingNumber', DeliveryController.trackByTrackingNumber);
-apiRouter.put('/delivery/:id/status', DeliveryController.updateStatus);
+apiRouter.put('/delivery/:id/status', authenticate, DeliveryController.updateStatus);
 apiRouter.get('/delivery/user/history', authenticate, DeliveryController.getUserDeliveries);
 
 // -------------------------------------------------------------
@@ -268,6 +269,6 @@ apiRouter.delete('/notifications/:id', authenticate, NotificationController.dele
 apiRouter.post('/notifications/:id/delete', authenticate, NotificationController.deleteNotification);
 apiRouter.delete('/notifications/user/:userId/clear', authenticate, NotificationController.clearNotifications);
 apiRouter.post('/notifications/user/:userId/clear', authenticate, NotificationController.clearNotifications);
-apiRouter.post('/notifications', NotificationController.createNotification);
+apiRouter.post('/notifications', authenticate, requireRole('admin'), NotificationController.createNotification);
 apiRouter.post('/admin/notifications/broadcast', authenticate, NotificationController.broadcastNotification);
 apiRouter.post('/admin/notifications/send', authenticate, NotificationController.createNotification);

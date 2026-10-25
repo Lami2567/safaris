@@ -5,9 +5,21 @@ import { sendSuccess, sendError } from '../../shared/response';
 export class NotificationController {
   public static async getUserNotifications(req: Request, res: Response) {
     try {
-      const userId = (req as any).user?.userId || req.params.userId;
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+      const targetUserId = req.params.userId || callerId;
+
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+
+      // IDOR check: Users may only access their own notifications
+      if (targetUserId !== callerId && callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Access denied to other user notifications.', 403);
+      }
+
       const type = (req.query.type as string) || undefined;
-      const notifications = await NotificationService.getUserNotifications(userId, type);
+      const notifications = await NotificationService.getUserNotifications(targetUserId, type);
       return sendSuccess(res, notifications);
     } catch (err: any) {
       return sendError(res, 'FETCH_NOTIFICATIONS_FAILED', err.message, 500);
@@ -16,7 +28,20 @@ export class NotificationController {
 
   public static async markAsRead(req: Request, res: Response) {
     try {
-      const updated = await NotificationService.markAsRead(req.params.id);
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+
+      const notifId = req.params.id;
+      const existing = (await import('../../config/database')).localStore.notifications.get(notifId);
+      if (existing && existing.user_id !== callerId && callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Cannot modify another user notification.', 403);
+      }
+
+      const updated = await NotificationService.markAsRead(notifId);
       return sendSuccess(res, updated);
     } catch (err: any) {
       return sendError(res, 'MARK_READ_FAILED', err.message, 400);
@@ -25,8 +50,19 @@ export class NotificationController {
 
   public static async markAllAsRead(req: Request, res: Response) {
     try {
-      const userId = (req as any).user?.userId || req.params.userId;
-      const result = await NotificationService.markAllAsRead(userId);
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+      const targetUserId = req.params.userId || callerId;
+
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+
+      if (targetUserId !== callerId && callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Access denied.', 403);
+      }
+
+      const result = await NotificationService.markAllAsRead(targetUserId);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'MARK_ALL_READ_FAILED', err.message, 400);
@@ -35,9 +71,20 @@ export class NotificationController {
 
   public static async clearNotifications(req: Request, res: Response) {
     try {
-      const userId = (req as any).user?.userId || req.params.userId;
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+      const targetUserId = req.params.userId || callerId;
+
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+
+      if (targetUserId !== callerId && callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Access denied.', 403);
+      }
+
       const type = (req.query.type as string) || undefined;
-      const result = await NotificationService.clearUserNotifications(userId, type);
+      const result = await NotificationService.clearUserNotifications(targetUserId, type);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'CLEAR_NOTIFICATIONS_FAILED', err.message, 400);
@@ -46,8 +93,20 @@ export class NotificationController {
 
   public static async deleteNotification(req: Request, res: Response) {
     try {
-      const { id } = req.params;
-      const result = await NotificationService.deleteNotificationById(id);
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+
+      const notifId = req.params.id;
+      const existing = (await import('../../config/database')).localStore.notifications.get(notifId);
+      if (existing && existing.user_id !== callerId && callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Cannot delete another user notification.', 403);
+      }
+
+      const result = await NotificationService.deleteNotificationById(notifId);
       return sendSuccess(res, result);
     } catch (err: any) {
       return sendError(res, 'DELETE_NOTIFICATION_FAILED', err.message, 400);
@@ -56,8 +115,19 @@ export class NotificationController {
 
   public static async getUnreadCount(req: Request, res: Response) {
     try {
-      const userId = (req as any).user?.userId || req.params.userId;
-      const unreadCount = await NotificationService.getUnreadCount(userId);
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+      const targetUserId = req.params.userId || callerId;
+
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+
+      if (targetUserId !== callerId && callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Access denied.', 403);
+      }
+
+      const unreadCount = await NotificationService.getUnreadCount(targetUserId);
       return sendSuccess(res, { unreadCount });
     } catch (err: any) {
       return sendError(res, 'FETCH_UNREAD_COUNT_FAILED', err.message, 500);
@@ -66,6 +136,10 @@ export class NotificationController {
 
   public static async createNotification(req: Request, res: Response) {
     try {
+      const callerRole = (req as any).user?.role;
+      if (callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Only administrators can create custom notifications.', 403);
+      }
       const notif = await NotificationService.createNotification(req.body);
       return sendSuccess(res, notif, 201);
     } catch (err: any) {
@@ -75,6 +149,10 @@ export class NotificationController {
 
   public static async broadcastNotification(req: Request, res: Response) {
     try {
+      const callerRole = (req as any).user?.role;
+      if (callerRole !== 'admin') {
+        return sendError(res, 'FORBIDDEN', 'Only administrators can broadcast notifications.', 403);
+      }
       const result = await NotificationService.broadcastAdminNotification(req.body);
       return sendSuccess(res, result, 201);
     } catch (err: any) {

@@ -17,6 +17,8 @@ import subprocess
 import sys
 import threading
 import time
+import hmac
+import hashlib
 from datetime import datetime, timezone
 
 PORT = 9000
@@ -186,6 +188,61 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else ""
+
+        # 1. Enforce HMAC Signature verification if GITHUB_WEBHOOK_SECRET is configured
+        webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "").strip()
+        signature_header = self.headers.get("X-Hub-Signature-256", "")
+
+        if webhook_secret:
+            if not signature_header:
+                log("Rejected webhook: missing X-Hub-Signature-256 header.")
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Missing signature header"}).encode("utf-8"))
+                return
+
+            expected_sig = "sha256=" + hmac.new(
+                webhook_secret.encode("utf-8"),
+                body.encode("utf-8"),
+                hashlib.sha256
+            ).hexdigest()
+
+            if not hmac.compare_digest(signature_header, expected_sig):
+                log("Rejected webhook: HMAC signature mismatch.")
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Invalid signature"}).encode("utf-8"))
+                return
+
+        # 2. Enforce GitHub event check
+        event_type = self.headers.get("X-GitHub-Event", "push")
+        if event_type != "push" and event_type != "ping":
+            log(f"Ignoring non-push event: {event_type}")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"message": f"Ignored event {event_type}"}).encode("utf-8"))
+            return
+
+        if event_type == "ping":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"message": "pong"}).encode("utf-8"))
+            return
+
+        # 3. Rate limiting check (prevent replay / trigger flood)
+        now_ts = time.time()
+        last_deploy_ts = getattr(self, "_last_webhook_ts", 0)
+        if now_ts - last_deploy_ts < 15 and state["is_deploying"]:
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Rate limit: Deployment already processing"}).encode("utf-8"))
+            return
+        self._last_webhook_ts = now_ts
 
         branch = "main"
         is_push = True

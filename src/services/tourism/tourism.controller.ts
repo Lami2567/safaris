@@ -70,7 +70,20 @@ export class TourismController {
 
   public static getBookingById(req: Request, res: Response) {
     try {
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
       const booking = TourismService.getBookingById(req.params.id);
+      if (
+        callerRole !== 'admin' &&
+        booking.customer_id !== callerId &&
+        booking.tour_guide_id !== callerId &&
+        booking.guide_id !== callerId
+      ) {
+        return sendError(res, 'FORBIDDEN', 'Access denied to this booking record.', 403);
+      }
       return sendSuccess(res, booking);
     } catch (err: any) {
       return sendError(res, 'BOOKING_NOT_FOUND', err.message, 404);
@@ -154,8 +167,20 @@ export class TourismController {
 
   public static getAllBookings(req: Request, res: Response) {
     try {
-      const bookings = TourismService.getAllBookings();
-      return sendSuccess(res, bookings);
+      const callerId = (req as any).user?.userId;
+      const callerRole = (req as any).user?.role;
+      if (!callerId) {
+        return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      }
+      if (callerRole === 'admin') {
+        const bookings = TourismService.getAllBookings();
+        return sendSuccess(res, bookings);
+      }
+      if (callerRole === 'tour_guide') {
+        const bookings = TourismService.getUserBookings(callerId);
+        return sendSuccess(res, bookings);
+      }
+      return sendError(res, 'FORBIDDEN', 'Access restricted to administrators or assigned guides.', 403);
     } catch (err: any) {
       return sendError(res, 'FETCH_ALL_BOOKINGS_FAILED', err.message, 500);
     }

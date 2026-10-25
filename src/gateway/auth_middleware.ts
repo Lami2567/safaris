@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { ENV } from '../config/env';
 import { sendError } from '../shared/response';
 import { AdminService } from '../services/admin/admin.service';
+import { localStore } from '../config/database';
 
 export interface AuthUserPayload {
   userId: string;
@@ -12,6 +13,7 @@ export interface AuthUserPayload {
   username?: string;
   adminAuth?: boolean;
   authVersion?: string;
+  scope?: string;
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -21,7 +23,6 @@ export interface AuthenticatedRequest extends Request {
 export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   const queryToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
-  const isAdminLoginEnforced = AdminService.isAdminAuthConfiguredSync();
 
   const rawToken =
     authHeader && authHeader.startsWith('Bearer ')
@@ -31,42 +32,63 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
   if (rawToken) {
     try {
       const payload = jwt.verify(rawToken, ENV.JWT_SECRET) as AuthUserPayload;
+
+      // Reject non-access scoped tokens (e.g., setup_password, recruitment)
+      if (payload.scope && payload.scope !== 'access') {
+        return sendError(
+          res,
+          'INVALID_TOKEN_SCOPE',
+          `Tokens with scope '${payload.scope}' cannot be used for general API access.`,
+          403
+        );
+      }
+
+      // Live user validation: check suspension and role revocation
+      if (payload.userId) {
+        const liveUser = localStore.users.get(payload.userId);
+        if (liveUser) {
+          if (liveUser.approval_status === 'SUSPENDED') {
+            return sendError(res, 'ACCOUNT_SUSPENDED', 'Your account has been suspended. Please contact support.', 403);
+          }
+
+          // If token claims elevated privileges but live user role has changed/been revoked
+          if (payload.role !== liveUser.role) {
+            const wasPrivileged = ['admin', 'driver', 'tour_guide'].includes(payload.role);
+            const isPrivileged = ['admin', 'driver', 'tour_guide'].includes(liveUser.role);
+            if (wasPrivileged || isPrivileged) {
+              return sendError(
+                res,
+                'PRIVILEGES_REVOKED',
+                'Your account role or permissions have been updated. Please log in again to continue.',
+                403
+              );
+            }
+            payload.role = liveUser.role;
+          }
+        }
+      }
+
       req.user = payload;
       return next();
     } catch (err: any) {
       if (err.name === 'TokenExpiredError') {
-        try {
-          const decoded = jwt.verify(rawToken, ENV.JWT_SECRET, { ignoreExpiration: true }) as AuthUserPayload;
-          if (decoded && decoded.userId && !decoded.adminAuth) {
-            req.user = decoded;
-            return next();
-          }
-        } catch (_) {}
+        return sendError(res, 'TOKEN_EXPIRED', 'Your session token has expired. Please log in again.', 401);
       }
-      if (isAdminLoginEnforced) {
-        if (err.name === 'TokenExpiredError') {
-          return sendError(res, 'TOKEN_EXPIRED', 'Your session token has expired.', 401);
-        }
-        return sendError(res, 'INVALID_TOKEN', 'Malformed or invalid authentication token.', 401);
-      }
-      // If admin login is not yet configured/enforced, allow fallback to x-admin-key below
+      return sendError(res, 'INVALID_TOKEN', 'Malformed or invalid authentication token.', 401);
     }
   }
 
-  if (!isAdminLoginEnforced) {
+  // Fallback for pre-configuration admin bootstrap ONLY via dedicated environment secret
+  const isAdminLoginEnforced = AdminService.isAdminAuthConfiguredSync();
+  if (!isAdminLoginEnforced && process.env.ADMIN_ACCESS_KEY && process.env.ADMIN_ACCESS_KEY.trim()) {
     const adminKey = req.headers['x-admin-key'] || req.query?.adminKey;
-    const validAdminKeys = [
-      ENV.JWT_SECRET,
-      process.env.ADMIN_ACCESS_KEY,
-      process.env.NEXT_PUBLIC_ADMIN_KEY,
-      'mumwe_safaris_secret_jwt_2026',
-    ].filter(Boolean);
-    if (adminKey && validAdminKeys.includes(adminKey as string)) {
+    if (adminKey && adminKey === process.env.ADMIN_ACCESS_KEY.trim()) {
       req.user = {
         userId: 'usr_adm_001',
         role: 'admin',
         phone: '+256 700 000001',
         email: 'admin@safaris.ug',
+        adminAuth: true,
       };
       return next();
     }

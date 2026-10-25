@@ -439,8 +439,12 @@ export class TripService {
       throw new Error('Trip not found.');
     }
 
+    if (!actorId) {
+      throw new Error('Authentication required to update trip status.');
+    }
+
     // Authorization check
-    if (actorId && actorRole !== 'admin') {
+    if (actorRole !== 'admin') {
       const isAssignedDriver = trip.driver_id === actorId;
       const isTripCustomer = trip.customer_id === actorId;
       if (!isAssignedDriver && !(isTripCustomer && status === 'CANCELLED')) {
