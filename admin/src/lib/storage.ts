@@ -42,6 +42,19 @@ export interface StorageStatus {
 
 export type StorageFolder = 'banners' | 'tourism' | 'places' | 'fleet' | 'careers' | 'documents' | 'general';
 
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  const token = typeof window !== 'undefined' ? localStorage.getItem('safaris_admin_token') : null;
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    headers['x-admin-key'] = process.env.NEXT_PUBLIC_ADMIN_KEY || 'mumwe_safaris_secret_jwt_2026';
+  }
+  return headers;
+}
+
 /**
  * Validate an external or Cloudflare R2 media URL via the backend validator.
  */
@@ -52,7 +65,7 @@ export async function validateExternalMediaUrl(
   const apiBase = getApiBase();
   const res = await fetch(`${apiBase}/storage/validate-media-url`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthHeaders(),
     body: JSON.stringify({ url, expectedCategory }),
   });
   const json = await res.json();
@@ -80,7 +93,7 @@ export async function uploadMediaToR2(
 export async function getStorageStatus(): Promise<StorageStatus> {
   const apiBase = getApiBase();
   const res = await fetch(`${apiBase}/storage/status`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthHeaders(),
   });
   if (!res.ok) {
     throw new Error('Failed to retrieve storage status from backend');
@@ -114,7 +127,7 @@ export async function uploadImageToR2(
   // 1. Request presigned upload ticket from backend
   const ticketRes = await fetch(`${apiBase}/storage/upload-url`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthHeaders(),
     body: JSON.stringify({
       fileName: file.name,
       fileType: contentType,
@@ -170,7 +183,7 @@ export async function uploadImageToR2(
 
     const relayRes = await fetch(`${apiBase}/storage/upload`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({
         fileName: file.name,
         fileType: contentType,
