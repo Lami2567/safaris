@@ -15,6 +15,7 @@ export interface AuthUserPayload {
   authVersion?: string;
   tokenVersion?: number;
   scope?: string;
+  exp?: number;
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -41,10 +42,10 @@ export async function validateAuthSession(rawToken: string): Promise<AuthValidat
   }
 
   try {
-    const payload = jwt.verify(rawToken, ENV.JWT_SECRET) as AuthUserPayload;
+    const payload = jwt.verify(rawToken, ENV.JWT_SECRET, { algorithms: ['HS256'] }) as AuthUserPayload;
 
     // Reject non-access scoped tokens (e.g., setup_password, recruitment)
-    if (payload.scope && payload.scope !== 'access') {
+    if (payload.scope !== 'access' || !payload.userId || !payload.role || !Number.isFinite(payload.exp)) {
       return {
         valid: false,
         error: `Tokens with scope '${payload.scope}' cannot be used for general API access.`,
@@ -67,7 +68,7 @@ export async function validateAuthSession(rawToken: string): Promise<AuthValidat
       // Check token revocation version
       const tokenVer = Number(payload.tokenVersion ?? 1);
       const userVer = Number(liveUser.token_version ?? 1);
-      if (tokenVer < userVer) {
+      if (!Number.isInteger(tokenVer) || tokenVer !== userVer) {
         return {
           valid: false,
           error: 'Session has been invalidated due to a security update or password change. Please log in again.',
@@ -94,7 +95,7 @@ export async function validateAuthSession(rawToken: string): Promise<AuthValidat
       return { valid: true, user: liveUser, payload };
     }
 
-    return { valid: true, payload };
+    return { valid: false, code: 'INVALID_TOKEN', error: 'Required token claims missing.', status: 401 };
   } catch (err: any) {
     if (err.name === 'TokenExpiredError') {
       return { valid: false, error: 'Your session token has expired. Please log in again.', code: 'TOKEN_EXPIRED', status: 401 };
@@ -119,6 +120,7 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     }
     req.user = val.payload;
     req.liveUser = val.user;
+    res.locals.accessToken = rawToken;
     return next();
   }
 

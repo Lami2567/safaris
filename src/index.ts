@@ -47,6 +47,7 @@ app.use(rateLimiter);
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
+    commit: process.env.SAFARIS_RELEASE_SHA || 'development',
     platform: 'SAFARIS Uganda API Gateway',
     environment: ENV.NODE_ENV,
     timestamp: new Date().toISOString(),
@@ -58,6 +59,7 @@ app.get('/health/ready', async (req, res) => {
   const dbStatus = db.isPostgresConnected ? 'connected' : 'in-memory-fallback';
   res.status(200).json({
     status: 'ok',
+    commit: process.env.SAFARIS_RELEASE_SHA || 'development',
     database: dbStatus,
     timestamp: new Date().toISOString(),
   });

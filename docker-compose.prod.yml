@@ -38,6 +38,8 @@ services:
       context: .
       dockerfile: Dockerfile
 
+    environment:
+      SAFARIS_RELEASE_SHA: ${SAFARIS_RELEASE_SHA:?A tested release SHA is required}
     container_name: safaris_backend_prod
     restart: always
     expose:

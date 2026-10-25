@@ -802,9 +802,8 @@ class DatabaseManager {
 
   public async getUserById(id: string): Promise<any | null> {
     if (!id) return null;
-    if (localStore.users.has(id)) {
-      return localStore.users.get(id);
-    }
+    if (process.env.NODE_ENV === 'test' && !this.isPostgresConnected) return localStore.users.get(id) || null;
+    if (!this.isPostgresConnected || !this.pool) throw new Error('Authoritative user storage unavailable.');
     if (this.isPostgresConnected && this.pool) {
       try {
         const res = await this.pool.query('SELECT * FROM users WHERE id = $1', [id]);
@@ -821,8 +820,7 @@ class DatabaseManager {
   }
 
   public async persistUser(user: any): Promise<void> {
-    // 1. Update in-memory cache
-    localStore.users.set(user.id, user);
+    if (process.env.NODE_ENV === 'production' && !this.isPostgresConnected) throw new Error('Durable user storage required.');
 
     // 2. Persist to PostgreSQL if connected
     if (this.isPostgresConnected && this.pool) {
@@ -866,11 +864,12 @@ class DatabaseManager {
           ]
         );
       } catch (err) {
-        console.error('[Database Error] Failed to persist user to PostgreSQL:', err);
+        throw err;
       }
     }
 
-    // 3. Persist to disk for offline resilience
+    // Publish only after the durable write succeeds.
+    localStore.users.set(user.id, user);
     this.saveUsersToDisk();
   }
 
@@ -1664,71 +1663,51 @@ class DatabaseManager {
 
   public async consumeQuotationAtomic(quotationId: string, consumedBy: string): Promise<any | null> {
     if (this.isPostgresConnected && this.pool) {
-      try {
-        const res = await this.pool.query(
-          `UPDATE price_quotations
-           SET consumed = TRUE, consumed_at = CURRENT_TIMESTAMP, consumed_by = $2
-           WHERE id = $1 AND consumed = FALSE AND expires_at > CURRENT_TIMESTAMP
-           RETURNING *`,
-          [quotationId, consumedBy]
-        );
-        if (res && res.rowCount && res.rowCount > 0) {
-          const row = res.rows[0];
-          const updated = {
-            ...row,
-            consumed: true,
-            consumed_at: row.consumed_at,
-            consumed_by: row.consumed_by,
-          };
-          localStore.price_quotations.set(quotationId, updated);
-          return updated;
-        }
-        return null;
-      } catch (err) {
-        console.warn('[Database] consumeQuotationAtomic PostgreSQL error:', err);
-      }
+      const res = await this.pool.query(
+        `UPDATE price_quotations SET consumed = TRUE, consumed_at = CURRENT_TIMESTAMP, consumed_by = $2
+         WHERE id = $1 AND consumed = FALSE AND customer_id = $2 AND expires_at > CURRENT_TIMESTAMP RETURNING *`,
+        [quotationId, consumedBy]);
+      if (res.rowCount !== 1) return null;
+      localStore.price_quotations.set(quotationId, res.rows[0]);
+      return res.rows[0];
     }
-
+    if (process.env.NODE_ENV !== 'test') throw new Error('Durable quotation storage required.');
     const quote = localStore.price_quotations.get(quotationId);
-    if (!quote || quote.consumed === true || new Date(quote.expires_at).getTime() < Date.now()) {
-      return null;
-    }
-    quote.consumed = true;
-    quote.status = 'CONSUMED';
-    quote.consumed_at = new Date().toISOString();
-    quote.consumed_by = consumedBy;
-    this.saveTableToDisk(PERSISTENT_PRICE_QUOTATIONS_FILES, localStore.price_quotations);
-    return quote;
+    if (!quote || quote.customer_id !== consumedBy || quote.consumed || new Date(quote.expires_at).getTime() <= Date.now()) return null;
+    const result = { ...quote, consumed: true, consumed_by: consumedBy, consumed_at: new Date().toISOString() };
+    localStore.price_quotations.set(quotationId, result);
+    return result;
   }
 
-  public async isAuthTokenConsumed(tokenHash: string): Promise<boolean> {
-    if (this.isPostgresConnected && this.pool) {
-      try {
-        const res = await this.pool.query(
-          'SELECT token_hash FROM consumed_auth_tokens WHERE token_hash = $1',
-          [tokenHash]
-        );
-        return Boolean(res && res.rowCount && res.rowCount > 0);
-      } catch (err) {
-        console.warn('[Database] isAuthTokenConsumed PostgreSQL error:', err);
-      }
-    }
-    return false;
-  }
+  private testConsumedTokens = new Set<string>();
 
-  public async markAuthTokenConsumed(tokenHash: string, tokenType: string, userId?: string, expiresAt?: Date): Promise<void> {
-    if (this.isPostgresConnected && this.pool) {
-      try {
-        await this.pool.query(
-          `INSERT INTO consumed_auth_tokens (token_hash, token_type, user_id, expires_at)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (token_hash) DO NOTHING`,
-          [tokenHash, tokenType, userId || null, expiresAt || null]
-        );
-      } catch (err) {
-        console.warn('[Database] markAuthTokenConsumed PostgreSQL error:', err);
+  public async setPasswordWithTokenAtomic(params: { tokenHash: string; userId: string; email: string; passwordHash: string; expectedVersion: number; expiresAt: Date }): Promise<any> {
+    let updated: any;
+    await this.withTransaction(async client => {
+      if (params.expiresAt.getTime() <= Date.now()) throw new Error('Setup token expired.');
+      if (!client) {
+        if (process.env.NODE_ENV !== 'test') throw new Error('Durable authentication storage required.');
+        if (this.testConsumedTokens.has(params.tokenHash)) throw new Error('This setup token has already been used.');
+        const user = localStore.users.get(params.userId);
+        if (!user || user.email.toLowerCase() !== params.email || user.approval_status !== 'APPROVED' || Number(user.token_version || 1) !== params.expectedVersion) throw new Error('Account not eligible for password setup.');
+        this.testConsumedTokens.add(params.tokenHash);
+        updated = { ...user, password_hash: params.passwordHash, token_version: Number(user.token_version || 1) + 1, is_verified: true };
+        return;
       }
-    }
+      const user = (await client.query('SELECT * FROM users WHERE id = $1 FOR UPDATE', [params.userId])).rows[0];
+      if (!user || user.email.toLowerCase() !== params.email || user.approval_status !== 'APPROVED' || Number(user.token_version || 1) !== params.expectedVersion) throw new Error('Account not eligible for password setup.');
+      const claim = await client.query(
+        `INSERT INTO consumed_auth_tokens(token_hash, token_type, user_id, expires_at)
+         VALUES ($1, 'setup_password', $2, $3) ON CONFLICT DO NOTHING RETURNING token_hash`,
+        [params.tokenHash, params.userId, params.expiresAt]);
+      if (claim.rowCount !== 1) throw new Error('This setup token has already been used.');
+      updated = (await client.query(
+        `UPDATE users SET password_hash = $2, is_verified = TRUE, token_version = COALESCE(token_version, 1) + 1,
+         updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`, [params.userId, params.passwordHash])).rows[0];
+    });
+    localStore.users.set(params.userId, updated);
+    this.saveTableToDisk(PERSISTENT_USERS_FILES, localStore.users);
+    return updated;
   }
 
   public async persistDestinationMedia(media: any): Promise<void> {

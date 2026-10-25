@@ -103,7 +103,7 @@ export class StorageService {
   }
 
   /**
-   * Cryptographically inspects binary header signatures (magic bytes) to prevent disguised scripts/HTML.
+   * Inspects binary header signatures (magic bytes) to prevent disguised scripts/HTML.
    */
   public static validateMagicBytes(buffer: Buffer, declaredMime: string): { valid: boolean; detectedType?: string; error?: string } {
     if (!buffer || buffer.length < 4) {
@@ -312,7 +312,7 @@ export class StorageService {
     const accountId = ENV.CLOUDFLARE_R2_ACCOUNT_ID.trim();
     const accessKeyId = ENV.CLOUDFLARE_R2_ACCESS_KEY_ID.trim();
     const secretAccessKey = ENV.CLOUDFLARE_R2_SECRET_ACCESS_KEY.trim();
-    const bucketName = ENV.CLOUDFLARE_R2_BUCKET_NAME.trim();
+    const bucketName = this.bucketForKey(key);
     const region = (ENV.CLOUDFLARE_R2_REGION || 'auto').trim();
 
     // R2 S3-compatible host
@@ -334,7 +334,7 @@ export class StorageService {
       'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
       'X-Amz-Credential': `${accessKeyId}/${credentialScope}`,
       'X-Amz-Date': amzDate,
-      'X-Amz-Expires': expiresIn.toString(),
+      'X-Amz-Expires': Math.min(900, Math.max(60, Number.isFinite(expiresIn) ? expiresIn : 900)).toString(),
       'X-Amz-SignedHeaders': signedHeaders,
     };
 
@@ -416,12 +416,16 @@ export class StorageService {
     const cleanBase64 = params.base64Data.includes(',')
       ? params.base64Data.split(',')[1]
       : params.base64Data;
+    if (cleanBase64.length > 28 * 1024 * 1024) throw new Error('Upload exceeds 20 MiB limit.');
     const buffer = Buffer.from(cleanBase64, 'base64');
+    if (buffer.length > 20 * 1024 * 1024) throw new Error('Upload exceeds 20 MiB limit.');
 
-    // Cryptographic binary magic byte verification
+    // Basic binary signature verification (not malware scanning)
     const magicCheck = this.validateMagicBytes(buffer, params.fileType);
-    if (!magicCheck.valid) {
-      throw new Error(`File rejected by media security scanner: ${magicCheck.error}`);
+    const aliases: Record<string, string> = { 'image/jpg': 'image/jpeg', 'audio/mp3': 'audio/mpeg', 'audio/x-wav': 'audio/wav', 'video/quicktime': 'video/mp4', 'video/x-m4v': 'video/mp4' };
+    const declared = params.fileType.toLowerCase();
+    if (!magicCheck.valid || magicCheck.detectedType !== (aliases[declared] || declared)) {
+      throw new Error(`File rejected by media validation: ${magicCheck.error}`);
     }
 
     const putRes = await fetch(ticket.uploadUrl, {
@@ -460,6 +464,14 @@ export class StorageService {
    * Generates a secure, short-lived presigned GET download URL for private documents.
    * Private documents (applicant CVs, IDs, permits) are never served through public CDN URLs.
    */
+  private static bucketForKey(key: string): string {
+    const publicBucket = ENV.CLOUDFLARE_R2_BUCKET_NAME.trim();
+    if (!key.startsWith('private/')) return publicBucket;
+    const privateBucket = (process.env.CLOUDFLARE_R2_PRIVATE_BUCKET_NAME || '').trim();
+    if (!privateBucket || privateBucket === publicBucket) throw new Error('Configure a separate non-public CLOUDFLARE_R2_PRIVATE_BUCKET_NAME for recruitment documents.');
+    return privateBucket;
+  }
+
   public static generatePresignedDownloadUrl(key: string, expiresIn = 900): string {
     if (!this.isConfigured()) {
       throw new Error('Cloudflare R2 is not fully configured.');
@@ -468,7 +480,7 @@ export class StorageService {
     const accountId = ENV.CLOUDFLARE_R2_ACCOUNT_ID.trim();
     const accessKeyId = ENV.CLOUDFLARE_R2_ACCESS_KEY_ID.trim();
     const secretAccessKey = ENV.CLOUDFLARE_R2_SECRET_ACCESS_KEY.trim();
-    const bucketName = ENV.CLOUDFLARE_R2_BUCKET_NAME.trim();
+    const bucketName = this.bucketForKey(key);
     const region = (ENV.CLOUDFLARE_R2_REGION || 'auto').trim();
 
     const host = `${accountId}.r2.cloudflarestorage.com`;

@@ -111,81 +111,17 @@ export async function uploadImageToR2(
   const apiBase = getApiBase();
   const contentType = file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
 
-  // 1. Request presigned upload ticket from backend
-  const ticketRes = await fetch(`${apiBase}/storage/upload-url`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      fileName: file.name,
-      fileType: contentType,
-      folder,
-    }),
+  if (file.size > 20 * 1024 * 1024) throw new Error('Upload exceeds 20 MiB limit.');
+  const token = localStorage.getItem('safaris_admin_token');
+  if (!token) throw new Error('Please sign in before uploading.');
+  onProgress?.(10);
+  const base64Data = await fileToBase64(file);
+  const response = await fetch(`${apiBase}/storage/upload`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ fileName: file.name, fileType: contentType, folder, base64Data }),
   });
-
-  if (!ticketRes.ok) {
-    const errorJson = await ticketRes.json().catch(() => ({}));
-    throw new Error(errorJson.error || 'Failed to obtain upload authorization ticket from server');
-  }
-
-  const { data }: { data: PresignedUploadTicket } = await ticketRes.json();
-  const { uploadUrl, publicUrl } = data;
-
-  // 2. Try direct browser upload to Cloudflare R2 first
-  try {
-    const directUrl = await new Promise<string>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', uploadUrl, true);
-      xhr.setRequestHeader('Content-Type', contentType);
-
-      if (xhr.upload && onProgress) {
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
-            const percent = Math.round((event.loaded / event.total) * 100);
-            onProgress(percent);
-          }
-        };
-      }
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          if (onProgress) onProgress(100);
-          resolve(publicUrl);
-        } else {
-          reject(new Error(`R2 direct status ${xhr.status}`));
-        }
-      };
-
-      xhr.onerror = () => {
-        reject(new Error('CORS or network block on direct R2 PUT'));
-      };
-
-      xhr.send(file);
-    });
-    return directUrl;
-  } catch (_) {
-    // 3. Fallback: Relay through backend POST /api/v1/storage/upload -> Cloudflare R2
-    if (onProgress) onProgress(40);
-    const base64Data = await fileToBase64(file);
-    if (onProgress) onProgress(75);
-
-    const relayRes = await fetch(`${apiBase}/storage/upload`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: file.name,
-        fileType: contentType,
-        folder,
-        base64Data,
-      }),
-    });
-
-    if (!relayRes.ok) {
-      const errJson = await relayRes.json().catch(() => ({}));
-      throw new Error(errJson.error || 'Cloudflare R2 upload failed');
-    }
-
-    const relayData = await relayRes.json();
-    if (onProgress) onProgress(100);
-    return relayData.data.publicUrl;
-  }
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Upload failed.');
+  onProgress?.(100);
+  return result.data.publicUrl || result.data.key;
 }

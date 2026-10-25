@@ -30,7 +30,8 @@ export class EmailService {
           pass: ENV.SMTP_PASS,
         },
         tls: {
-          rejectUnauthorized: false, // Prevents self-signed cert blocks
+          rejectUnauthorized: true, // SMTP credentials require a verified TLS peer.
+          minVersion: 'TLSv1.2',
         },
       });
       return this.transporter;

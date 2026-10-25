@@ -1,3 +1,4 @@
+import { commitBooking } from '../pricing/booking_commit';
 import { resolveDataFilePaths } from '../../config/paths';
 import fs from 'fs';
 import path from 'path';
@@ -796,18 +797,13 @@ export class TourismService {
     }
 
     let quote: any = null;
-    if (data.quotationId) {
-      try {
-        quote = await PricingEngineService.validateAndConsumeQuotation({
-          quotationId: data.quotationId,
-          expectedServiceType: 'TOUR',
-          customerId: data.customerId,
-          referenceId: destId || undefined,
-        });
-      } catch (err: any) {
-        if (ENV.isProduction) throw err;
-      }
-    }
+    const quoteParams = {
+      quotationId: data.quotationId!, expectedServiceType: 'TOUR' as const, customerId: data.customerId,
+      referenceId: data.packageId || destId || undefined, vehicleId: data.vehicleId,
+      guestCount: Number(data.guestsCount || 1), durationDays: Number(data.durationDays || pkg?.duration_days || 1),
+      guideId: data.tourGuideId, selectedAdditionalChargeIds: data.selectedAdditionalChargeIds,
+    };
+    if (data.quotationId) quote = PricingEngineService.validateQuotation(quoteParams);
 
     if (!dest && !pkg && !quote) {
       if (ENV.isProduction) {
@@ -827,6 +823,7 @@ export class TourismService {
     if (!quote && (dest || pkg)) {
       quote = await PricingEngineService.calculateQuote({
         serviceType: 'TOUR',
+        customerId: data.customerId,
         packageId: data.packageId,
         destinationId: destId || undefined,
         guideId: data.tourGuideId,
@@ -870,10 +867,8 @@ export class TourismService {
       updated_at: nowIso,
     };
 
-    localStore.tour_bookings.set(bookingId, newBooking);
-    db.persistTourBooking(newBooking).catch((err) =>
-      console.error('[TourismService.createBooking persist error]', err)
-    );
+    await commitBooking('tour_bookings', newBooking, data.quotationId, storedQuote =>
+      PricingEngineService.validateQuotation({ ...quoteParams, storedQuote }));
 
     const enriched = this.getBookingById(bookingId);
     broadcastToFleet(enriched, 'tour:booking_created');

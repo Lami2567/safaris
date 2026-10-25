@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import re
 import threading
 import time
 import hmac
@@ -148,28 +149,8 @@ def run_deployment(trigger: str = "webhook", target_commit: str = None) -> bool:
     return True
 
 def poll_github_worker():
-    """Monitors GitHub for new pushes to main every POLL_INTERVAL_SECONDS if ENABLE_POLLING_DEPLOY is set."""
-    enable_polling = os.environ.get("ENABLE_POLLING_DEPLOY", "false").lower() in ("true", "1")
-    if not enable_polling:
-        log("GitHub polling auto-deploy is disabled by policy. Deployments strictly require authenticated webhook trigger post-CI.")
-        return
-
-    log(f"Started GitHub polling thread (interval: {POLL_INTERVAL_SECONDS}s).")
-    while True:
-        try:
-            time.sleep(POLL_INTERVAL_SECONDS)
-            if state["is_deploying"]:
-                continue
-
-            state["last_poll_time"] = datetime.now(timezone.utc).isoformat() + "Z"
-            local_sha = get_current_commit()
-            remote_sha = get_remote_commit()
-
-            if remote_sha and local_sha and remote_sha != local_sha:
-                log(f"🔔 New commit detected on GitHub: {remote_sha[:8]} (local is {local_sha[:8]})")
-                run_deployment(trigger=f"git-push-poller (new commit {remote_sha[:8]})")
-        except Exception as e:
-            log(f"Error in polling loop: {e}")
+    # Deploy only CI-authenticated, exact-SHA webhook releases.
+    return
 
 class WebhookHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -182,6 +163,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             "last_deployed_commit": state["last_deployed_commit"] or current_head,
             "last_deploy_time": state["last_deploy_time"],
             "last_deploy_status": state["last_deploy_status"],
+            "target_commit": state.get("target_commit"),
             "last_poll_time": state["last_poll_time"],
             "total_deploys": state["total_deploys"],
             "poll_interval_seconds": POLL_INTERVAL_SECONDS,
@@ -270,59 +252,29 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"message": "pong"}).encode("utf-8"))
             return
 
-        # 3. Rate limiting check (prevent replay / trigger flood)
-        now_ts = time.time()
-        last_deploy_ts = getattr(self, "_last_webhook_ts", 0)
-        if now_ts - last_deploy_ts < 15 and state["is_deploying"]:
-            self.send_response(429)
-            self.send_header("Content-Type", "application/json")
+        try:
+            payload = json.loads(body)
+            target_commit = payload.get("commit")
+            if payload.get("repository") != "Lami2567/safaris" or payload.get("ref") != "refs/heads/main" or not isinstance(target_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", target_commit):
+                raise ValueError("Invalid repository, branch or commit")
+        except (ValueError, TypeError, AttributeError):
+            self.send_response(400)
             self.end_headers()
-            self.wfile.write(json.dumps({"error": "Rate limit: Deployment already processing"}).encode("utf-8"))
             return
-        self._last_webhook_ts = now_ts
-
-        branch = "main"
-        is_push = True
-
-        if body:
-            try:
-                payload = json.loads(body)
-                ref = payload.get("ref", "")
-                if ref:
-                    branch = ref.replace("refs/heads/", "")
-                    if branch != "main":
-                        is_push = False
-                        log(f"Ignoring push to non-main branch: {branch}")
-            except Exception:
-                pass
-
-        target_commit = None
-        if body:
-            try:
-                payload = json.loads(body)
-                target_commit = payload.get("commit") or payload.get("after")
-                if not target_commit and "head_commit" in payload and isinstance(payload["head_commit"], dict):
-                    target_commit = payload["head_commit"].get("id")
-            except Exception:
-                pass
-
-        if is_push:
-            triggered = run_deployment(trigger=f"github-webhook-push ({target_commit[:8] if target_commit else 'latest'})", target_commit=target_commit)
+        if state.get("last_deployed_commit") == target_commit and state.get("last_deploy_status") == "success":
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
             self.end_headers()
-            resp = {
-                "success": True,
-                "message": "Deployment triggered successfully" if triggered else "Deployment already running",
-                "branch": branch,
-                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-            }
-            self.wfile.write(json.dumps(resp).encode("utf-8"))
-        else:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            return
+        if state["is_deploying"]:
+            self.send_response(409)
             self.end_headers()
-            self.wfile.write(json.dumps({"success": True, "message": f"Ignored branch {branch}"}).encode("utf-8"))
+            return
+        state["target_commit"] = target_commit
+        triggered = run_deployment(trigger="authenticated-ci", target_commit=target_commit)
+        self.send_response(202 if triggered else 409)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"accepted": triggered, "commit": target_commit}).encode())
 
     def log_message(self, format, *args):
         # Override to suppress default noisy http server stdout logging

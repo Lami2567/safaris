@@ -192,7 +192,7 @@ async function runMasterFinancialTestSuite() {
   // ---------------------------------------------------------------------------
 
   // 1. DPO token creation success
-  const trip1 = TripService.createTrip({
+  const trip1 = await TripService.createTrip({
     customerId,
     pickupTitle: 'Kampala Road',
     pickupAddress: 'Kampala',
@@ -223,7 +223,7 @@ async function runMasterFinancialTestSuite() {
   mockCreateTokenFail = true;
   let failedTokenCaught = false;
   try {
-    const tripFail = TripService.createTrip({
+    const tripFail = await TripService.createTrip({
       customerId,
       pickupTitle: 'A',
       pickupAddress: 'A',
@@ -274,7 +274,7 @@ async function runMasterFinancialTestSuite() {
   pass(4, 'Verified DPO payment success');
 
   // 5. Declined payment
-  const tripDeclined = TripService.createTrip({
+  const tripDeclined = await TripService.createTrip({
     customerId,
     pickupTitle: 'Kololo',
     pickupAddress: 'Kololo',
@@ -307,7 +307,7 @@ async function runMasterFinancialTestSuite() {
   pass(5, 'Declined payment handling');
 
   // 6. Cancelled payment
-  const tripCancel = TripService.createTrip({
+  const tripCancel = await TripService.createTrip({
     customerId,
     pickupTitle: 'Ntinda',
     pickupAddress: 'Ntinda',
@@ -433,7 +433,7 @@ async function runMasterFinancialTestSuite() {
   pass(12, 'Wallet top-up verification & summary tracking');
 
   // 13. Wallet booking payment
-  const tripWallet = TripService.createTrip({
+  const tripWallet = await TripService.createTrip({
     customerId,
     pickupTitle: 'Acacia Mall',
     pickupAddress: 'Kisementi',
@@ -575,7 +575,7 @@ async function runMasterFinancialTestSuite() {
   pass(18, 'Platform & 5% developer commission calculation');
 
   // 19. Unpaid booking completion blocked from creating earnings
-  const unpaidTrip = TripService.createTrip({
+  const unpaidTrip = await TripService.createTrip({
     customerId,
     pickupTitle: 'Unpaid Start',
     pickupAddress: 'Kampala',
@@ -600,7 +600,7 @@ async function runMasterFinancialTestSuite() {
   pass(19, 'Unpaid booking completion blocked from creating earnings');
 
   // 20. Driver no-show refund eligibility & automatic refund worker
-  const noShowTrip = TripService.createTrip({
+  const noShowTrip = await TripService.createTrip({
     customerId,
     pickupTitle: 'NoShow Pickup',
     pickupAddress: 'Kampala',

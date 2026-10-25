@@ -53,8 +53,8 @@ apiRouter.delete('/admin/catalogue/vehicles/:id', authenticate, requireRole('adm
 apiRouter.get('/pricing/rules', PricingEngineController.getServicePricingRules);
 apiRouter.put('/admin/pricing/rules/:serviceKey', authenticate, requireRole('admin'), PricingEngineController.updateServicePricingRule);
 
-apiRouter.post('/pricing/quote', PricingEngineController.calculateQuote);
-apiRouter.get('/pricing/quote/:quotationId', PricingEngineController.getQuotation);
+apiRouter.post('/pricing/quote', authenticate, PricingEngineController.calculateQuote);
+apiRouter.get('/pricing/quote/:quotationId', authenticate, PricingEngineController.getQuotation);
 
 // -------------------------------------------------------------
 // Careers Portal Integration (careers.mumwesafarisuganda.com)

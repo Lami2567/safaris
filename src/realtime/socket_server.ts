@@ -1,3 +1,4 @@
+import { validateAuthSession } from '../gateway/auth_middleware';
 import { Server as HttpServer } from 'http';
 import { Response } from 'express';
 import { Server, Socket } from 'socket.io';
@@ -132,48 +133,44 @@ export function initSocketServer(httpServer: HttpServer): Server {
   });
 
   // Enforce mandatory JWT authentication during handshake
-  ioInstance.use((socket, next) => {
-    const token =
-      (socket.handshake.auth?.token as string) ||
-      (socket.handshake.headers?.authorization?.replace(/^Bearer\s+/i, '') as string) ||
-      (socket.handshake.query?.token as string);
-
-    if (!token) {
-      return next(new Error('Authentication error: Missing token.'));
-    }
-
-    try {
-      const decoded = jwt.verify(token, ENV.JWT_SECRET) as any;
-      if (decoded?.scope && decoded.scope !== 'access') {
-        return next(new Error('Authentication error: Invalid token scope.'));
-      }
-      if (!decoded?.userId) {
-        return next(new Error('Authentication error: Missing userId in token.'));
-      }
-      const liveUser = localStore.users.get(decoded.userId);
-      if (liveUser && liveUser.approval_status === 'SUSPENDED') {
-        return next(new Error('Authentication error: Account suspended.'));
-      }
-      const tokenVer = Number(decoded.tokenVersion ?? 1);
-      const userVer = Number(liveUser?.token_version ?? 1);
-      if (tokenVer < userVer) {
-        return next(new Error('Authentication error: Session revoked.'));
-      }
-      (socket as any).userId = decoded.userId;
-      (socket as any).role = liveUser?.role || decoded.role || 'customer';
-      next();
-    } catch (err: any) {
-      if (err.name === 'TokenExpiredError') {
-        return next(new Error('Authentication error: Token expired.'));
-      }
-      return next(new Error('Authentication error: Invalid token.'));
-    }
+  ioInstance.use(async (socket, next) => {
+    const token = socket.handshake.auth?.token || socket.handshake.headers.authorization?.replace(/^Bearer\s+/i, '');
+    const result = await validateAuthSession(token);
+    if (!result.valid || !result.payload?.userId) return next(new Error('Authentication required.'));
+    socket.data.accessToken = token;
+    socket.data.expiresAt = result.payload.exp! * 1000;
+    (socket as any).userId = result.payload.userId;
+    (socket as any).role = result.payload.role;
+    next();
   });
 
   ioInstance.on('connection', (socket: Socket) => {
     // Identity strictly derived from verified JWT payload
     const userId = (socket as any).userId;
     const role = (socket as any).role;
+    let checking = false;
+    const checkSession = async () => {
+      const result = await validateAuthSession(socket.data.accessToken);
+      if (!result.valid || result.payload?.role !== role) {
+        socket.disconnect(true);
+        return false;
+      }
+      return true;
+    };
+    socket.use(async (_packet, next) => {
+      if (await checkSession()) next();
+      else next(new Error('Session revoked.'));
+    });
+    const sessionTimer = setInterval(async () => {
+      if (checking) return;
+      checking = true;
+      try { await checkSession(); } finally { checking = false; }
+    }, 1000);
+    sessionTimer.unref();
+    const expiry = setTimeout(() => socket.disconnect(true), Math.max(1, Math.min(2147483647, socket.data.expiresAt - Date.now())));
+    expiry.unref();
+    socket.on('disconnect', () => { clearInterval(sessionTimer); clearTimeout(expiry); });
+
 
     if (userId) {
       if (!userSockets.has(userId)) {

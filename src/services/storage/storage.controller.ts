@@ -1,3 +1,4 @@
+import { db, localStore } from '../../config/database';
 import { Request, Response } from 'express';
 import { StorageService } from './storage.service';
 
@@ -27,17 +28,9 @@ export class StorageController {
         return;
       }
 
-      const result = StorageService.generatePresignedUploadUrl({
-        fileName,
-        fileType,
-        folder,
-        expiresIn: expiresIn ? Number(expiresIn) : undefined,
-      });
+      // Public PUT tickets bypass file validation. Clients must use the bounded relay endpoint.
+      res.status(410).json({ success: false, error: 'Use /storage/upload for validated uploads.' });
 
-      res.status(200).json({
-        success: true,
-        data: result,
-      });
     } catch (err: any) {
       const statusCode = err.message?.includes('not fully configured') ? 503 : 400;
       res.status(statusCode).json({
@@ -55,6 +48,8 @@ export class StorageController {
   public static async uploadDirect(req: Request, res: Response): Promise<void> {
     try {
       const { fileName, fileType, folder, base64Data } = req.body;
+      const user = (req as any).user;
+      if (user?.role !== 'admin') { res.status(403).json({ success: false, error: 'Public media upload requires admin permission. Recruitment attachments are submitted through careers/apply.' }); return; }
 
       if (!fileName || typeof fileName !== 'string') {
         res.status(400).json({ success: false, error: 'fileName is required.' });
@@ -150,6 +145,18 @@ export class StorageController {
         return;
       }
 
+      const user = (req as any).user;
+      if (!user?.userId || !/^private\/recruitment\/[A-Za-z0-9_./-]+$/.test(key) || key.split('/').includes('..')) {
+        res.status(403).json({ success: false, error: 'Document access denied.' }); return;
+      }
+      if (user.role !== 'admin') {
+        const applications = db.isPostgresConnected
+          ? (await db.query('SELECT documents FROM career_applications WHERE user_id = $1', [user.userId])).rows
+          : (process.env.NODE_ENV === 'test' ? Array.from(localStore.career_applications.values()).filter(a => a.user_id === user.userId) : []);
+        if (!applications.some((a: any) => Object.values(a.documents || {}).some(value => value === key))) {
+          res.status(403).json({ success: false, error: 'Document access denied.' }); return;
+        }
+      }
       const downloadUrl = StorageService.generatePresignedDownloadUrl(key, expiresIn);
       res.status(200).json({
         success: true,

@@ -3,7 +3,7 @@
 # SAFARIS Backend - Safe Production Deployment Script (AWS Lightsail VPS)
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 # Navigate to backend root
 cd "$(dirname "$0")/.."
@@ -52,56 +52,43 @@ if grep -q "CHANGE_THIS_TO_A_STRONG_RANDOM_SECRET" .env.production; then
   exit 1
 fi
 
+# Preserve the pre-release database before changing the running application.
+umask 077
+mkdir -p backups
+PREVIOUS_SHA=$(git rev-parse HEAD)
+export SAFARIS_RELEASE_SHA="$PREVIOUS_SHA"
+BACKUP_STEM="backups/pre-release-$(date -u +%Y%m%dT%H%M%SZ)"
+if docker compose -f docker-compose.prod.yml --env-file .env.production ps --status running postgres | grep -q safaris_postgres_prod; then
+  docker compose -f docker-compose.prod.yml --env-file .env.production exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner' | gzip > "${BACKUP_STEM}.sql.gz"
+  gzip -t "${BACKUP_STEM}.sql.gz"
+  printf '%s\n' "$PREVIOUS_SHA" > "${BACKUP_STEM}.commit"
+else
+  echo "Existing production database is not running; refusing unattended release."; exit 1
+fi
+
 # 3. Pull latest code from GitHub and verify target commit
 TARGET_COMMIT="${1:-}"
-
-if [ -n "$TARGET_COMMIT" ]; then
-  echo "📥 Fetching and checking out exact commit SHA: ${TARGET_COMMIT}..."
-  git fetch origin main
-  git checkout "$TARGET_COMMIT" || git reset --hard "$TARGET_COMMIT"
-else
-  echo "📥 Syncing latest codebase from GitHub (origin/main)..."
-  git fetch origin main
-  git reset --hard origin/main
+if [[ ! "$TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "A full tested commit SHA is required."; exit 1
 fi
-git clean -fd -e .env.production -e backups -e autodeploy.log
-
+git diff --quiet && git diff --cached --quiet || { echo "Working tree contains local changes; refusing deployment."; exit 1; }
+git fetch origin main
+git merge-base --is-ancestor "$TARGET_COMMIT" origin/main || { echo "Commit is not on main."; exit 1; }
+git checkout --detach "$TARGET_COMMIT"
 DEPLOYED_SHA=$(git rev-parse HEAD)
-echo "✅ Deployed working tree is at commit: ${DEPLOYED_SHA}"
-if [ -n "$TARGET_COMMIT" ] && [ "${DEPLOYED_SHA:0:7}" != "${TARGET_COMMIT:0:7}" ]; then
-  echo "❌ Error: Deployed commit (${DEPLOYED_SHA}) does not match expected target commit (${TARGET_COMMIT})!"
-  exit 1
-fi
+[ "$DEPLOYED_SHA" = "$TARGET_COMMIT" ] || exit 1
+export SAFARIS_RELEASE_SHA="$DEPLOYED_SHA"
 
 # 4. Build Docker Production Images
 echo "🔨 Building Docker production containers..."
 docker compose -f docker-compose.prod.yml --env-file .env.production build
 
-# 5. Start / Update Services Gracefully
-echo "🚀 Starting production service stack..."
+# Migrate while the previous backend is still running; all migrations must be additive.
+docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backend node dist/database/migrate.js
+# Switch the services only after migration success.
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
-docker compose -f docker-compose.prod.yml --env-file .env.production restart nginx
 docker exec safaris_nginx_prod nginx -t
-
-# 6. Wait for Database Readiness
-echo "⏳ Waiting for PostgreSQL to initialize..."
-RETRIES=15
-until docker compose -f docker-compose.prod.yml exec postgres pg_isready -U safaris_prod_user -d safaris_production 2>/dev/null || [ $RETRIES -eq 0 ]; do
-  echo "   Waiting for database... ($RETRIES attempts remaining)"
-  RETRIES=$((RETRIES-1))
-  sleep 3
-done
-
-if [ $RETRIES -eq 0 ]; then
-  echo "❌ Error: PostgreSQL failed to become healthy in time."
-  docker compose -f docker-compose.prod.yml logs postgres --tail=20
-  exit 1
-fi
-echo "✅ PostgreSQL is ready."
-
-# 7. Execute Safe Idempotent Database Migrations
-echo "🔄 Executing database migrations..."
-docker compose -f docker-compose.prod.yml --env-file .env.production exec -T backend node dist/database/migrate.js
+docker compose -f docker-compose.prod.yml --env-file .env.production restart nginx
 
 # 8. Verify API Health Endpoint & Database Readiness
 echo "🩺 Verifying API Gateway health check..."
@@ -109,11 +96,11 @@ sleep 3
 HEALTH_RESPONSE=$(curl -sS --max-time 10 http://localhost/health 2>/dev/null || curl -sS --max-time 10 http://localhost:3000/health 2>/dev/null || echo '{"status":"failed"}')
 echo "   Health Check Response: ${HEALTH_RESPONSE}"
 
-if ! echo "${HEALTH_RESPONSE}" | grep -q '"status":"ok"'; then
-  echo "❌ Error: API Gateway health check failed! Response: ${HEALTH_RESPONSE}"
-  docker compose -f docker-compose.prod.yml --env-file .env.production logs backend --tail=30
-  exit 1
+if ! echo "${HEALTH_RESPONSE}" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r.get("status") == "ok" and r.get("commit") == sys.argv[1]' "$DEPLOYED_SHA"; then
+  echo "API health or running commit verification failed."; exit 1
 fi
+READY_RESPONSE=$(curl -fsS --max-time 10 http://localhost/health/ready)
+echo "$READY_RESPONSE" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("database") == "connected"'
 echo "✅ API Gateway verified healthy."
 
 # 9. Report Container Status and Memory Usage

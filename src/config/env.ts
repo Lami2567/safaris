@@ -7,9 +7,9 @@ const envFile = process.env.NODE_ENV === 'production'
   ? '.env.production' 
   : '.env.development';
 
-dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+if (process.env.NODE_ENV !== 'test') dotenv.config({ path: path.resolve(process.cwd(), envFile) });
 // Fallback to default .env if specific doesn't exist
-dotenv.config();
+if (process.env.NODE_ENV !== 'test') dotenv.config();
 
 // Construct DATABASE_URL if individual parameters are supplied
 const dbHost = process.env.DB_HOST || 'localhost';

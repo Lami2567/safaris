@@ -922,7 +922,13 @@ export class PricingEngineService {
         : 'RIDE';
 
     const guestCount = Math.max(1, Math.floor(Number(params.guestCount || 1)));
-    let distanceKm = Math.max(0, Number(params.distanceKm || 0));
+    if (!params.customerId) throw new Error('Authenticated customer required for a payable quotation.');
+    let distanceKm = 0;
+    if (serviceType !== 'TOUR') {
+      for (const key of ['pickupLat', 'pickupLng', 'destLat', 'destLng'] as const) {
+        if (!Number.isFinite(params[key])) throw new Error('Complete route coordinates required.');
+      }
+    }
     if (params.pickupLat !== undefined && params.destLat !== undefined) {
       distanceKm = this.calculateServerDistanceKm(
         Number(params.pickupLat),
@@ -1504,7 +1510,7 @@ export class PricingEngineService {
     return quoteResult;
   }
 
-  public static validateAndConsumeQuotation(params: {
+  public static validateQuotation(params: {
     quotationId: string;
     expectedServiceType: QuoteServiceType;
     customerId?: string;
@@ -1515,14 +1521,18 @@ export class PricingEngineService {
     pickupLng?: number;
     destLat?: number;
     destLng?: number;
-    allowConsumed?: boolean;
+    guestCount?: number;
+    durationDays?: number;
+    guideId?: string;
+    selectedAdditionalChargeIds?: string[];
+    storedQuote?: any;
   }): any {
-    const { quotationId, expectedServiceType, customerId, sessionId, vehicleId, referenceId, pickupLat, pickupLng, destLat, destLng, allowConsumed = false } = params;
+    const { quotationId, expectedServiceType, customerId, sessionId, vehicleId, referenceId, pickupLat, pickupLng, destLat, destLng } = params;
     if (!quotationId) {
       throw new Error('Quotation ID is required.');
     }
 
-    let quote = this.getQuotationById(quotationId);
+    const quote = params.storedQuote || this.getQuotationById(quotationId);
 
     if (!quote) {
       throw new Error(`Quotation '${quotationId}' not found.`);
@@ -1534,10 +1544,10 @@ export class PricingEngineService {
     }
 
     // 2. Customer ownership / Checkout session validation
-    if (quote.customer_id && customerId && quote.customer_id !== customerId) {
+    if (!customerId || !quote.customer_id || quote.customer_id !== customerId) {
       throw new Error(`Quotation '${quotationId}' was issued to another customer and cannot be used by this account.`);
     }
-    if (quote.request_params?.sessionId && sessionId && quote.request_params.sessionId !== sessionId) {
+    if (quote.request_params?.sessionId && quote.request_params.sessionId !== sessionId) {
       throw new Error(`Quotation '${quotationId}' was bound to another checkout session.`);
     }
 
@@ -1548,7 +1558,7 @@ export class PricingEngineService {
     }
 
     // 4. Consumption validation (single-use enforcement)
-    if (!allowConsumed && (quote.consumed === true || quote.status === 'CONSUMED')) {
+    if (quote.consumed === true || quote.status === 'CONSUMED') {
       throw new Error(`Quotation '${quotationId}' has already been consumed by an existing booking.`);
     }
 
@@ -1569,7 +1579,10 @@ export class PricingEngineService {
     }
 
     // 6. Route / Coordinates validation if coordinates provided on both quote and consumption
-    if (pickupLat !== undefined && quote.request_params?.pickupLat !== undefined) {
+    if (expectedServiceType !== 'TOUR') {
+      for (const key of ['pickupLat', 'pickupLng', 'destLat', 'destLng'] as const) {
+        if (!Number.isFinite(params[key]) || !Number.isFinite(quote.request_params?.[key])) throw new Error('Complete route binding required.');
+      }
       const qpLat = Number(quote.request_params.pickupLat);
       const qpLng = Number(quote.request_params.pickupLng);
       const qdLat = Number(quote.request_params.destLat);
@@ -1579,7 +1592,7 @@ export class PricingEngineService {
       const dLat = Number(destLat);
       const dLng = Number(destLng);
 
-      const tolerance = 0.02; // ~2.2km street-level GPS radius
+      const tolerance = 0.000001; // ~2.2km street-level GPS radius
       const pDiff = Math.abs(pLat - qpLat) + Math.abs(pLng - qpLng);
       const dDiff = Math.abs(dLat - qdLat) + Math.abs(dLng - qdLng);
       if (pDiff > tolerance || dDiff > tolerance) {
@@ -1587,16 +1600,23 @@ export class PricingEngineService {
       }
     }
 
-    // Mark quotation as consumed atomically in memory
-    quote.consumed = true;
-    quote.status = 'CONSUMED';
-    quote.consumed_at = new Date().toISOString();
-    quote.consumed_by = customerId || quote.customer_id || sessionId || 'UNKNOWN';
-
-    // Persist to PostgreSQL atomically in background
-    db.consumeQuotationAtomic(quotationId, quote.consumed_by).catch(() => {});
-
+    if (expectedServiceType === 'TOUR') {
+      const expected = { guestCount: params.guestCount, durationDays: params.durationDays, guideId: params.guideId || null };
+      const actual = { guestCount: Number(quote.guest_count), durationDays: Number(quote.request_params?.durationDays || 1), guideId: quote.guide_id || null };
+      if (JSON.stringify(expected) !== JSON.stringify(actual)) throw new Error('Tour selections differ from quotation.');
+      const selected = [...(params.selectedAdditionalChargeIds || [])].sort();
+      const quoted = [...(quote.request_params?.selectedAdditionalChargeIds || [])].sort();
+      if (JSON.stringify(selected) !== JSON.stringify(quoted)) throw new Error('Tour extras differ from quotation.');
+    }
     return quote;
+  }
+
+  /** Standalone consumption is for callers without a booking; real bookings use commitBooking. */
+  public static async validateAndConsumeQuotation(params: Parameters<typeof PricingEngineService.validateQuotation>[0]): Promise<any> {
+    const quote = this.validateQuotation(params);
+    const result = await db.consumeQuotationAtomic(quote.id, params.customerId!);
+    if (!result) throw new Error('Quotation expired or already consumed.');
+    return result;
   }
 
   public static getQuotationById(quotationId: string): any | null {

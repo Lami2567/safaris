@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
-import { uploadImageToR2 } from '@/lib/storage';
 import { useTheme } from '@/components/ThemeProvider';
 
 type ApplicationTrack = 'driver' | 'tour_guide';
@@ -317,16 +316,21 @@ export default function CareersPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 25 * 1024 * 1024) {
-      alert('File size exceeds 25MB limit. Please upload a smaller scan or photo.');
+    if (file.size > 5 * 1024 * 1024) {
+      alert('File size exceeds 5MB limit. Please upload a smaller scan or photo.');
       return;
     }
 
     setUploadingDoc(docKey);
     try {
-      // Upload directly to Cloudflare R2 bucket ('safaris' -> images/careers/...)
-      const r2PublicUrl = await uploadImageToR2(file, 'careers');
-      setDocuments(prev => ({ ...prev, [docKey]: r2PublicUrl }));
+      // Attach to the recruitment submission; the server validates and stores it privately.
+      const attachment = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('Could not read attachment.'));
+        reader.readAsDataURL(file);
+      });
+      setDocuments(prev => ({ ...prev, [docKey]: attachment }));
     } catch (err: any) {
       alert(err.message || 'Failed to upload document to Cloudflare R2 storage. Please try again.');
     } finally {
