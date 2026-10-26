@@ -101,6 +101,10 @@ docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps nginx sh -c 'printf "127.0.0.1 backend admin\n" >> /etc/hosts; nginx -t'
 # Switch the services only after migration success.
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if docker exec safaris_nginx_prod nginx -t >/dev/null 2>&1; then break; fi
+  sleep 1
+done
 docker exec safaris_nginx_prod nginx -t
 docker compose -f docker-compose.prod.yml --env-file .env.production restart nginx
 
