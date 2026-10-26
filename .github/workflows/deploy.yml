@@ -85,7 +85,7 @@ jobs:
             -H "X-Hub-Signature-256: $SIGNATURE" \
             -H "X-GitHub-Event: push" \
             -d "$PAYLOAD" --max-time 45
-          for attempt in $(seq 1 120); do
+          for attempt in $(seq 1 180); do
             STATUS=$(curl -fsS --max-time 10 https://admin.mumwesafarisuganda.com/webhook 2>/dev/null || echo "{}")
             if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.last_deployed_commit == $sha and .last_deploy_status == "success" and .is_deploying == false' >/dev/null 2>&1; then
               echo "✅ Deployment verified: commit $COMMIT_SHA is active on VPS."
@@ -95,8 +95,10 @@ jobs:
               echo "::error::Server deployment failed: $(echo "$STATUS" | jq -r .last_deploy_status 2>/dev/null)"
               exit 1
             fi
-            if [ $((attempt % 6)) -eq 0 ]; then
-              echo "Waiting for deployment to complete... (Attempt $attempt/120)"
+            if [ $((attempt % 3)) -eq 0 ]; then
+              DEPLOYING=$(echo "$STATUS" | jq -r .is_deploying 2>/dev/null || echo "unknown")
+              DEPLOY_STATUS=$(echo "$STATUS" | jq -r .status 2>/dev/null || echo "unknown")
+              echo "Waiting for deployment to complete... (Attempt $attempt/180, is_deploying: $DEPLOYING, status: $DEPLOY_STATUS)"
             fi
             sleep 10
           done
