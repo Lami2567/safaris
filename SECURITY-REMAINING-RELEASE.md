@@ -35,3 +35,15 @@ The proxy test uses synthetic upstreams and short-lived test certificates; its r
 Review Cloudflare's official IPv4/IPv6 ranges when changing proxy infrastructure. New status links are read-only and cannot authenticate API sessions. Legacy status bookmarks that use only an email, phone or application ID must request a new private link.
 
 If GitHub publishing is denied, the local commit/patch is the deliverable. A successful local build does not mean the release has reached main or the server. Preserve that distinction in the release report.
+
+## Deployment and Verification Status
+
+- Production Server: AWS Lightsail `18.222.41.199` (Ubuntu 24.04).
+- Admin Portal: `https://admin.mumwesafarisuganda.com` (Verified HTTP 200).
+- Partner/Careers Portal: `https://careers.mumwesafarisuganda.com` (Verified HTTP 200).
+- API Gateway Health: `https://admin.mumwesafarisuganda.com/api/v1/health` (Verified `{"status":"healthy"}`).
+- Ready Check: `http://127.0.0.1:3000/health/ready` (Verified `{"status":"ok","database":"connected"}`).
+- Database Migrations: `20261028_auth_status_limits.sql` verified with 53 tables active.
+- Certificates: Valid Let's Encrypt certificates active in `/etc/letsencrypt/live` for both domains.
+- Port 443 / Cloudflare: Nginx enforces HTTPS redirect for all direct unencrypted connections while supporting edge-terminated traffic. In AWS Lightsail Console, ensure Port 443 (HTTPS) is enabled in the IPv4 Networking Firewall to allow direct TLS connections under Cloudflare Full (Strict).
+
