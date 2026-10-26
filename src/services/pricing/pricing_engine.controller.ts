@@ -84,8 +84,9 @@ export class PricingEngineController {
   public static async calculateQuote(req: Request, res: Response) {
     try {
       const user = (req as any).user;
-      const customerId = user ? user.id : (req.body?.customerId || undefined);
-      const sessionId = (req.headers['x-checkout-session'] as string) || req.body?.sessionId || undefined;
+      const customerId = user?.userId;
+      if (!customerId) return sendError(res, 'UNAUTHORIZED', 'Authentication required.', 401);
+      const sessionId = undefined;
       const quote = await PricingEngineService.calculateQuote({
         ...(req.body || {}),
         customerId,
@@ -106,6 +107,8 @@ export class PricingEngineController {
       if (!quote) {
         return sendError(res, 'QUOTATION_NOT_FOUND', 'Quotation not found or expired.', 404);
       }
+      const caller = (req as any).user;
+      if (caller?.role !== 'admin' && quote.customer_id !== caller?.userId) return sendError(res, 'FORBIDDEN', 'Quotation access denied.', 403);
       return sendSuccess(res, quote);
     } catch (err: any) {
       return sendError(res, 'FETCH_QUOTATION_FAILED', err.message, 500);

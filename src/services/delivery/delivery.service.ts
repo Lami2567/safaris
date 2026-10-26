@@ -1,3 +1,4 @@
+import { commitBooking } from '../pricing/booking_commit';
 import { localStore } from '../../config/database';
 import { v4 as uuidv4 } from 'uuid';
 import { emitToUser, emitToRoom } from '../../realtime/socket_server';
@@ -101,7 +102,7 @@ export class DeliveryService {
     let existingQuote: any = null;
 
     if (quotationId) {
-      existingQuote = PricingEngineService.validateAndConsumeQuotation({
+      existingQuote = PricingEngineService.validateQuotation({
         quotationId,
         expectedServiceType: 'DELIVERY',
         customerId: data.senderId,
@@ -160,7 +161,10 @@ export class DeliveryService {
       updated_at: new Date().toISOString(),
     };
 
-    localStore.deliveries.set(deliveryId, delivery);
+    await commitBooking('deliveries', delivery, quotationId, storedQuote => PricingEngineService.validateQuotation({
+      quotationId: quotationId!, expectedServiceType: 'DELIVERY', customerId: data.senderId, vehicleId: data.vehicleId,
+      pickupLat, pickupLng, destLat: dropoffLat, destLng: dropoffLng, storedQuote
+    }));
 
     setTimeout(() => {
       this.matchCourier(deliveryId);

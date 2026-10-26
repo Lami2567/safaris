@@ -8,6 +8,18 @@ on:
 jobs:
   verify-and-deploy:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: safaris_test
+          POSTGRES_PASSWORD: isolated_ci_password
+          POSTGRES_DB: safaris_security_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U safaris_test -d safaris_security_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -28,8 +40,29 @@ jobs:
       - name: Run Master Verification & Security Regression Suites
         run: npm test
 
+      - name: Dashboard build and type checking
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          npm ci --prefix admin --ignore-scripts --no-audit --no-fund
+          npm run build --prefix admin
+          node node_modules/typescript/bin/tsc --noEmit -p admin/tsconfig.json
+
+      - name: PostgreSQL multi-process transaction and revocation tests
+        env:
+          NODE_ENV: test
+          DISABLE_DATABASE: 'true'
+          SAFARIS_TEST_DATA_DIR: ${{ runner.temp }}/safaris-pg-boundaries
+          SAFARIS_PG_TEST_URL: postgresql://safaris_test:isolated_ci_password@127.0.0.1:5432/safaris_security_test
+        run: |
+          mkdir -p "$SAFARIS_TEST_DATA_DIR"
+          npm run test:postgres
+
+      - name: Python deployment handler regression tests
+        run: python3 -m unittest discover -s scripts -p 'test_autodeploy.py'
+
       - name: Trigger Authenticated VPS Continuous Deployment
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         env:
           WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET || secrets.WEBHOOK_SECRET || secrets.DEPLOY_WEBHOOK_SECRET || secrets.DEPLOY_SECRET }}
           COMMIT_SHA: ${{ github.sha }}
@@ -47,16 +80,19 @@ jobs:
           SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')"
           echo "Submitting authenticated deployment webhook to VPS (Commit: $COMMIT_SHA)..."
 
-          # Prefer HTTPS endpoint through Nginx reverse proxy with fallback to direct port
           curl -sS --fail-with-body -X POST https://admin.mumwesafarisuganda.com/webhook \
             -H "Content-Type: application/json" \
             -H "X-Hub-Signature-256: $SIGNATURE" \
             -H "X-GitHub-Event: push" \
-            -d "$PAYLOAD" \
-            --max-time 45 || \
-          curl -sS --fail-with-body -X POST http://18.222.41.199:9000/webhook \
-            -H "Content-Type: application/json" \
-            -H "X-Hub-Signature-256: $SIGNATURE" \
-            -H "X-GitHub-Event: push" \
-            -d "$PAYLOAD" \
-            --max-time 45
+            -d "$PAYLOAD" --max-time 45
+          for attempt in $(seq 1 90); do
+            STATUS=$(curl -fsS --max-time 10 https://admin.mumwesafarisuganda.com/webhook)
+            if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.last_deployed_commit == $sha and .last_deploy_status == "success" and .is_deploying == false' >/dev/null; then
+              exit 0
+            fi
+            if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.target_commit == $sha and (.last_deploy_status | startswith("failed"))' >/dev/null; then
+              echo "::error::Server deployment failed"; exit 1
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for exact deployed commit"; exit 1

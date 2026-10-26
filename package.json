@@ -10,7 +10,8 @@
     "test": "npx ts-node --transpile-only src/__tests__/run_all_tests.ts",
     "migrate": "ts-node src/database/migrate.ts",
     "migrate:prod": "node dist/database/migrate.js",
-    "seed": "ts-node src/database/seed.ts"
+    "seed": "ts-node src/database/seed.ts",
+    "test:postgres": "ts-node src/__tests__/postgres_boundaries.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -19,10 +20,10 @@
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "10.2.1",
     "pg": "^8.13.1",
     "socket.io": "^4.8.1",
-    "uuid": "^11.0.5",
-    "nodemailer": "^6.9.16"
+    "uuid": "^11.0.5"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -33,6 +34,7 @@
     "@types/nodemailer": "^6.4.17",
     "@types/pg": "^8.11.10",
     "@types/uuid": "^10.0.0",
+    "socket.io-client": "^4.8.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2"
   }

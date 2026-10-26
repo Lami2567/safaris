@@ -1,3 +1,4 @@
+import { DpoPayGateway } from '../services/payment/dpo_gateway';
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
@@ -32,6 +33,15 @@ const SNAPSHOT_FILES = [
 ];
 
 async function runTests() {
+  // Offline gateway boundary: this suite must never contact a payment provider.
+  DpoPayGateway.createToken = async () => ({ success: true, transToken: 'test-token', transRef: 'test-ref',
+    paymentUrl: 'https://example.invalid/pay', resultCode: '000', resultExplanation: 'Created',
+    environment: 'sandbox', serviceTypeId: '54841', supportTicketRef: 'test', rawXml: '' });
+  DpoPayGateway.chargeTokenMobile = async () => ({ success: true, statusCode: '130', resultExplanation: 'Pending',
+    instructions: '', redirectOption: false, hostedFallbackAvailable: false, rawXml: '', mnoUsed: 'MTN', mnoCountryUsed: 'uganda', environment: 'sandbox' });
+  DpoPayGateway.verifyToken = async () => ({ success: false, isPaid: false, transactionApproved: false, lifecycleStatus: 'PENDING', resultCode: '900',
+    resultExplanation: 'Pending', rawXml: '', environment: 'sandbox' });
+
   // Snapshot persistent files so test execution never pollutes production JSON files
   const snapshots = new Map<string, string>();
   for (const f of SNAPSHOT_FILES) {
@@ -97,7 +107,7 @@ async function runTests() {
     }
     console.log(`✅ 4. Trip Fare Estimation verified (Boda: UGX ${fareEstimates.boda}, Comfort: UGX ${fareEstimates.comfort}).`);
 
-    const createdTrip = TripService.createTrip({
+    const createdTrip = await TripService.createTrip({
       customerId: loginRes.user.id,
       pickupTitle: 'Kampala Serena Hotel',
       pickupAddress: 'Kintu Rd, Kampala',

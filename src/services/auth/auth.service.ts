@@ -558,7 +558,7 @@ export class AuthService {
 
     // Generate temporary setup token for password initialization
     const setupToken = jwt.sign(
-      { userId: user.id, email: user.email, scope: 'setup_password' },
+      { userId: user.id, email: user.email, scope: 'setup_password', tokenVersion: Number(user.token_version || 1) },
       ENV.JWT_SECRET,
       { expiresIn: '2h' }
     );
@@ -613,12 +613,6 @@ export class AuthService {
     }
 
     const tokenHash = crypto.createHash('sha256').update(setupToken).digest('hex');
-    const isConsumed = this.usedSetupTokens.has(tokenHash) || this.usedSetupTokens.has(setupToken) || await db.isAuthTokenConsumed(tokenHash);
-    if (isConsumed) {
-      recordFailedAttempt();
-      throw new Error('This setup token has already been used.');
-    }
-
     let decoded: any = null;
     try {
       decoded = jwt.verify(setupToken, ENV.JWT_SECRET);
@@ -627,7 +621,7 @@ export class AuthService {
       throw new Error('Session or setup token has expired. Please log in with your OTP again.');
     }
 
-    if (decoded.scope !== 'setup_password' || decoded.email?.toLowerCase() !== cleanEmail) {
+    if (decoded.scope !== 'setup_password' || !decoded.userId || !Number.isInteger(decoded.tokenVersion) || !Number.isFinite(decoded.exp) || decoded.email?.toLowerCase() !== cleanEmail) {
       recordFailedAttempt();
       throw new Error('Invalid setup token for this account.');
     }
@@ -653,17 +647,10 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
-    user.password_hash = passwordHash;
-    user.password_changed_at = new Date().toISOString();
-    user.is_verified = true;
-    user.approval_status = 'APPROVED';
-    user.token_version = (Number(user.token_version) || 1) + 1;
-    await db.persistUser(user);
-
-    // Clear used OTP and invalidate setup token in memory and database
-    this.usedSetupTokens.add(tokenHash);
-    this.usedSetupTokens.add(setupToken);
-    await db.markAuthTokenConsumed(tokenHash, 'setup_password', user.id, decoded.exp ? new Date(decoded.exp * 1000) : undefined);
+    user = await db.setPasswordWithTokenAtomic({
+      tokenHash, userId: decoded.userId, email: cleanEmail, passwordHash, expectedVersion: decoded.tokenVersion,
+      expiresAt: new Date(decoded.exp * 1000),
+    });
     this.emailOtpStore.delete(cleanEmail);
     this.saveOtps();
     this.setupAttempts.delete(attemptKey);

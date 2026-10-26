@@ -1,3 +1,4 @@
+import { LedgerService } from '../services/financial/ledger.service';
 import assert from 'assert';
 import { FinancialService, FinancialError } from '../services/financial/financial.service';
 import { localStore, db } from '../config/database';
@@ -170,6 +171,17 @@ export async function runFinancialEngineTests() {
 
   await test('Record gross fare, platform commission (15%), and driver payout (85%)', async () => {
     const grossFare = 40000;
+    // The earlier wallet debit funded 30k. Fund the remaining verified 10k
+    // before allocating a 40k earning; allocating unfunded escrow must fail.
+    await LedgerService.postTransaction({
+      eventId: `fixture_escrow_${testTripId}`, transactionType: 'BOOKING_PAYMENT_ESCROW',
+      referenceType: 'TRIP', referenceId: testTripId, environment: 'sandbox', description: 'Verified fixture remainder',
+      entries: [
+        { accountCode: '1010_GATEWAY_CLEARING_DPO', direction: 'DEBIT', amountUgx: 10000 },
+        { accountCode: '2020_BOOKING_ESCROW_LIABILITY', ownerId: testTripId, direction: 'CREDIT', amountUgx: 10000 },
+      ],
+    });
+
     const commissionRate = 15;
     const expectedCommission = 6000;
     const expectedDriverPayout = 34000;
@@ -294,6 +306,14 @@ export async function runFinancialEngineTests() {
 
   await test('Execute refund: credits customer wallet, marks payment & trip refunded, and reverses earnings', async () => {
     const balanceBefore = FinancialService.calculateWalletBalance(testUserId, 'sandbox');
+    await LedgerService.postTransaction({
+      eventId: `fixture_paid_${paidPaymentId}`, transactionType: 'BOOKING_PAYMENT_ESCROW', referenceType: 'TRIP',
+      referenceId: delayedTripId, environment: 'sandbox', description: 'Verified no-show payment fixture',
+      entries: [
+        { accountCode: '1010_GATEWAY_CLEARING_DPO', direction: 'DEBIT', amountUgx: 25000 },
+        { accountCode: '2020_BOOKING_ESCROW_LIABILITY', ownerId: delayedTripId, direction: 'CREDIT', amountUgx: 25000 },
+      ],
+    });
 
     const refund = await FinancialService.processRefund({
       paymentId: paidPaymentId,

@@ -1,3 +1,5 @@
+import { localStore } from '../config/database';
+import { quoteForTest } from './quotation_fixture';
 /**
  * MASTER VERIFICATION SUITE — SAFARIS DYNAMIC CONTENT MANAGEMENT,
  * ADMIN-CONTROLLED PRICING & SERVICE CONFIGURATION (Phases 1–16)
@@ -183,19 +185,19 @@ async function runMasterVerification() {
   // ---------------------------------------------------------------------------
   // Scenario 9: Dynamic price recalculation when tourist count changes
   // ---------------------------------------------------------------------------
-  const quote1Guest = await PricingEngineService.calculateQuote({
+  const quote1Guest = await quoteForTest({
     serviceType: 'TOUR',
     destinationId: createdDest.id,
     guestCount: 1,
     durationDays: 3,
   });
-  const quote3Guests = await PricingEngineService.calculateQuote({
+  const quote3Guests = await quoteForTest({
     serviceType: 'TOUR',
     destinationId: createdDest.id,
     guestCount: 3,
     durationDays: 3,
   });
-  const quote6Guests = await PricingEngineService.calculateQuote({
+  const quote6Guests = await quoteForTest({
     serviceType: 'TOUR',
     destinationId: createdDest.id,
     guestCount: 6,
@@ -337,19 +339,19 @@ async function runMasterVerification() {
   // ---------------------------------------------------------------------------
   // Scenario 15: Ride-Hailing distance-band calculation for 0–5 km, 5–15 km, and 15+ km
   // ---------------------------------------------------------------------------
-  const rideQuoteShort = await PricingEngineService.calculateQuote({
+  const rideQuoteShort = await quoteForTest({
     serviceType: 'RIDE',
     vehicleId: 'go', // economy baseFare: 4000, 0-5km band rate: 2200 => 4000 + 4*2200 = 12800
     distanceKm: 4.0,
     durationMinutes: 0,
   });
-  const rideQuoteMed = await PricingEngineService.calculateQuote({
+  const rideQuoteMed = await quoteForTest({
     serviceType: 'RIDE',
     vehicleId: 'go', // 5-15km band rate: 1900 => 4000 + 10*1900 = 23000
     distanceKm: 10.0,
     durationMinutes: 0,
   });
-  const rideQuoteLong = await PricingEngineService.calculateQuote({
+  const rideQuoteLong = await quoteForTest({
     serviceType: 'RIDE',
     vehicleId: 'go', // 15+km band rate: 1700 => 4000 + 20*1700 = 38000
     distanceKm: 20.0,
@@ -363,13 +365,13 @@ async function runMasterVerification() {
   // ---------------------------------------------------------------------------
   // Scenario 16: Different distance rates for different vehicle types
   // ---------------------------------------------------------------------------
-  const boda10km = await PricingEngineService.calculateQuote({
+  const boda10km = await quoteForTest({
     serviceType: 'RIDE',
     vehicleId: 'boda',
     distanceKm: 10.0,
     durationMinutes: 0,
   });
-  const comfort10km = await PricingEngineService.calculateQuote({
+  const comfort10km = await quoteForTest({
     serviceType: 'RIDE',
     vehicleId: 'comfort',
     distanceKm: 10.0,
@@ -381,14 +383,14 @@ async function runMasterVerification() {
   // ---------------------------------------------------------------------------
   // Scenario 17: Airport Shuttle pricing by vehicle and distance/route
   // ---------------------------------------------------------------------------
-  const shuttleComfort = await PricingEngineService.calculateQuote({
+  const shuttleComfort = await quoteForTest({
     serviceType: 'AIRPORT_SHUTTLE',
     vehicleId: 'comfort',
     routeCode: 'kampala_ebb',
     extraLuggageCount: 2,
     isRoundTrip: false,
   });
-  const shuttleVanRoundTrip = await PricingEngineService.calculateQuote({
+  const shuttleVanRoundTrip = await quoteForTest({
     serviceType: 'AIRPORT_SHUTTLE',
     vehicleId: 'tour_van',
     routeCode: 'kampala_ebb',
@@ -402,14 +404,14 @@ async function runMasterVerification() {
   // ---------------------------------------------------------------------------
   // Scenario 18: Express Delivery pricing by vehicle, distance, weight, and package category
   // ---------------------------------------------------------------------------
-  const delivDocsBoda = await PricingEngineService.calculateQuote({
+  const delivDocsBoda = await quoteForTest({
     serviceType: 'DELIVERY',
     vehicleId: 'boda',
     distanceKm: 4.0,
     packageCategory: 'DOCUMENTS',
     weightKg: 2.0,
   });
-  const delivCargoVan = await PricingEngineService.calculateQuote({
+  const delivCargoVan = await quoteForTest({
     serviceType: 'DELIVERY',
     vehicleId: 'delivery_van',
     distanceKm: 12.0,
@@ -444,7 +446,7 @@ async function runMasterVerification() {
   // ---------------------------------------------------------------------------
   // Scenario 20: Combined tour quotation with destination + tourists + vehicle + guide
   // ---------------------------------------------------------------------------
-  const combinedQuote = await PricingEngineService.calculateQuote({
+  const combinedQuote = await quoteForTest({
     serviceType: 'TOUR',
     destinationId: createdDest.id,
     guestCount: 3, // 2-4 tier = 1,100,000 * 3 = 3,300,000
@@ -518,12 +520,12 @@ async function runMasterVerification() {
     quotationId: rideQuoteMed.quotationId,
     pickupTitle: 'Kampala Serena',
     pickupAddress: 'Kintu Rd',
-    pickupLat: 0.3136,
-    pickupLng: 32.5811,
+    pickupLat: 0,
+    pickupLng: 0,
     destTitle: 'Acacia Mall',
     destAddress: 'Kisementi',
-    destLat: 0.3350,
-    destLng: 32.5850,
+    destLat: 0,
+    destLng: localStore.price_quotations.get(rideQuoteMed.quotationId).request_params.destLng,
     vehicleTier: 'go',
     distanceKm: 10.0,
     paymentMethod: 'MTN_MOMO',
@@ -537,11 +539,11 @@ async function runMasterVerification() {
     recipientName: 'Mary',
     recipientPhone: '+256700111222',
     pickupAddress: 'Kampala',
-    pickupLat: 0.3136,
-    pickupLng: 32.5811,
+    pickupLat: 0,
+    pickupLng: 0,
     dropoffAddress: 'Ntinda',
-    dropoffLat: 0.3580,
-    dropoffLng: 32.6100,
+    dropoffLat: 0,
+    dropoffLng: localStore.price_quotations.get(delivDocsBoda.quotationId).request_params.destLng,
     packageCategory: 'DOCUMENTS',
     packageWeightKg: 2.0,
     packageDescription: 'Contract',
@@ -554,7 +556,7 @@ async function runMasterVerification() {
   // ---------------------------------------------------------------------------
   // Scenario 24: Mobile app reflecting admin changes without rebuilding the app
   // ---------------------------------------------------------------------------
-  const newQuoteAfterAdminChange = await PricingEngineService.calculateQuote({
+  const newQuoteAfterAdminChange = await quoteForTest({
     serviceType: 'TOUR',
     destinationId: createdDest.id,
     guestCount: 3,

@@ -380,9 +380,21 @@ export class LedgerService {
 
       // 2. Update balance projections in PostgreSQL transaction and stage memory updates
       const stagedProjections = new Map<string, AccountBalanceProjection>();
+      let replayed: LedgerTransactionRecord | undefined;
 
       await db.withTransaction(async (client) => {
+        stagedProjections.clear();
+        replayed = undefined;
         if (client) {
+          for (const key of [`event:${eventId}`, ...(idempotencyKey ? [`idem:${idempotencyKey}`] : [])].sort()) {
+            await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [key]);
+          }
+          const prior = await client.query('SELECT * FROM ledger_transactions WHERE event_id = $1 OR idempotency_key = $2', [eventId, idempotencyKey || null]);
+          if (prior.rows.length) {
+            const row = prior.rows[0];
+            replayed = { ...row, entries: (await client.query('SELECT * FROM ledger_entries WHERE transaction_id = $1', [row.id])).rows };
+            return;
+          }
           await client.query(
             `INSERT INTO ledger_transactions (
                id, event_id, idempotency_key, transaction_type, reference_type, reference_id,
@@ -423,6 +435,8 @@ export class LedgerService {
           let existingId: string | null = null;
 
           if (client) {
+            // Transaction-scoped advisory lock also serializes an account with no row yet.
+            await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [projKey]);
             // Lock row in PostgreSQL for authoritative serialization across nodes
             const lockRes = await client.query(
               `SELECT id, debit_total_ugx, credit_total_ugx, net_balance_ugx, version
@@ -456,7 +470,7 @@ export class LedgerService {
             ve.account.normal_balance === 'DEBIT' ? newDebit - newCredit : newCredit - newDebit;
 
           // Enforce non-negative constraint on liability / wallet accounts
-          if (['2001', '2002', '2003'].includes(ve.account.account_code) && netBig < 0n) {
+          if (['2010_CUSTOMER_WALLET_LIABILITY', '2020_BOOKING_ESCROW_LIABILITY', '2030_DRIVER_PAYABLE', '2040_GUIDE_PAYABLE', '2050_DEVELOPER_COMMISSION_PAYABLE', '2060_PAYOUT_RESERVE_LIABILITY'].includes(ve.account.account_code) && netBig < 0n) {
             throw new Error(`Insufficient balance: resulting balance for account ${ve.account.account_code} (${ve.ownerId}) cannot be negative (${netBig} UGX).`);
           }
 
@@ -541,6 +555,8 @@ export class LedgerService {
           }
         }
       });
+
+      if (replayed) return replayed;
 
       // 3. Atomically commit staged projections to memory store only after database transaction commit
       for (const [k, v] of stagedProjections.entries()) {

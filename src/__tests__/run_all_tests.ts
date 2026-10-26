@@ -27,20 +27,24 @@ for (const sf of seedFiles) {
 
 // Pass an explicit test environment stripped of production credentials
 const baseTestEnv: NodeJS.ProcessEnv = {
-  ...process.env,
+  PATH: process.env.PATH,
+  HOME: process.env.HOME,
+  TMPDIR: process.env.TMPDIR,
   NODE_ENV: 'test',
   SAFARIS_TEST_DATA_DIR: testDataDir,
   DISABLE_DATABASE: 'true',
-  JWT_SECRET: process.env.JWT_SECRET || 'test_jwt_secret_safaris_super_secure_32chars_min',
-  REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET || 'test_refresh_token_secret_safaris_32ch',
-  CONFIG_ENCRYPTION_SECRET: process.env.CONFIG_ENCRYPTION_SECRET || 'safaris_config_encryption_key_2026_uganda_32b',
+  JWT_SECRET: 'test_jwt_secret_safaris_super_secure_32chars_min',
+  REFRESH_TOKEN_SECRET: 'test_refresh_token_secret_safaris_32ch',
+  CONFIG_ENCRYPTION_SECRET: 'safaris_config_encryption_key_2026_uganda_32b',
   DPO_ENVIRONMENT: 'sandbox',
-  DPO_SANDBOX_COMPANY_TOKEN: process.env.DPO_SANDBOX_COMPANY_TOKEN || 'B3F59BE7-0756-420E-BB88-1D98E7A6B040',
-  DPO_SANDBOX_SERVICE_TYPE_ID: process.env.DPO_SANDBOX_SERVICE_TYPE_ID || '54841',
+  DPO_SANDBOX_COMPANY_TOKEN: 'B3F59BE7-0756-420E-BB88-1D98E7A6B040',
+  DPO_SANDBOX_SERVICE_TYPE_ID: '54841',
   PORT: '0',
+  CLOUDFLARE_R2_PRIVATE_BUCKET_NAME: 'safaris-private-test',
 };
 
 const testSuites = [
+  { name: 'HTTP, WebSocket, SSE and transaction security boundaries', file: 'security_boundaries.test.ts' },
   {
     name: 'Security Audit & Hardening Regression Suite (19 Scenarios)',
     file: 'security_audit_hardening.test.ts',

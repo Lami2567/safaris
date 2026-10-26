@@ -1,3 +1,4 @@
+import { commitBooking } from '../pricing/booking_commit';
 import { v4 as uuidv4 } from 'uuid';
 import { db, localStore } from '../../config/database';
 import {
@@ -96,7 +97,7 @@ export class TripService {
     return estimates;
   }
 
-  public static createTrip(data: CreateTripRequest) {
+  public static async createTrip(data: CreateTripRequest) {
     const tripId = `trp_${uuidv4().substring(0, 8)}`;
     const tierKey = (data.vehicleId || data.vehicleTier || 'go').toLowerCase();
     const serviceCategory = data.serviceType === 'AIRPORT_SHUTTLE' ? 'AIRPORT_SHUTTLE' : 'RIDE';
@@ -125,7 +126,7 @@ export class TripService {
 
     // Check and atomically validate/consume quotation if supplied
     if (quotationId) {
-      const existingQuote = PricingEngineService.validateAndConsumeQuotation({
+      const existingQuote = PricingEngineService.validateQuotation({
         quotationId,
         expectedServiceType: serviceCategory,
         customerId: data.customerId,
@@ -213,10 +214,10 @@ export class TripService {
       updated_at: nowIso,
     };
 
-    localStore.trips.set(tripId, newTrip);
-    db.persistTrip(newTrip).catch((err) =>
-      console.error('[TripService.createTrip persist error]', err)
-    );
+    await commitBooking('trips', newTrip, quotationId, storedQuote => PricingEngineService.validateQuotation({
+      quotationId: quotationId!, expectedServiceType: serviceCategory, customerId: data.customerId,
+      vehicleId: data.vehicleId || data.vehicleTier, pickupLat, pickupLng, destLat, destLng, storedQuote
+    }));
 
     // Find drivers who already have an active trip so we don't dispatch to busy drivers
     const busyDriverIds = new Set<string>();

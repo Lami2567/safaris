@@ -42,13 +42,18 @@ export class CareerService {
 
     const cleanEmail = data.email.trim().toLowerCase();
     const cleanPhone = normalizeUgandaPhone(data.phone.trim());
+    if (db.isPostgresConnected) {
+      const existing = await db.query('SELECT id FROM users WHERE LOWER(email) = $1 OR phone = $2', [cleanEmail, cleanPhone]);
+      if (existing.rows.length) throw new Error('An account with this email or phone already exists. Please sign in or contact support.');
+    }
     const applicationId = `app_${uuidv4().substring(0, 8)}`;
 
     // Normalize any base64 documents into Cloudflare R2 URLs if R2 is configured
     const normalizedDocs: Record<string, string> = {};
+    if (JSON.stringify(data.documents || {}).length > 28 * 1024 * 1024) throw new Error('Recruitment attachments exceed 20 MiB combined limit.');
     if (data.documents && typeof data.documents === 'object') {
       for (const [docKey, docVal] of Object.entries(data.documents)) {
-        if (typeof docVal === 'string' && docVal.startsWith('data:') && StorageService.isConfigured()) {
+        if (typeof docVal === 'string' && docVal.startsWith('data:')) {
           try {
             const mimeMatch = docVal.match(/^data:([^;]+);base64,/);
             const fileType = mimeMatch ? mimeMatch[1] : 'application/pdf';
@@ -59,13 +64,13 @@ export class CareerService {
               folder: 'careers',
               base64Data: docVal,
             });
-            normalizedDocs[docKey] = uploaded.publicUrl;
+            normalizedDocs[docKey] = uploaded.key;
           } catch (err) {
             console.warn(`[CareerService] Fallback storing raw document for ${docKey}:`, err);
-            normalizedDocs[docKey] = docVal;
+            throw new Error('Recruitment document upload failed. Please submit a valid supported file.');
           }
-        } else if (typeof docVal === 'string') {
-          normalizedDocs[docKey] = docVal;
+        } else if (docVal) {
+          throw new Error('Submit document bytes, not an external URL or an existing object key.');
         }
       }
     }
@@ -85,12 +90,11 @@ export class CareerService {
     let userId = `usr_${applicantType === 'driver' ? 'drv' : 'gd'}_${uuidv4().substring(0, 8)}`;
     for (const u of localStore.users.values()) {
       if (u.email?.toLowerCase() === cleanEmail || u.phone === cleanPhone) {
-        userId = u.id;
-        break;
+        throw new Error('An account with this email or phone already exists. Please sign in or contact support.');
       }
     }
 
-    const defaultPasswordHash = await bcrypt.hash('SafariUganda2026!', 10);
+    const defaultPasswordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
     const user = {
       id: userId,
       full_name: data.full_name.trim(),

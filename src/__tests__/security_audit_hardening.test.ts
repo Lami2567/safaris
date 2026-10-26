@@ -1,3 +1,4 @@
+import { quoteForTest } from './quotation_fixture';
 import assert from 'assert';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
@@ -442,7 +443,7 @@ async function runSecurityAuditHardeningTestSuite() {
   // 12. Quotation Binding & Atomic Single-Use Consumption
   // ---------------------------------------------------------------------------
   const quoteCustId = `usr_quote_cust_${Date.now()}`;
-  const quote1 = await PricingEngineService.calculateQuote({
+  const quote1 = await quoteForTest({
     customerId: quoteCustId,
     serviceType: 'RIDE',
     distanceKm: 15,
@@ -467,6 +468,7 @@ async function runSecurityAuditHardeningTestSuite() {
     quotationId: quote1.quotationId,
     expectedServiceType: 'RIDE' as any,
     customerId: quoteCustId,
+    ...localStore.price_quotations.get(quote1.quotationId).request_params,
   });
   assert(consumedQuote.consumed === true, 'Quotation must be marked consumed');
 

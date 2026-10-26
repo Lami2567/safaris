@@ -14,7 +14,7 @@ export class TripController {
     }
   }
 
-  public static createTrip(req: AuthenticatedRequest, res: Response) {
+  public static async createTrip(req: AuthenticatedRequest, res: Response) {
     try {
       const customerId = req.user!.userId;
       const {
@@ -35,7 +35,7 @@ export class TripController {
         paymentMethod,
       } = req.body || {};
 
-      const trip = TripService.createTrip({
+      const trip = await TripService.createTrip({
         customerId,
         pickupTitle: String(pickupTitle || 'Kampala Pickup'),
         pickupAddress: String(pickupAddress || pickupTitle || 'Kampala'),

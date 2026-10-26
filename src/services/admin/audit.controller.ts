@@ -1,3 +1,4 @@
+import { validateAuthSession } from '../../gateway/auth_middleware';
 import { Request, Response } from 'express';
 import { db, localStore } from '../../config/database';
 import { sendSuccess, sendError } from '../../shared/response';
@@ -227,15 +228,23 @@ export class AdminAuditController {
       })}\n\n`
     );
 
-    const heartbeat = setInterval(() => {
+    let validating = false;
+    const expiryTimer = setTimeout(() => res.end(), Math.min(2147483647, Math.max(1, Number((req as any).user?.exp) * 1000 - Date.now())));
+    const heartbeat = setInterval(async () => {
+      if (validating) return;
+      validating = true;
+      const session = await validateAuthSession(res.locals.accessToken);
+      validating = false;
+      if (!session.valid) { res.end(); return; }
       try {
         res.write(`: heartbeat ${Date.now()}\n\n`);
       } catch (_) {
         clearInterval(heartbeat);
       }
-    }, 15000);
+    }, 1000);
 
-    req.on('close', () => {
+    res.on('close', () => {
+      clearTimeout(expiryTimer);
       clearInterval(heartbeat);
       unsubscribe();
     });
@@ -278,15 +287,23 @@ export class AdminAuditController {
       })}\n\n`
     );
 
-    const heartbeat = setInterval(() => {
+    let validating = false;
+    const expiryTimer = setTimeout(() => res.end(), Math.min(2147483647, Math.max(1, Number((req as any).user?.exp) * 1000 - Date.now())));
+    const heartbeat = setInterval(async () => {
+      if (validating) return;
+      validating = true;
+      const session = await validateAuthSession(res.locals.accessToken);
+      validating = false;
+      if (!session.valid) { res.end(); return; }
       try {
         res.write(`: heartbeat ${Date.now()}\n\n`);
       } catch (_) {
         clearInterval(heartbeat);
       }
-    }, 15000);
+    }, 1000);
 
-    req.on('close', () => {
+    res.on('close', () => {
+      clearTimeout(expiryTimer);
       clearInterval(heartbeat);
       unsubUser();
       unsubAll();
