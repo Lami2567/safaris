@@ -85,14 +85,20 @@ jobs:
             -H "X-Hub-Signature-256: $SIGNATURE" \
             -H "X-GitHub-Event: push" \
             -d "$PAYLOAD" --max-time 45
-          for attempt in $(seq 1 90); do
-            STATUS=$(curl -fsS --max-time 10 https://admin.mumwesafarisuganda.com/webhook)
-            if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.last_deployed_commit == $sha and .last_deploy_status == "success" and .is_deploying == false' >/dev/null; then
+          for attempt in $(seq 1 120); do
+            STATUS=$(curl -fsS --max-time 10 https://admin.mumwesafarisuganda.com/webhook 2>/dev/null || echo "{}")
+            if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.last_deployed_commit == $sha and .last_deploy_status == "success" and .is_deploying == false' >/dev/null 2>&1; then
+              echo "✅ Deployment verified: commit $COMMIT_SHA is active on VPS."
               exit 0
             fi
-            if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.target_commit == $sha and (.last_deploy_status | startswith("failed"))' >/dev/null; then
-              echo "::error::Server deployment failed"; exit 1
+            if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.target_commit == $sha and (.last_deploy_status | startswith("failed"))' >/dev/null 2>&1; then
+              echo "::error::Server deployment failed: $(echo "$STATUS" | jq -r .last_deploy_status 2>/dev/null)"
+              exit 1
+            fi
+            if [ $((attempt % 6)) -eq 0 ]; then
+              echo "Waiting for deployment to complete... (Attempt $attempt/120)"
             fi
             sleep 10
           done
-          echo "::error::Timed out waiting for exact deployed commit"; exit 1
+          echo "::error::Timed out waiting for exact deployed commit"
+          exit 1

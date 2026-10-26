@@ -71,6 +71,7 @@ TARGET_COMMIT="${1:-}"
 if [[ ! "$TARGET_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
   echo "A full tested commit SHA is required."; exit 1
 fi
+CURRENT_RUNNING_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 git diff --quiet && git diff --cached --quiet || { echo "Working tree contains local changes; refusing deployment."; exit 1; }
 git fetch origin main
 git merge-base --is-ancestor "$TARGET_COMMIT" origin/main || { echo "Commit is not on main."; exit 1; }
@@ -81,7 +82,16 @@ export SAFARIS_RELEASE_SHA="$DEPLOYED_SHA"
 
 # 4. Build Docker Production Images
 echo "🔨 Building Docker production containers..."
-docker compose -f docker-compose.prod.yml --env-file .env.production build
+# Always build backend container for the new commit
+docker compose -f docker-compose.prod.yml --env-file .env.production build backend
+
+# Rebuild admin dashboard only if admin/ files changed or image is missing
+if [ -z "$CURRENT_RUNNING_SHA" ] || ! docker image inspect safaris-admin >/dev/null 2>&1 || ! git diff --quiet "$CURRENT_RUNNING_SHA" "$TARGET_COMMIT" -- admin/ 2>/dev/null; then
+  echo "🔨 Building admin dashboard image..."
+  docker compose -f docker-compose.prod.yml --env-file .env.production build admin
+else
+  echo "⏩ Skipping admin dashboard build (no changes in admin/)..."
+fi
 
 # Migrate while the previous backend is still running; all migrations must be additive.
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backend node dist/database/migrate.js
