@@ -45,7 +45,8 @@ class ProxySecurityTests(unittest.TestCase):
                 sock.bind(('127.0.0.1', 0))
                 return sock.getsockname()[1]
         http_port, https_port = port(), port()
-        with tempfile.TemporaryDirectory(prefix='safaris-nginx-test-') as tmp:
+        binary = os.environ.get('NGINX_TEST_BINARY')
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True, prefix='safaris-nginx-test-') as tmp:
             directory = Path(tmp)
             cert = directory / 'fullchain.pem'
             key = directory / 'privkey.pem'
@@ -60,14 +61,21 @@ class ProxySecurityTests(unittest.TestCase):
                 config = config.replace(f'/etc/letsencrypt/live/{domain}/privkey.pem', str(key))
             config = config.replace('listen 80', f'listen {http_port}').replace('listen 443', f'listen {https_port}')
             # Older local Nginx binaries use the equivalent listen directive syntax.
-            if os.environ.get('NGINX_TEST_BINARY'):
+            if binary:
                 config = config.replace('ssl;', 'ssl http2;').replace('ssl default_server;', 'ssl http2 default_server;').replace('    http2 on;\n', '')
             config = config.replace('backend:3000', f'127.0.0.1:{upstream.server_port}')
             config = config.replace('admin:3001', f'127.0.0.1:{upstream.server_port}')
             config = config.replace('host.docker.internal:9000', f'127.0.0.1:{upstream.server_port}')
             realip = (ROOT / 'nginx/conf.d/00-cloudflare-realip.conf').read_text()
+            temp_paths = (
+                f'client_body_temp_path {tmp}/body;\nproxy_temp_path {tmp}/proxy;\n'
+                f'fastcgi_temp_path {tmp}/fastcgi;\nuwsgi_temp_path {tmp}/uwsgi;\nscgi_temp_path {tmp}/scgi;\n'
+                if binary else
+                'client_body_temp_path /tmp/nginx_body;\nproxy_temp_path /tmp/nginx_proxy;\n'
+                'fastcgi_temp_path /tmp/nginx_fastcgi;\nuwsgi_temp_path /tmp/nginx_uwsgi;\nscgi_temp_path /tmp/nginx_scgi;\n'
+            )
             configuration = directory / 'nginx.conf'
-            configuration.write_text(f'user root;\nmaster_process off;\nworker_processes 1;\npid {tmp}/nginx.pid;\nerror_log stderr;\nevents {{ worker_connections 128; }}\nhttp {{\nclient_body_temp_path {tmp}/body;\nproxy_temp_path {tmp}/proxy;\nfastcgi_temp_path {tmp}/fastcgi;\nuwsgi_temp_path {tmp}/uwsgi;\nscgi_temp_path {tmp}/scgi;\naccess_log off;\n{realip}\n{config}\n}}\n')
+            configuration.write_text(f'user root;\nmaster_process off;\nworker_processes 1;\npid {tmp}/nginx.pid;\nerror_log stderr;\nevents {{ worker_connections 128; }}\nhttp {{\n{temp_paths}access_log off;\n{realip}\n{config}\n}}\n')
             binary = os.environ.get('NGINX_TEST_BINARY')
             if binary:
                 command = [binary, '-p', tmp + '/', '-c', str(configuration), '-g', 'daemon off;']
@@ -126,6 +134,11 @@ class ProxySecurityTests(unittest.TestCase):
                 except subprocess.TimeoutExpired:
                     process.kill(); process.communicate()
                 upstream.shutdown(); upstream.server_close()
+                if not binary and shutil.which('docker'):
+                    try:
+                        subprocess.run(['docker', 'run', '--rm', '-v', f'{tmp}:/mnt', 'nginx:1.25-alpine', 'sh', '-c', 'rm -rf /mnt/*'], check=False, capture_output=True)
+                    except Exception:
+                        pass
 
 
 if __name__ == '__main__':
