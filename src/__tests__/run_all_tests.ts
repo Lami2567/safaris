@@ -44,6 +44,7 @@ const baseTestEnv: NodeJS.ProcessEnv = {
 };
 
 const testSuites = [
+  { name: 'Remaining authentication, privacy and proxy regressions', file: 'remaining_security.test.ts' },
   { name: 'HTTP, WebSocket, SSE and transaction security boundaries', file: 'security_boundaries.test.ts' },
   {
     name: 'Security Audit & Hardening Regression Suite (19 Scenarios)',

@@ -61,6 +61,11 @@ jobs:
       - name: Python deployment handler regression tests
         run: python3 -m unittest discover -s scripts -p 'test_autodeploy.py'
 
+      - name: HTTPS, proxy identity, WebSocket and SSE regression tests
+        run: |
+          bash -n scripts/deploy.sh
+          python3 scripts/test_nginx_security.py
+
       - name: Trigger Authenticated VPS Continuous Deployment
         if: success() && github.ref == 'refs/heads/main'
         env:

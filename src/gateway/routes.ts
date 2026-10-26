@@ -60,7 +60,9 @@ apiRouter.get('/pricing/quote/:quotationId', authenticate, PricingEngineControll
 // Careers Portal Integration (careers.mumwesafarisuganda.com)
 // -------------------------------------------------------------
 apiRouter.post('/careers/apply', CareerController.apply);
-apiRouter.get('/careers/status', CareerController.checkStatus);
+apiRouter.get('/careers/status', (_req, res) => res.status(403).json({ success: false, error: { message: 'Request a private status link using your registered email.' } }));
+apiRouter.post('/careers/status-link', CareerController.requestStatusLink);
+apiRouter.post('/careers/status', CareerController.checkStatus);
 
 // -------------------------------------------------------------
 // App Master Remote Config & Dynamic Controls

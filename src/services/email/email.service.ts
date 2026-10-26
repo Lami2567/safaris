@@ -9,6 +9,15 @@ try {
 import { ENV } from '../../config/env';
 
 export class EmailService {
+  public static async sendApplicationStatusLink(email: string, url: string): Promise<boolean> {
+    const transporter = this.getTransporter();
+    if (!transporter) return false; // Never print a bearer capability to logs.
+    await transporter.sendMail({ from: ENV.SMTP_FROM || ENV.SMTP_USER, to: email,
+      subject: 'Your private SAFARIS application status link',
+      text: `View your application status: ${url}\nThis private link expires in 24 hours. Requesting a new link revokes the previous link. Do not share it.` });
+    return true;
+  }
+
   private static transporter: any = null;
 
   private static getTransporter(): any {

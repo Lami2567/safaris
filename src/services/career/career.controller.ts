@@ -90,14 +90,19 @@ export class CareerController {
    * Candidate: Check application status
    * GET /api/v1/careers/status?query=...
    */
+  public static async requestStatusLink(req: Request, res: Response) {
+    // Same response for unknown addresses, delivery failures and existing applications.
+    const email = req.body?.email;
+    setImmediate(() => {
+      CareerService.requestStatusLink(email).catch(() => console.warn('[Careers] Status link delivery unavailable.'));
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    return sendSuccess(res, { message: 'If an application matches this email, a private status link will be sent. Check your inbox.' });
+  }
+
   public static async checkStatus(req: Request, res: Response) {
-    try {
-      const query = (req.query.query || req.query.id || req.query.email || req.query.phone) as string;
-      const result = await CareerService.getApplicationStatus(query);
-      return sendSuccess(res, result);
-    } catch (err: any) {
-      console.error('[CareerController.checkStatus error]', err);
-      return sendError(res, 'STATUS_CHECK_FAILED', err.message || 'Application not found', 404);
-    }
+    res.setHeader('Cache-Control', 'no-store');
+    try { return sendSuccess(res, await CareerService.getApplicationStatus(req.body?.statusToken)); }
+    catch { return sendError(res, 'STATUS_UNAVAILABLE', 'Status link is invalid or expired.', 404); }
   }
 }

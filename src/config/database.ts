@@ -819,13 +819,59 @@ class DatabaseManager {
     return null;
   }
 
+  public async findUserByLogin(identifier: string): Promise<any | null> {
+    const value = identifier.trim().toLowerCase();
+    const { getUgandaPhoneVariants } = await import('../shared/phone');
+    const phones = value.includes('@') ? [] : getUgandaPhoneVariants(identifier);
+    if (this.isPostgresConnected) {
+      const result = await this.query('SELECT * FROM users WHERE LOWER(email) = $1 OR phone = ANY($2::text[]) LIMIT 1', [value, phones]);
+      return result.rows[0] || null;
+    }
+    if (process.env.NODE_ENV !== 'test') throw new Error('Authoritative user storage unavailable.');
+    return Array.from(localStore.users.values()).find(u => u.email?.toLowerCase() === value || phones.includes(u.phone)) || null;
+  }
+
+  /** Security mutations are narrow and serialized against the current database row. */
+  public async updateUserSecurity(id: string, changes: { role?: string; approval_status?: string; is_verified?: boolean; password_hash?: string }, revoke = true, expectedPasswordHash?: string): Promise<any> {
+    if (process.env.NODE_ENV !== 'test' && !this.isPostgresConnected) throw new Error('Authoritative user storage unavailable.');
+    const keys = ['role', 'approval_status', 'is_verified', 'password_hash'].filter(k => (changes as any)[k] !== undefined);
+    let updated: any;
+    await this.withTransaction(async client => {
+      const current = client ? (await client.query('SELECT * FROM users WHERE id = $1 FOR UPDATE', [id])).rows[0] : localStore.users.get(id);
+      if (!current || (expectedPasswordHash && current.password_hash !== expectedPasswordHash)) throw new Error('User security state changed. Please retry.');
+      if (!client) updated = { ...current, ...changes, ...(changes.password_hash ? { password_changed_at: new Date().toISOString() } : {}), token_version: Number(current.token_version ?? 1) + (revoke ? 1 : 0) };
+      else {
+        const values = keys.map(k => (changes as any)[k]);
+        const assignments = keys.map((k, i) => `${k} = $${i + 2}`);
+        if (changes.password_hash) assignments.push('password_changed_at = CURRENT_TIMESTAMP');
+        assignments.push(`token_version = COALESCE(token_version, 1) + ${revoke ? 1 : 0}`, 'updated_at = CURRENT_TIMESTAMP');
+        updated = (await client.query(`UPDATE users SET ${assignments.join(', ')} WHERE id = $1 RETURNING *`, [id, ...values])).rows[0];
+      }
+    });
+    localStore.users.set(id, updated); this.saveUsersToDisk(); return updated;
+  }
+
+  public async updateUserProfile(id: string, changes: Record<string, any>): Promise<any> {
+    const keys = ['full_name', 'email', 'phone', 'avatar_url'].filter(k => changes[k] !== undefined);
+    let updated: any;
+    if (process.env.NODE_ENV !== 'test' && !this.isPostgresConnected) throw new Error('Authoritative user storage unavailable.');
+    if (this.isPostgresConnected && keys.length) {
+      updated = (await this.query(`UPDATE users SET ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING *`, [id, ...keys.map(k => changes[k])])).rows[0];
+    } else {
+      const current = await this.getUserById(id);
+      updated = current && { ...current, ...Object.fromEntries(keys.map(k => [k, changes[k]])) };
+    }
+    if (!updated) throw new Error('User not found.');
+    localStore.users.set(id, updated); this.saveUsersToDisk(); return updated;
+  }
+
   public async persistUser(user: any): Promise<void> {
     if (process.env.NODE_ENV === 'production' && !this.isPostgresConnected) throw new Error('Durable user storage required.');
 
     // 2. Persist to PostgreSQL if connected
     if (this.isPostgresConnected && this.pool) {
       try {
-        await this.pool.query(
+        const persisted = await this.pool.query(
           `INSERT INTO users (
              id, full_name, phone, email, password_hash, role, avatar_url,
              rating, total_trips, wallet_balance_ugx, is_verified, approval_status, application_id, token_version, created_at, updated_at
@@ -834,17 +880,11 @@ class DatabaseManager {
              full_name = EXCLUDED.full_name,
              phone = EXCLUDED.phone,
              email = EXCLUDED.email,
-             password_hash = EXCLUDED.password_hash,
-             role = EXCLUDED.role,
              avatar_url = EXCLUDED.avatar_url,
              rating = EXCLUDED.rating,
              total_trips = EXCLUDED.total_trips,
              wallet_balance_ugx = EXCLUDED.wallet_balance_ugx,
-             is_verified = EXCLUDED.is_verified,
-             approval_status = EXCLUDED.approval_status,
-             application_id = EXCLUDED.application_id,
-             token_version = EXCLUDED.token_version,
-             updated_at = CURRENT_TIMESTAMP`,
+             updated_at = CURRENT_TIMESTAMP RETURNING *`,
           [
             user.id,
             user.full_name,
@@ -863,6 +903,7 @@ class DatabaseManager {
             user.created_at || new Date().toISOString(),
           ]
         );
+        user = { ...user, ...persisted.rows[0] };
       } catch (err) {
         throw err;
       }

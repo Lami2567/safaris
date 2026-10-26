@@ -36,15 +36,10 @@ export class NotificationController {
       }
 
       const notifId = req.params.id;
-      const existing = (await import('../../config/database')).localStore.notifications.get(notifId);
-      if (existing && existing.user_id !== callerId && callerRole !== 'admin') {
-        return sendError(res, 'FORBIDDEN', 'Cannot modify another user notification.', 403);
-      }
-
-      const updated = await NotificationService.markAsRead(notifId);
+      const updated = await NotificationService.markAsRead(notifId, callerId, callerRole === 'admin');
       return sendSuccess(res, updated);
     } catch (err: any) {
-      return sendError(res, 'MARK_READ_FAILED', err.message, 400);
+      return sendError(res, 'MARK_READ_FAILED', 'Notification unavailable.', err.message === 'Notification unavailable.' ? 404 : 503);
     }
   }
 
@@ -101,15 +96,10 @@ export class NotificationController {
       }
 
       const notifId = req.params.id;
-      const existing = (await import('../../config/database')).localStore.notifications.get(notifId);
-      if (existing && existing.user_id !== callerId && callerRole !== 'admin') {
-        return sendError(res, 'FORBIDDEN', 'Cannot delete another user notification.', 403);
-      }
-
-      const result = await NotificationService.deleteNotificationById(notifId);
+      const result = await NotificationService.deleteNotificationById(notifId, callerId, callerRole === 'admin');
       return sendSuccess(res, result);
     } catch (err: any) {
-      return sendError(res, 'DELETE_NOTIFICATION_FAILED', err.message, 400);
+      return sendError(res, 'DELETE_NOTIFICATION_FAILED', 'Notification unavailable.', err.message === 'Notification unavailable.' ? 404 : 503);
     }
   }
 

@@ -200,56 +200,23 @@ export class AuthService {
       throw new Error('Invalid verification code. Please check your email and try again.');
     }
 
-    // OTP Valid -> Find user in localStore or PostgreSQL
-    let foundUser: any = null;
-    for (const user of localStore.users.values()) {
-      if (user.email && user.email.toLowerCase() === cleanEmail) {
-        foundUser = user;
-        break;
-      }
-    }
-
-    if (!foundUser && db.isPostgresConnected) {
-      try {
-        const res = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [cleanEmail]);
-        if (res && res.rows && res.rows.length > 0) {
-          const row = res.rows[0];
-          foundUser = {
-            id: row.id,
-            full_name: row.full_name,
-            phone: row.phone,
-            email: row.email,
-            password_hash: row.password_hash,
-            role: row.role || 'customer',
-            avatar_url: row.avatar_url || '',
-            rating: parseFloat(row.rating || '5.0'),
-            total_trips: parseInt(row.total_trips || '0', 10),
-            wallet_balance_ugx: parseFloat(row.wallet_balance_ugx || '0'),
-            is_verified: row.is_verified === true,
-            created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
-          };
-        }
-      } catch (err) {
-        console.warn('[AuthService.verifyEmailOtp] DB error:', err);
-      }
-    }
+    const foundUser = await db.findUserByLogin(cleanEmail);
 
     if (!foundUser) {
       throw new Error('User account not found.');
     }
 
-    // Update verified status permanently
-    foundUser.is_verified = true;
-    await db.persistUser(foundUser);
+    if (foundUser.approval_status && foundUser.approval_status !== 'APPROVED') throw new Error('Account is not approved.');
+    const verifiedUser = await db.updateUserSecurity(foundUser.id, { is_verified: true }, false);
 
     this.emailOtpStore.delete(cleanEmail);
     this.saveOtps();
 
     console.log(`✅ [AuthService] Account verified and activated permanently in database: ${foundUser.full_name} (${cleanEmail})`);
 
-    const tokens = this.generateTokens(foundUser);
+    const tokens = this.generateTokens(verifiedUser);
     return {
-      user: this.sanitizeUser(foundUser),
+      user: this.sanitizeUser(verifiedUser),
       ...tokens,
       message: 'Email successfully verified. Welcome to SAFARIS Uganda!',
     };
@@ -263,37 +230,7 @@ export class AuthService {
 
     const cleanEmail = email.toLowerCase().trim();
 
-    let foundUser: any = null;
-    for (const user of localStore.users.values()) {
-      if (user.email && user.email.toLowerCase() === cleanEmail) {
-        foundUser = user;
-        break;
-      }
-    }
-
-    if (!foundUser && db.isPostgresConnected) {
-      try {
-        const res = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [cleanEmail]);
-        if (res && res.rows && res.rows.length > 0) {
-          const row = res.rows[0];
-          foundUser = {
-            id: row.id,
-            full_name: row.full_name,
-            phone: row.phone,
-            email: row.email,
-            password_hash: row.password_hash,
-            role: row.role || 'customer',
-            avatar_url: row.avatar_url || '',
-            rating: parseFloat(row.rating || '5.0'),
-            total_trips: parseInt(row.total_trips || '0', 10),
-            wallet_balance_ugx: parseFloat(row.wallet_balance_ugx || '0'),
-            is_verified: row.is_verified === true,
-            created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
-          };
-          localStore.users.set(foundUser.id, foundUser);
-        }
-      } catch (_) {}
-    }
+    const foundUser = await db.findUserByLogin(cleanEmail);
 
     if (!foundUser) {
       throw new Error('Account with this email not found.');
@@ -342,59 +279,13 @@ export class AuthService {
     const isEmail = cleanId.includes('@');
     const phoneVariants = !isEmail ? getUgandaPhoneVariants(cleanId) : [];
 
-    // 1. Search in localStore in-memory cache
-    for (const user of localStore.users.values()) {
-      if (isEmail && user.email && user.email.toLowerCase() === cleanId.toLowerCase()) {
-        foundUser = user;
-        break;
-      }
-      if (!isEmail) {
-        const userVariants = getUgandaPhoneVariants(user.phone || '');
-        if (phoneVariants.some(v => userVariants.includes(v))) {
-          foundUser = user;
-          break;
-        }
-      }
-    }
-
-    // 2. If not found in memory, query PostgreSQL table directly
-    if (!foundUser && db.isPostgresConnected) {
-      try {
-        let res: any;
-        if (isEmail) {
-          res = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [cleanId]);
-        } else {
-          res = await db.query('SELECT * FROM users WHERE phone = ANY($1::text[])', [phoneVariants]);
-        }
-
-        if (res && res.rows && res.rows.length > 0) {
-          const row = res.rows[0];
-          foundUser = {
-            id: row.id,
-            full_name: row.full_name,
-            phone: row.phone,
-            email: row.email,
-            password_hash: row.password_hash,
-            role: row.role || 'customer',
-            avatar_url: row.avatar_url || '',
-            rating: parseFloat(row.rating || '5.0'),
-            total_trips: parseInt(row.total_trips || '0', 10),
-            wallet_balance_ugx: parseFloat(row.wallet_balance_ugx || '0'),
-            is_verified: row.is_verified === true,
-            created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
-          };
-          // Cache and persist user to localStore & disk
-          await db.persistUser(foundUser);
-        }
-      } catch (err) {
-        console.warn('[AuthService.login] DB query notice:', err);
-      }
-    }
+    foundUser = await db.findUserByLogin(cleanId);
 
     if (!foundUser) {
       throw new Error('Account with this phone or email not found.');
     }
 
+    if (foundUser.approval_status && foundUser.approval_status !== 'APPROVED') throw new Error('Account is not approved.');
     const isMatch = await bcrypt.compare(password, foundUser.password_hash);
     if (!isMatch) {
       throw new Error('Invalid password.');
@@ -507,42 +398,7 @@ export class AuthService {
       throw new Error('Invalid OTP code. Please check your approval email and try again.');
     }
 
-    // Resolve user from localStore or PostgreSQL
-    let user: any = null;
-    for (const u of localStore.users.values()) {
-      if (u.email && u.email.toLowerCase() === cleanEmail) {
-        user = u;
-        break;
-      }
-    }
-
-    if (!user && db.isPostgresConnected) {
-      try {
-        const res = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [cleanEmail]);
-        if (res && res.rows && res.rows.length > 0) {
-          const row = res.rows[0];
-          user = {
-            id: row.id,
-            full_name: row.full_name,
-            phone: row.phone,
-            email: row.email,
-            password_hash: row.password_hash,
-            role: row.role || 'customer',
-            avatar_url: row.avatar_url || '',
-            rating: parseFloat(row.rating || '5.0'),
-            total_trips: parseInt(row.total_trips || '0', 10),
-            wallet_balance_ugx: parseFloat(row.wallet_balance_ugx || '0'),
-            is_verified: row.is_verified === true,
-            approval_status: row.approval_status || 'APPROVED',
-            application_id: row.application_id,
-            created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
-          };
-          localStore.users.set(user.id, user);
-        }
-      } catch (e) {
-        console.warn('[AuthService.loginWithOtp] DB error:', e);
-      }
-    }
+    let user = await db.findUserByLogin(cleanEmail);
 
     if (!user) {
       throw new Error('No registered account found matching this email.');
@@ -553,8 +409,7 @@ export class AuthService {
     }
 
     // User is verified upon OTP confirmation
-    user.is_verified = true;
-    await db.persistUser(user);
+    user = await db.updateUserSecurity(user.id, { is_verified: true }, false);
 
     // Generate temporary setup token for password initialization
     const setupToken = jwt.sign(

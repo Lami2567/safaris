@@ -27,6 +27,7 @@ export interface CareerApplicationData {
 }
 
 export class CareerService {
+  private static testStatusTokens = new Map<string, { applicationId: string; expiresAt: number }>();
   /**
    * Submit an application from careers.mumwesafarisuganda.com
    */
@@ -210,6 +211,7 @@ export class CareerService {
     };
 
     await db.persistCareerApplication(application);
+    await this.requestStatusLink(cleanEmail).catch(() => console.warn('[Careers] Status link delivery unavailable.'));
 
     return {
       success: true,
@@ -299,7 +301,7 @@ export class CareerService {
       if (user) {
         user.approval_status = 'APPROVED';
         user.is_verified = true;
-        await db.persistUser(user);
+        await db.updateUserSecurity(user.id, { approval_status: user.approval_status, is_verified: user.is_verified });
       }
 
       // 2. Update driver if driver (or reconstruct if missing)
@@ -467,7 +469,7 @@ export class CareerService {
       const user = localStore.users.get(userId);
       if (user) {
         user.approval_status = 'REJECTED';
-        await db.persistUser(user);
+        await db.updateUserSecurity(user.id, { approval_status: user.approval_status, is_verified: user.is_verified });
       }
 
       if (app.applicant_type === 'driver') {
@@ -527,8 +529,8 @@ export class CareerService {
     const user = localStore.users.get(userId);
     if (!user) throw new Error(`User account ${userId} not found.`);
 
-    user.approval_status = 'SUSPENDED';
-    await db.persistUser(user);
+    const secured = await db.updateUserSecurity(userId, { approval_status: 'SUSPENDED' });
+    Object.assign(user, secured);
 
     const driver = localStore.drivers.get(userId);
     if (driver) {
@@ -579,56 +581,42 @@ export class CareerService {
   /**
    * Check status of an application by ID, email, or phone
    */
-  public static async getApplicationStatus(query: string): Promise<any> {
-    if (!query || !query.trim()) {
-      throw new Error('Please provide an Application ID, email, or phone number to check status.');
-    }
-    const cleanQuery = query.trim().toLowerCase();
-    const cleanPhone = normalizeUgandaPhone(query.trim());
-
-    for (const app of localStore.career_applications.values()) {
-      if (
-        app.id.toLowerCase() === cleanQuery ||
-        app.email.toLowerCase() === cleanQuery ||
-        (app.phone && (app.phone === cleanPhone || app.phone === query.trim()))
-      ) {
-        return {
-          application_id: app.id,
-          applicant_type: app.applicant_type,
-          full_name: app.full_name,
-          status: app.status,
-          rejection_reason: app.status === 'REJECTED' ? app.rejection_reason : null,
-          created_at: app.created_at,
-          reviewed_at: app.reviewed_at,
-        };
-      }
-    }
-
-    // Fallback: check database if connected
+  public static async requestStatusLink(email: string): Promise<void> {
+    const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!cleanEmail || cleanEmail.length > 320) return;
+    const app = db.isPostgresConnected
+      ? (await db.query('SELECT id, email FROM career_applications WHERE LOWER(email) = $1 ORDER BY created_at DESC LIMIT 1', [cleanEmail])).rows[0]
+      : (process.env.NODE_ENV === 'test' ? Array.from(localStore.career_applications.values()).find(a => a.email?.toLowerCase() === cleanEmail) : null);
+    if (!app) return;
+    const token = crypto.randomBytes(32).toString('hex');
+    const digest = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
     if (db.isPostgresConnected) {
-      try {
-        const res = await db.query(
-          `SELECT id, applicant_type, full_name, status, rejection_reason, created_at, reviewed_at
-           FROM career_applications
-           WHERE LOWER(id) = $1 OR LOWER(email) = $1 OR phone = $2 OR phone = $3
-           LIMIT 1`,
-          [cleanQuery, cleanPhone, query.trim()]
-        );
-        if (res.rows && res.rows.length > 0) {
-          const row = res.rows[0];
-          return {
-            application_id: row.id,
-            applicant_type: row.applicant_type,
-            full_name: row.full_name,
-            status: row.status,
-            rejection_reason: row.status === 'REJECTED' ? row.rejection_reason : null,
-            created_at: row.created_at,
-            reviewed_at: row.reviewed_at,
-          };
-        }
-      } catch (_) {}
-    }
+      await db.query(`INSERT INTO career_status_tokens(application_id, token_hash, expires_at) VALUES ($1, $2, $3)
+        ON CONFLICT (application_id) DO UPDATE SET token_hash = EXCLUDED.token_hash, expires_at = EXCLUDED.expires_at`, [app.id, digest, new Date(expiresAt)]);
+    } else if (process.env.NODE_ENV === 'test') {
+      for (const [k, t] of this.testStatusTokens) if (t.applicationId === app.id || t.expiresAt <= Date.now()) this.testStatusTokens.delete(k);
+      this.testStatusTokens.set(digest, { applicationId: app.id, expiresAt });
+    } else throw new Error('Status storage unavailable.');
+    // Fragment never reaches reverse-proxy access logs or HTTP referrers.
+    await EmailService.sendApplicationStatusLink(app.email, `https://careers.mumwesafarisuganda.com/careers#application-status=${token}`);
+  }
 
-    throw new Error('No application found with the provided reference ID, email, or phone number.');
+  public static async getApplicationStatus(token: string): Promise<any> {
+    if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new Error('Status link is invalid or expired.');
+    const digest = crypto.createHash('sha256').update(token).digest('hex');
+    let app: any;
+    if (db.isPostgresConnected) {
+      app = (await db.query(`SELECT a.id, a.applicant_type, a.status, a.created_at, a.reviewed_at, a.rejection_reason
+        FROM career_applications a JOIN career_status_tokens t ON t.application_id = a.id
+        WHERE t.token_hash = $1 AND t.expires_at > CURRENT_TIMESTAMP`, [digest])).rows[0];
+    } else if (process.env.NODE_ENV === 'test') {
+      const entry = this.testStatusTokens.get(digest);
+      if (entry && entry.expiresAt > Date.now()) app = localStore.career_applications.get(entry.applicationId);
+    } else throw new Error('Status storage unavailable.');
+    if (!app) throw new Error('Status link is invalid or expired.');
+    return { application_id: app.id, applicant_type: app.applicant_type, status: app.status,
+      created_at: app.created_at, reviewed_at: app.reviewed_at,
+      rejection_reason: app.status === 'REJECTED' ? app.rejection_reason : null };
   }
 }

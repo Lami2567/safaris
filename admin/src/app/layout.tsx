@@ -5,6 +5,7 @@ import { ThemeProvider } from '../components/ThemeProvider';
 
 export const metadata: Metadata = {
   title: 'SAFARIS Uganda - Operations & Recruitment',
+  referrer: 'no-referrer',
   description: 'Control Center & Careers Portal for SAFARIS Mobility & Tourism Platform',
 };
 

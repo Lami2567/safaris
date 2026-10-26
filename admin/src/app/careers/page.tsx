@@ -49,6 +49,7 @@ export default function CareersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [statusResult, setStatusResult] = useState<any | null>(null);
+  const [statusMessage, setStatusMessage] = useState('');
   const [statusError, setStatusError] = useState<string | null>(null);
 
   // Partner Portal & Dashboard State
@@ -161,6 +162,15 @@ export default function CareersPage() {
         } catch (_) {}
       }
     }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const token = params.get('application-status');
+    if (!token) return;
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    setActiveTab('status');
+    api.checkCareerStatus(token).then(setStatusResult).catch(() => setStatusError('This private link is invalid or expired. Request a new link below.'));
   }, []);
 
   // Real-time SSE connection for authenticated Driver or Tour Guide
@@ -395,11 +405,12 @@ export default function CareersPage() {
 
     setIsSearching(true);
     setStatusError(null);
+    setStatusMessage('');
     setStatusResult(null);
 
     try {
-      const res = await api.checkCareerStatus(searchQuery.trim());
-      setStatusResult(res);
+      const res = await api.requestCareerStatusLink(searchQuery.trim());
+      setStatusMessage(res.message);
     } catch (err: any) {
       console.error('[Status Search Error]', err);
       setStatusError(err.message || 'Application not found. Please verify your reference number or email.');
@@ -1319,14 +1330,13 @@ export default function CareersPage() {
               </div>
               <div className="p-6 sm:p-8 space-y-5">
                 <p className="text-[15px] font-medium">
-                  Enter your Application Reference ID or your registered email address to verify the status of your application.
+                  Enter your registered email address. We will send a private status link to your inbox. The link expires in 24 hours.
                 </p>
 
                 <form onSubmit={handleStatusSearch} className="flex flex-col sm:flex-row gap-3">
                   <input
-                    type="text"
                     required
-                    placeholder="Application ID (e.g. app_9a8b7c6d) or Email Address"
+                    placeholder="Registered email address" type="email"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className={`${inputClass} flex-1`}
@@ -1336,10 +1346,11 @@ export default function CareersPage() {
                     disabled={isSearching}
                     className={primaryBtnClass}
                   >
-                    {isSearching ? 'Searching...' : 'Search Status'}
+                    {isSearching ? 'Sending...' : 'Send Private Link'}
                   </button>
                 </form>
 
+                {statusMessage && <p role="status">{statusMessage}</p>}
                 {statusError && (
                   <div className="p-4 rounded-[4px] bg-[#fef2f2] border border-[#f87171] text-[#991b1b] text-[14px] font-bold">
                     {statusError}
@@ -1350,9 +1361,9 @@ export default function CareersPage() {
                   <div className={`mt-4 rounded-[4px] border p-5 space-y-4 ${isLight ? 'bg-[#f8fafc] border-[#cbd5e1]' : 'bg-[#181b22] border-[#2d323e]'}`}>
                     <div className="flex items-center justify-between border-b border-current/10 pb-3">
                       <div>
-                        <h3 className="text-[18px] font-extrabold">{statusResult.full_name}</h3>
+                        <h3 className="text-[18px] font-extrabold">Application status</h3>
                         <p className="text-[13px] font-semibold opacity-75">
-                          {statusResult.email} • {statusResult.phone}
+                          Private applicant access
                         </p>
                       </div>
                       <span className="px-3 py-1 rounded-[4px] text-[13px] font-extrabold border border-current/25">
@@ -1363,15 +1374,15 @@ export default function CareersPage() {
                     <div className="grid grid-cols-2 gap-4 text-[14px]">
                       <div>
                         <span className="block text-[12px] font-bold uppercase opacity-60">Application ID</span>
-                        <span className="font-extrabold">{statusResult.id}</span>
+                        <span className="font-extrabold">{statusResult.application_id}</span>
                       </div>
                       <div>
                         <span className="block text-[12px] font-bold uppercase opacity-60">Category</span>
                         <span className="font-extrabold uppercase">{statusResult.applicant_type}</span>
                       </div>
                       <div>
-                        <span className="block text-[12px] font-bold uppercase opacity-60">Experience</span>
-                        <span className="font-extrabold">{statusResult.experience_years} Years</span>
+                        <span className="block text-[12px] font-bold uppercase opacity-60">Reviewed</span>
+                        <span className="font-extrabold">{statusResult.reviewed_at ? new Date(statusResult.reviewed_at).toLocaleDateString() : 'Pending'}</span>
                       </div>
                       <div>
                         <span className="block text-[12px] font-bold uppercase opacity-60">Submitted On</span>
@@ -1379,6 +1390,7 @@ export default function CareersPage() {
                       </div>
                     </div>
 
+                    {statusResult.rejection_reason && <p>{statusResult.rejection_reason}</p>}
                     {statusResult.status === 'APPROVED' && (
                       <div className="pt-3 border-t border-current/10 space-y-3">
                         <p className="text-[14px] font-bold text-emerald-700 dark:text-emerald-400">
@@ -1387,7 +1399,6 @@ export default function CareersPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            setPortalEmail(statusResult.email);
                             setActiveTab('portal');
                           }}
                           className={primaryBtnClass}

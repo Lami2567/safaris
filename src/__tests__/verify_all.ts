@@ -1,3 +1,4 @@
+import { EmailService } from '../services/email/email.service';
 import { DpoPayGateway } from '../services/payment/dpo_gateway';
 import fs from 'fs';
 import path from 'path';
@@ -359,11 +360,16 @@ async function runTests() {
     console.log(`✅ 15. Admin Password Change & Audit Logging verified (${pwdRes.message}).`);
 
     // 16. Test Candidate Status Lookup
-    const candidateStatus = await CareerService.getApplicationStatus(driverAppRes.applicationId);
+    let statusLink = '';
+    const previousStatusSender = EmailService.sendApplicationStatusLink;
+    EmailService.sendApplicationStatusLink = async (_email, link) => { statusLink = link; return true; };
+    try { await CareerService.requestStatusLink('ronald.mukwaya@careers.mumwesafarisuganda.com'); }
+    finally { EmailService.sendApplicationStatusLink = previousStatusSender; }
+    const candidateStatus = await CareerService.getApplicationStatus(statusLink.split('application-status=')[1]);
     if (!candidateStatus || candidateStatus.status !== 'APPROVED') {
       throw new Error('Candidate status lookup failed.');
     }
-    console.log(`✅ 16. Candidate Application Status Inquiry verified (Found: ${candidateStatus.full_name}, Status: ${candidateStatus.status}).`);
+    console.log(`✅ 16. Candidate Application Status Inquiry verified (Application: ${candidateStatus.application_id}, Status: ${candidateStatus.status}).`);
 
     // 17. Test Approved Driver Login with OTP, Password Setup, and Live GPS Telemetry
     if (!approveRes.otpCode) {

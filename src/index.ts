@@ -5,13 +5,15 @@ import helmet from 'helmet';
 import { ENV } from './config/env';
 import { db } from './config/database';
 import { requestLogger } from './gateway/logger';
-import { rateLimiter } from './gateway/rate_limiter';
+import { configureTrustedProxy } from './gateway/trusted_proxy';
+import { rateLimiter, authenticationRateLimiter } from './gateway/rate_limiter';
 import { apiRouter } from './gateway/routes';
 import { initSocketServer } from './realtime/socket_server';
 import { seedUgandaData } from './database/seed';
 import { FleetMovementEngine } from './services/driver/fleet_movement_engine';
 
 const app = express();
+const trustedProxy = configureTrustedProxy(app);
 const server = http.createServer(app);
 
 // Security Headers
@@ -33,13 +35,18 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(express.text({ type: ['application/xml', 'text/xml'], limit: '2mb' }));
-
-// Gateway Middlewares
-app.use(requestLogger);
+// Limit requests before allocating or parsing upload bodies.
 app.use(rateLimiter);
+const normalJson = express.json({ limit: '512kb' });
+const uploadJson = express.json({ limit: '28mb' });
+app.use((req, res, next) => {
+  const upload = req.method === 'POST' && ['/api/v1/careers/apply', '/api/v1/storage/upload'].includes(req.path);
+  return (upload ? uploadJson : normalJson)(req, res, next);
+});
+app.use(express.urlencoded({ extended: false, limit: '64kb' }));
+app.use(express.text({ type: ['application/xml', 'text/xml'], limit: '2mb' }));
+app.use(requestLogger);
+app.use(authenticationRateLimiter);
 
 // -------------------------------------------------------------
 // Root Liveness & Readiness Health Checks
@@ -82,6 +89,7 @@ initSocketServer(server);
 
 // Start Server with safe seeding lifecycle
 async function startServer() {
+  await trustedProxy.refresh();
   // Ensure database connection is established
   try {
     await db.waitForReady();

@@ -34,7 +34,8 @@ export class UserService {
   }
 
   public static async updateProfile(userId: string, data: any) {
-    const user = localStore.users.get(userId);
+    const current = await db.getUserById(userId);
+    const user = current && { ...current };
     if (!user) {
       throw new Error('User not found.');
     }
@@ -83,9 +84,9 @@ export class UserService {
     }
 
     user.updated_at = new Date().toISOString();
-    await db.persistUser(user);
+    const updated = await db.updateUserProfile(userId, user);
 
-    return AuthService.sanitizeUser(user);
+    return AuthService.sanitizeUser(updated);
   }
 
   public static async topUpWallet(userId: string, amountUGX: number, paymentMethod: any = 'MTN_MOMO', phone?: string) {
@@ -137,7 +138,7 @@ export class UserService {
       throw new Error(`Invalid role '${newRole}'. Allowed roles: ${ALLOWED_ROLES.join(', ')}.`);
     }
 
-    const user = localStore.users.get(targetUserId);
+    const user = await db.getUserById(targetUserId);
     if (!user) {
       throw new Error('Target user account not found.');
     }
@@ -163,11 +164,8 @@ export class UserService {
       }
     }
 
-    user.role = newRole;
-    user.auth_version = uuidv4();
-    user.token_version = (Number(user.token_version) || 1) + 1;
-    user.updated_at = new Date().toISOString();
-    await db.persistUser(user);
+    const secured = await db.updateUserSecurity(targetUserId, { role: newRole });
+    Object.assign(user, secured);
 
     // Record immutable audit entry
     const auditId = `audit_role_${Date.now()}_${uuidv4().slice(0, 6)}`;

@@ -178,20 +178,17 @@ export class NotificationService {
   /**
    * Marks a specific notification as read in the database
    */
-  public static async markAsRead(notificationId: string) {
+  public static async markAsRead(notificationId: string, callerId: string, admin = false) {
+    let notif: any;
     if (db.isPostgresConnected) {
-      try {
-        await db.query('UPDATE notifications SET is_read = TRUE WHERE id = $1', [notificationId]);
-      } catch (err) {
-        console.error('[NotificationService.markAsRead DB Error]:', err);
-      }
-    }
-
-    const notif = localStore.notifications.get(notificationId);
-    if (notif) {
-      notif.is_read = true;
-    }
-    return notif || { id: notificationId, is_read: true };
+      notif = (await db.query('UPDATE notifications SET is_read = TRUE WHERE id = $1 AND (user_id = $2 OR $3::boolean) RETURNING *', [notificationId, callerId, admin])).rows[0];
+    } else if (process.env.NODE_ENV === 'test') {
+      const current = localStore.notifications.get(notificationId);
+      if (current && (current.user_id === callerId || admin)) notif = { ...current, is_read: true };
+    } else throw new Error('Notification storage unavailable.');
+    if (!notif) throw new Error('Notification unavailable.');
+    localStore.notifications.set(notificationId, notif);
+    return notif;
   }
 
   /**
@@ -250,15 +247,15 @@ export class NotificationService {
   /**
    * Permanently deletes a single notification by ID
    */
-  public static async deleteNotificationById(notificationId: string) {
+  public static async deleteNotificationById(notificationId: string, callerId: string, admin = false) {
+    let deleted = false;
     if (db.isPostgresConnected) {
-      try {
-        await db.query('DELETE FROM notifications WHERE id = $1', [notificationId]);
-      } catch (err) {
-        console.error('[NotificationService.deleteNotificationById DB Error]:', err);
-      }
-    }
-
+      deleted = (await db.query('DELETE FROM notifications WHERE id = $1 AND (user_id = $2 OR $3::boolean) RETURNING id', [notificationId, callerId, admin])).rows.length === 1;
+    } else if (process.env.NODE_ENV === 'test') {
+      const current = localStore.notifications.get(notificationId);
+      deleted = !!current && (current.user_id === callerId || admin);
+    } else throw new Error('Notification storage unavailable.');
+    if (!deleted) throw new Error('Notification unavailable.');
     localStore.notifications.delete(notificationId);
     return { success: true, id: notificationId };
   }

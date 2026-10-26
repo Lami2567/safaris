@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  outputFileTracingRoot: fileURLToPath(new URL('.', import.meta.url)),
   reactStrictMode: true,
   images: {
     unoptimized: true,
@@ -14,7 +15,6 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   experimental: {
-    outputFileTracingRoot: fileURLToPath(new URL('.', import.meta.url)),
     webpackBuildWorker: false,
     cpus: 1,
   },

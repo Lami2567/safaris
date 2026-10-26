@@ -93,8 +93,12 @@ else
   echo "⏩ Skipping admin dashboard build (no changes in admin/)..."
 fi
 
+# The private applicant status flow requires deliverable SMTP, never a logged token fallback.
+docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backend node -e "const {ENV}=require('./dist/config/env'); if (!ENV.SMTP_HOST || !ENV.SMTP_USER || !ENV.SMTP_PASS) throw new Error('SMTP configuration is required for private application status links');"
 # Migrate while the previous backend is still running; all migrations must be additive.
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backend node dist/database/migrate.js
+# Verify certificates and Nginx syntax before replacing running services.
+docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps nginx sh -c 'printf "127.0.0.1 backend admin\n" >> /etc/hosts; nginx -t'
 # Switch the services only after migration success.
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
 docker exec safaris_nginx_prod nginx -t
@@ -103,14 +107,16 @@ docker compose -f docker-compose.prod.yml --env-file .env.production restart ngi
 # 8. Verify API Health Endpoint & Database Readiness
 echo "🩺 Verifying API Gateway health check..."
 sleep 3
-HEALTH_RESPONSE=$(curl -sS --max-time 10 http://localhost/health 2>/dev/null || curl -sS --max-time 10 http://localhost:3000/health 2>/dev/null || echo '{"status":"failed"}')
-echo "   Health Check Response: ${HEALTH_RESPONSE}"
-
-if ! echo "${HEALTH_RESPONSE}" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r.get("status") == "ok" and r.get("commit") == sys.argv[1]' "$DEPLOYED_SHA"; then
-  echo "API health or running commit verification failed."; exit 1
-fi
-READY_RESPONSE=$(curl -fsS --max-time 10 http://localhost/health/ready)
+HEALTH_RESPONSE=$(docker exec safaris_backend_prod node -e "fetch('http://127.0.0.1:3000/health').then(r => r.text()).then(console.log).catch(() => process.exit(1))")
+echo "$HEALTH_RESPONSE" | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r.get("status") == "ok" and r.get("commit") == sys.argv[1]' "$DEPLOYED_SHA"
+READY_RESPONSE=$(docker exec safaris_backend_prod node -e "fetch('http://127.0.0.1:3000/health/ready').then(r => { if (!r.ok) process.exit(1); return r.text(); }).then(console.log).catch(() => process.exit(1))")
 echo "$READY_RESPONSE" | python3 -c 'import json,sys; assert json.load(sys.stdin).get("database") == "connected"'
+# Public origin TLS, redirects and route availability must also succeed.
+for DOMAIN in admin.mumwesafarisuganda.com careers.mumwesafarisuganda.com; do
+  curl -fsS --max-time 15 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" > /dev/null
+  REDIRECT=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' -H "Host: $DOMAIN" http://127.0.0.1/api/v1/auth/login)
+  [ "$REDIRECT" = "308" ] || { echo "HTTPS enforcement failed for $DOMAIN"; exit 1; }
+done
 echo "✅ API Gateway verified healthy."
 
 # 9. Report Container Status and Memory Usage
@@ -123,6 +129,6 @@ echo "💾 VPS Memory Usage:"
 free -m
 echo ""
 echo "🎉 SAFARIS Backend deployed and verified successfully!"
-echo "🌐 API Base: http://18.222.41.199/api/v1"
-echo "🩺 Health Check: http://18.222.41.199/health"
+echo "🌐 API Base: https://admin.mumwesafarisuganda.com/api/v1"
+echo "🩺 Health Check: https://admin.mumwesafarisuganda.com/health"
 echo "========================================================"

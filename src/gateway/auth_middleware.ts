@@ -61,7 +61,7 @@ export async function validateAuthSession(rawToken: string): Promise<AuthValidat
         return { valid: false, error: 'User account does not exist or has been removed.', code: 'USER_NOT_FOUND', status: 401 };
       }
 
-      if (liveUser.approval_status === 'SUSPENDED') {
+      if (liveUser.approval_status && liveUser.approval_status !== 'APPROVED') {
         return { valid: false, error: 'Your account has been suspended. Please contact support.', code: 'ACCOUNT_SUSPENDED', status: 403 };
       }
 

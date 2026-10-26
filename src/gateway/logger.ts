@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 
-const SENSITIVE_QUERY_KEYS = /^(trans(action)?token|companytoken|token|card|pan|cvv|pin|otp|ccdapproval|password|secret)$/i;
+const SENSITIVE_QUERY_KEYS = /^(trans(action)?token|companytoken|token|card|pan|cvv|pin|otp|ccdapproval|password|secret|statusToken|setupToken|application-status)$/i;
 
 function sanitizeUrlPath(rawUrl: string): string {
   if (!rawUrl || !rawUrl.includes('?')) return rawUrl;

@@ -1,4 +1,6 @@
 import assert from 'assert/strict';
+import { runDatabaseSecurityRegressions } from './remaining_security.test';
+import { consumeRateLimit } from '../gateway/rate_limiter';
 import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
@@ -46,6 +48,8 @@ async function worker() {
       quotationId: id, expectedServiceType: 'RIDE', customerId: wallet,
       pickupLat: 0, pickupLng: 0, destLat: 0, destLng: 1, storedQuote,
     }));
+  } else if (mode === 'rate') {
+    if (await consumeRateLimit('multiprocess-account', 3, 60000)) throw new Error('Rate limit exceeded');
   } else if (mode === 'setup') {
     await db.setPasswordWithTokenAtomic({ tokenHash: 'one-use-token', userId: wallet, email: 'pg@example.invalid',
       passwordHash: `password-${process.argv[3]}`, expectedVersion: 1, expiresAt: new Date(Date.now() + 60000) });
@@ -100,6 +104,9 @@ async function run() {
   const token = AuthService.generateTokens(user).accessToken;
   await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [wallet]);
   assert.equal((await validateAuthSession(token)).valid, false, 'Stale process cache must not defeat revocation');
+  const limited = await Promise.all(Array.from({ length: 6 }, (_, i) => child('rate', i)));
+  assert.equal(limited.filter(c => c === 0).length, 3, 'Shared limit must allow exactly three independent workers');
+  await runDatabaseSecurityRegressions(pool);
   console.log('PASS: real PostgreSQL multi-process credits, overspend, idempotency, quote rollback, token replay and revocation.');
 }
 run().then(async () => { await pool.end(); }).catch(async error => {

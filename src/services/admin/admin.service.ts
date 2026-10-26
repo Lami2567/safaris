@@ -657,7 +657,7 @@ export class AdminService {
       adminUser.password_hash = passwordHash;
       adminUser.password_changed_at = updatedAt;
       adminUser.updated_at = updatedAt;
-      await db.persistUser(adminUser);
+      await db.updateUserSecurity(adminUser.id, { password_hash: passwordHash });
     }
 
     // Record in admin audit logs
@@ -709,12 +709,13 @@ export class AdminService {
       throw new Error('Invalid username or password.');
     }
 
-    const isMatch = await bcrypt.compare(password, config.passwordHash);
+    const adminUser = await db.getUserById('usr_adm_001');
+    if (!adminUser || adminUser.role !== 'admin' || (adminUser.approval_status && adminUser.approval_status !== 'APPROVED')) throw new Error('Invalid username or password.');
+    const isMatch = await bcrypt.compare(password, adminUser.password_hash);
     if (!isMatch) {
       throw new Error('Invalid username or password.');
     }
 
-    const adminUser = localStore.users.get('usr_adm_001');
     const token = jwt.sign(
       {
         userId: 'usr_adm_001',
@@ -751,27 +752,7 @@ export class AdminService {
       throw new Error('New password must be at least 8 characters long.');
     }
 
-    let user = localStore.users.get(adminId);
-    if (!user && db.isPostgresConnected) {
-      try {
-        const res = await db.query('SELECT * FROM users WHERE id = $1', [adminId]);
-        if (res?.rows?.length > 0) {
-          user = res.rows[0];
-          localStore.users.set(adminId, user);
-        }
-      } catch (_) {}
-    }
-
-    if (!user) {
-      // Find default admin user
-      for (const u of localStore.users.values()) {
-        if (u.role === 'admin') {
-          user = u;
-          break;
-        }
-      }
-    }
-
+    const user = await db.getUserById(adminId);
     if (!user) throw new Error('Admin user account not found.');
 
     const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
@@ -779,13 +760,11 @@ export class AdminService {
       throw new Error('Current password is incorrect.');
     }
 
+    const expectedHash = user.password_hash;
     const newHash = await bcrypt.hash(newPassword, 10);
-    user.password_hash = newHash;
-    user.password_changed_at = new Date().toISOString();
-    user.token_version = (Number(user.token_version) || 1) + 1;
-    user.updated_at = new Date().toISOString();
 
-    await db.persistUser(user);
+    const secured = await db.updateUserSecurity(user.id, { password_hash: newHash }, true, expectedHash);
+    Object.assign(user, secured);
 
     // Update admin_auth_config to keep in lockstep
     const nowIso = new Date().toISOString();
