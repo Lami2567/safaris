@@ -112,7 +112,10 @@ export const api = {
 
   // Real-Time Fleet Telemetry & Audit Logs
   getLiveFleet: () => fetcher<any[]>('/admin/live-fleet'),
-  getLiveFleetStreamUrl: () => `${getApiBase()}/telemetry/live/stream`,
+  getLiveFleetStreamUrl: (token?: string) => {
+    const effectiveToken = token || (typeof window !== 'undefined' ? localStorage.getItem('safaris_admin_token') : null);
+    return `${getApiBase()}/admin/live-fleet/stream${effectiveToken ? `?token=${encodeURIComponent(effectiveToken)}` : ''}`;
+  },
   getPartnerStreamUrl: (token?: string) => `${getApiBase()}/telemetry/partner/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`,
   getDriverHistory: (driverId: string, date?: string) =>
     fetcher<any>(`/telemetry/drivers/${driverId}/history${date ? `?date=${date}` : ''}`),

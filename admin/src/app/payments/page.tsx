@@ -94,10 +94,12 @@ interface PaymentStats {
 }
 
 interface DpoConfigStatus {
-  environment: string;
-  configured: boolean;
-  validation_error: string | null;
-  live_checklist: {
+  environment?: string;
+  activeEnvironment?: string;
+  configured?: boolean;
+  isValid?: boolean;
+  validation_error?: string | null;
+  live_checklist?: {
     token_present: boolean;
     service_type_confirmed: boolean;
     endpoints_verified: boolean;
@@ -107,9 +109,12 @@ interface DpoConfigStatus {
     dpo_verification_passed: boolean;
     environment_recorded: boolean;
   };
-  service_type_id: string;
-  ticket_ref: string;
-  active_gateway_endpoint: string;
+  service_type_id?: string;
+  serviceTypeId?: string;
+  ticket_ref?: string;
+  supportTicketRef?: string;
+  active_gateway_endpoint?: string;
+  apiBaseUrl?: string;
 }
 
 interface FinancialOverviewData {
@@ -617,17 +622,25 @@ export default function PaymentsPage() {
             <div>
               <h1 className="text-2xl font-black tracking-tight text-black dark:text-white flex items-center gap-3">
                 Mumwe Safaris Financial Engine
-                <span className="text-xs px-2.5 py-1 rounded border border-black/20 bg-black/[0.04] text-black/80 dark:border-white/20 dark:bg-white/10 dark:text-white/80 font-mono font-bold uppercase tracking-wider">
-                  SANDBOX ACTIVE
+                <span
+                  className={`text-xs px-2.5 py-1 rounded border font-mono font-bold uppercase tracking-wider ${
+                    (configStatus?.environment === 'production' || configStatus?.activeEnvironment === 'production' || stats?.current_environment === 'production')
+                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                      : 'border-black/20 bg-black/[0.04] text-black/80 dark:border-white/20 dark:bg-white/10 dark:text-white/80'
+                  }`}
+                >
+                  {(configStatus?.environment === 'production' || configStatus?.activeEnvironment === 'production' || stats?.current_environment === 'production')
+                    ? 'PRODUCTION ACTIVE'
+                    : 'SANDBOX ACTIVE'}
                 </span>
                 <span
                   className={`text-xs px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 font-mono ${
                     isLiveConnected
-                      ? 'border-black/30 bg-black/5 text-black dark:border-white/30 dark:bg-white/10 dark:text-white'
+                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                       : 'border-black/15 bg-black/[0.02] text-black/50 dark:border-white/15 dark:bg-white/[0.02] dark:text-white/50'
                   }`}
                 >
-                  <Radio className={`w-3 h-3 ${isLiveConnected ? 'animate-pulse text-black dark:text-white' : 'opacity-40'}`} />
+                  <Radio className={`w-3 h-3 ${isLiveConnected ? 'animate-pulse text-emerald-500' : 'opacity-40'}`} />
                   {isLiveConnected ? 'LIVE STREAM CONNECTED' : 'STREAM RECONNECTING'}
                 </span>
               </h1>
@@ -736,28 +749,50 @@ export default function PaymentsPage() {
       {/* ========================================================================= */}
       {activeTab === 'stream' && (
         <div className="space-y-6">
-          {/* Warning Banner */}
-          <div className="p-4 rounded-xl border border-black/15 bg-black/[0.03] dark:border-white/15 dark:bg-white/[0.03] flex flex-col md:flex-row md:items-center justify-between gap-3">
+          {/* Warning / Production Mode Banner */}
+          <div
+            className={`p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+              (configStatus?.environment === 'production' || configStatus?.activeEnvironment === 'production' || stats?.current_environment === 'production')
+                ? 'border-emerald-500/20 bg-emerald-500/[0.04] dark:border-emerald-500/20 dark:bg-emerald-500/[0.04]'
+                : 'border-black/15 bg-black/[0.03] dark:border-white/15 dark:bg-white/[0.03]'
+            }`}
+          >
             <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-black/70 dark:text-white/70 shrink-0 mt-0.5" />
+              {(configStatus?.environment === 'production' || configStatus?.activeEnvironment === 'production' || stats?.current_environment === 'production') ? (
+                <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              ) : (
+                <AlertTriangle className="w-5 h-5 text-black/70 dark:text-white/70 shrink-0 mt-0.5" />
+              )}
               <div className="space-y-1">
                 <div className="text-xs font-bold text-black dark:text-white flex items-center gap-2">
-                  <span>TESTING MODE: Fail-Closed DPO Pay Sandbox</span>
-                  <span className="font-mono text-[11px] px-1.5 py-0.5 rounded border border-black/15 bg-black/5 text-black/80 dark:border-white/15 dark:bg-white/10 dark:text-white/80">
-                    Service ID: {configStatus?.service_type_id || '54841'}
+                  <span>
+                    {(configStatus?.environment === 'production' || configStatus?.activeEnvironment === 'production' || stats?.current_environment === 'production')
+                      ? 'PRODUCTION MODE: Live DPO Pay Gateway'
+                      : 'TESTING MODE: Fail-Closed DPO Pay Sandbox'}
+                  </span>
+                  <span
+                    className={`font-mono text-[11px] px-1.5 py-0.5 rounded border ${
+                      (configStatus?.environment === 'production' || configStatus?.activeEnvironment === 'production' || stats?.current_environment === 'production')
+                        ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : 'border-black/15 bg-black/5 text-black/80 dark:border-white/15 dark:bg-white/10 dark:text-white/80'
+                    }`}
+                  >
+                    Service ID: {configStatus?.service_type_id || configStatus?.serviceTypeId || ((configStatus?.environment === 'production' || stats?.current_environment === 'production') ? '28087' : '54841')}
                   </span>
                   <span className="font-mono text-[11px] px-1.5 py-0.5 rounded border border-black/15 bg-black/5 text-black/80 dark:border-white/15 dark:bg-white/10 dark:text-white/80">
-                    Ticket Ref: #{configStatus?.ticket_ref || '2777504'}
+                    Ticket Ref: #{configStatus?.ticket_ref || configStatus?.supportTicketRef || '2777504'}
                   </span>
                 </div>
                 <p className="text-xs text-black/60 dark:text-white/70">
-                  Every transaction is permanently recorded in PostgreSQL. Live push events update this table in real-time without requiring a browser refresh.
+                  {(configStatus?.environment === 'production' || configStatus?.activeEnvironment === 'production' || stats?.current_environment === 'production')
+                    ? 'All transactions are processed through live banking and mobile money channels and permanently recorded in PostgreSQL.'
+                    : 'Every transaction is permanently recorded in PostgreSQL. Live push events update this table in real-time without requiring a browser refresh.'}
                 </p>
               </div>
             </div>
             <div className="text-right shrink-0">
               <div className="text-[11px] font-mono text-black/40 dark:text-white/50">DPO v6 API Endpoint</div>
-              <div className="text-xs font-mono text-black/80 dark:text-white/80">{configStatus?.active_gateway_endpoint || 'https://secure.3gdirectpay.com/API/v6/'}</div>
+              <div className="text-xs font-mono text-black/80 dark:text-white/80">{configStatus?.active_gateway_endpoint || configStatus?.apiBaseUrl || 'https://secure.3gdirectpay.com/API/v6/'}</div>
             </div>
           </div>
 

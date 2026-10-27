@@ -18,6 +18,7 @@ import {
   Moon,
 } from 'lucide-react';
 import { useTheme } from './ThemeProvider';
+import { api } from '@/lib/api';
 
 const NAV_ITEMS = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
@@ -33,6 +34,19 @@ const NAV_ITEMS = [
 export const Sidebar: React.FC = () => {
   const pathname = usePathname();
   const { theme, toggleTheme } = useTheme();
+  const [dpoStatus, setDpoStatus] = React.useState<{ env: string; serviceId: string } | null>(null);
+
+  React.useEffect(() => {
+    api.getDpoConfigStatus()
+      .then((cfg: any) => {
+        if (cfg) {
+          const env = (cfg.environment || cfg.activeEnvironment || 'SANDBOX').toUpperCase();
+          const serviceId = cfg.service_type_id || cfg.serviceTypeId || (env === 'PRODUCTION' ? '28087' : '54841');
+          setDpoStatus({ env, serviceId });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   if (typeof window !== 'undefined') {
     const host = window.location.hostname.toLowerCase();
@@ -116,15 +130,19 @@ export const Sidebar: React.FC = () => {
         <div className="px-3 py-2 rounded border border-white/20 bg-white/[0.04]">
           <div className="flex items-center justify-between text-xs font-semibold">
             <span className="flex items-center gap-1.5 text-white/90">
-              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className={`w-2 h-2 rounded-full ${dpoStatus?.env === 'PRODUCTION' ? 'bg-emerald-400' : 'bg-white'} animate-pulse`} />
               DPO Gateway:
             </span>
-            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white font-bold uppercase tracking-wider border border-white/20">
-              SANDBOX
+            <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded text-white font-bold uppercase tracking-wider border ${
+              dpoStatus?.env === 'PRODUCTION'
+                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                : 'bg-white/10 border-white/20'
+            }`}>
+              {dpoStatus?.env || 'SANDBOX'}
             </span>
           </div>
           <div className="text-[10px] font-mono text-white/60 truncate mt-1">
-            Service: 54841 • Ref: #2777504
+            Service: {dpoStatus?.serviceId || '54841'} • Ref: #2777504
           </div>
         </div>
 

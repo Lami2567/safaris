@@ -1478,15 +1478,31 @@ export class PaymentService {
     const v = ENV.validateDpoConfig();
     const live = ENV.validateDpoConfig('production');
     return {
+      environment: v.environment,
       activeEnvironment: v.environment,
+      configured: v.isValid,
       isValid: v.isValid,
       errors: v.errors,
+      validation_error: v.errors.length > 0 ? v.errors.join('; ') : null,
+      service_type_id: v.serviceTypeId,
       serviceTypeId: v.serviceTypeId,
+      ticket_ref: v.supportTicketRef,
       supportTicketRef: v.supportTicketRef,
+      active_gateway_endpoint: v.apiBaseUrl,
       apiBaseUrl: v.apiBaseUrl,
       payUrl: v.payUrl,
       callbackUrl: v.callbackUrl,
       cancelUrl: v.cancelUrl,
+      live_checklist: {
+        token_present: live.checklist.liveCompanyTokenProvided,
+        service_type_confirmed: live.checklist.liveServiceTypeIdConfirmed,
+        endpoints_verified: live.checklist.liveEndpointsVerified,
+        credentials_in_secret_store: live.checklist.serverCredentialsSecured,
+        operator_authorized: live.checklist.operatorActivationAuthorized,
+        backend_validated: live.checklist.backendConfigValidated,
+        dpo_verification_passed: live.checklist.sandboxValidated,
+        environment_recorded: live.checklist.environmentTaggingEnabled,
+      },
       sandbox: {
         ready: v.sandboxReady,
         companyTokenConfigured: Boolean(ENV.DPO_SANDBOX_COMPANY_TOKEN),
