@@ -2194,7 +2194,7 @@ export default function PaymentsPage() {
             </div>
 
             <div className="space-y-3 text-xs">
-              {Object.entries(configStatus.live_checklist).map(([key, val]) => (
+              {Object.entries(configStatus.live_checklist || {}).map(([key, val]) => (
                 <div key={key} className="flex items-center justify-between p-2.5 rounded bg-black/[0.03] dark:bg-white/[0.02] border border-black/10 dark:border-white/10">
                   <span className="capitalize text-black dark:text-white">{key.replace(/_/g, ' ')}</span>
                   {val ? (
