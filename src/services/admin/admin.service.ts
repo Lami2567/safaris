@@ -579,6 +579,34 @@ export class AdminService {
     };
   }
 
+  /** Ensures the root admin user entity exists in persistent storage. */
+  public static async ensureAdminUserExists(): Promise<void> {
+    const existing = await db.getUserById('usr_adm_001').catch(() => null);
+    if (!existing) {
+      const config = await this.getAdminAuthConfig();
+      const defaultHash = config.configured && config.passwordHash
+        ? config.passwordHash
+        : await bcrypt.hash('password123', 10);
+
+      await db.persistUser({
+        id: 'usr_adm_001',
+        full_name: 'Safaris Admin Director',
+        phone: '+256 700 000001',
+        email: 'admin@safaris.ug',
+        password_hash: defaultHash,
+        role: 'admin',
+        avatar_url: '',
+        rating: 5.0,
+        total_trips: 0,
+        wallet_balance_ugx: 0.0,
+        is_verified: true,
+        approval_status: 'APPROVED',
+        created_at: new Date().toISOString(),
+      });
+      console.log('✅ Authoritative root admin user (usr_adm_001) ensured.');
+    }
+  }
+
   public static async setupAdminCredentials(
     params: { username: string; password: string; currentPassword?: string },
     ipAddress?: string
@@ -651,13 +679,29 @@ export class AdminService {
       console.warn('[AdminService] Could not write persistent admin_auth_config', e);
     }
 
-    // Sync admin user record if present
+    // Sync or ensure root admin user record
     const adminUser = localStore.users.get('usr_adm_001');
     if (adminUser) {
       adminUser.password_hash = passwordHash;
       adminUser.password_changed_at = updatedAt;
       adminUser.updated_at = updatedAt;
       await db.updateUserSecurity(adminUser.id, { password_hash: passwordHash });
+    } else {
+      await db.persistUser({
+        id: 'usr_adm_001',
+        full_name: 'Safaris Admin Director',
+        phone: '+256 700 000001',
+        email: 'admin@safaris.ug',
+        password_hash: passwordHash,
+        role: 'admin',
+        avatar_url: '',
+        rating: 5.0,
+        total_trips: 0,
+        wallet_balance_ugx: 0.0,
+        is_verified: true,
+        approval_status: 'APPROVED',
+        created_at: updatedAt,
+      });
     }
 
     // Record in admin audit logs

@@ -80,6 +80,7 @@ import { PaymentService } from './services/payment/payment.service';
 import { FinancialService } from './services/financial/financial.service';
 import { FinancialOutboxService } from './services/financial/outbox.service';
 import { ReconciliationService } from './services/financial/reconciliation.service';
+import { AdminService } from './services/admin/admin.service';
 
 // Mount API Gateway routes under /api/v1
 app.use('/api/v1', apiRouter);
@@ -103,6 +104,7 @@ async function startServer() {
     await AppConfigService.init();
     await TourismService.init();
     await TourGuideService.init();
+    await AdminService.ensureAdminUserExists();
     PaymentService.startReconciler();
     await FinancialService.ensureDefaultRefundPolicy();
     FinancialService.startRefundScheduler();

@@ -1465,8 +1465,22 @@ export class PaymentService {
       else if (st === 'CANCELLED') b.cancelledCount++;
       else if (st === 'EXPIRED') b.expiredCount++;
     }
+    const totalCount = buckets.sandbox.count + buckets.production.count;
+    const successfulCount = buckets.sandbox.successfulCount + buckets.production.successfulCount;
+    const pendingCount = buckets.sandbox.pendingCount + buckets.production.pendingCount;
+    const failedCount = buckets.sandbox.failedCount + buckets.production.failedCount + buckets.sandbox.cancelledCount + buckets.production.cancelledCount;
+
     return {
       activeEnvironment: DpoPayGateway.environment,
+      current_environment: DpoPayGateway.environment,
+      total_count: totalCount,
+      successful_count: successfulCount,
+      pending_count: pendingCount,
+      failed_count: failedCount,
+      sandbox_count: buckets.sandbox.count,
+      live_count: buckets.production.count,
+      total_live_collected_ugx: buckets.production.collectedUgx,
+      total_sandbox_tested_ugx: buckets.sandbox.collectedUgx,
       live: buckets.production,
       sandbox: buckets.sandbox,
       note: 'Sandbox totals are test transactions and are never counted as collected revenue.',

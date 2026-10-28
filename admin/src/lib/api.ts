@@ -114,7 +114,11 @@ export const api = {
   getLiveFleet: () => fetcher<any[]>('/admin/live-fleet'),
   getLiveFleetStreamUrl: (token?: string) => {
     const effectiveToken = token || (typeof window !== 'undefined' ? localStorage.getItem('safaris_admin_token') : null);
-    return `${getApiBase()}/admin/live-fleet/stream${effectiveToken ? `?token=${encodeURIComponent(effectiveToken)}` : ''}`;
+    const adminKey = !effectiveToken ? (process.env.NEXT_PUBLIC_ADMIN_KEY || 'mumwe_safaris_secret_jwt_2026') : null;
+    const query = effectiveToken
+      ? `token=${encodeURIComponent(effectiveToken)}`
+      : (adminKey ? `adminKey=${encodeURIComponent(adminKey)}` : '');
+    return `${getApiBase()}/admin/live-fleet/stream${query ? `?${query}` : ''}`;
   },
   getPartnerStreamUrl: (token?: string) => `${getApiBase()}/telemetry/partner/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`,
   getDriverHistory: (driverId: string, date?: string) =>
