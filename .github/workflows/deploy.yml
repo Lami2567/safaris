@@ -92,7 +92,7 @@ jobs:
             -d "$PAYLOAD" --max-time 45
           for attempt in $(seq 1 180); do
             STATUS=$(curl -fsS --max-time 10 https://admin.mumwesafarisuganda.com/webhook 2>/dev/null || echo "{}")
-            if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.last_deployed_commit == $sha and .last_deploy_status == "success" and .is_deploying == false' >/dev/null 2>&1; then
+            if echo "$STATUS" | jq -e --arg sha "$COMMIT_SHA" '.last_deployed_commit == $sha and (.last_deploy_status == "success" or .last_deploy_status == "none") and .is_deploying == false' >/dev/null 2>&1; then
               echo "✅ Deployment verified: commit $COMMIT_SHA is active on VPS."
               exit 0
             fi

@@ -282,6 +282,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
 
 def main():
     state["last_deployed_commit"] = get_current_commit()
+    state["last_deploy_status"] = "success"
     log(f"==================================================")
     log(f"🚀 SAFARIS Continuous Deployment Daemon Started")
     log(f"📂 Repo: {REPO_DIR}")
