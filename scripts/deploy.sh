@@ -85,10 +85,18 @@ echo "🔨 Building Docker production containers..."
 # Always build backend container for the new commit
 docker compose -f docker-compose.prod.yml --env-file .env.production build backend
 
-# Rebuild admin dashboard only if admin/ files changed or image is missing
-if [ -z "$CURRENT_RUNNING_SHA" ] || ! docker image inspect safaris-admin >/dev/null 2>&1 || ! git diff --quiet "$CURRENT_RUNNING_SHA" "$TARGET_COMMIT" -- admin/ 2>/dev/null; then
+# Rebuild admin dashboard only if image is missing or host has sufficient RAM (>1.2GB)
+if [ -z "$CURRENT_RUNNING_SHA" ] || ! docker image inspect safaris-admin >/dev/null 2>&1; then
   echo "🔨 Building admin dashboard image..."
   docker compose -f docker-compose.prod.yml --env-file .env.production build admin
+elif ! git diff --quiet "$CURRENT_RUNNING_SHA" "$TARGET_COMMIT" -- admin/ 2>/dev/null; then
+  TOTAL_MEM_MB=$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' || echo 2048)
+  if [ "$TOTAL_MEM_MB" -gt 1200 ]; then
+    echo "🔨 Building admin dashboard image (host RAM: ${TOTAL_MEM_MB}MB)..."
+    docker compose -f docker-compose.prod.yml --env-file .env.production build admin
+  else
+    echo "⚡ Low-memory host (${TOTAL_MEM_MB}MB RAM): preserving existing safaris-admin image to prevent swap thrashing..."
+  fi
 else
   echo "⏩ Skipping admin dashboard build (no changes in admin/)..."
 fi

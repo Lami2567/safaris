@@ -29,6 +29,13 @@ async function fetcher<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
   const json = await res.json();
   if (!res.ok || !json.success) {
+    if ((res.status === 401 || res.status === 403) && typeof window !== 'undefined') {
+      const hadToken = !!localStorage.getItem('safaris_admin_token');
+      if (hadToken && (json.error?.code === 'TOKEN_EXPIRED' || json.error?.code === 'SESSION_REVOKED' || json.error?.code === 'INVALID_TOKEN' || json.error?.code === 'INVALID_TOKEN_SCOPE')) {
+        localStorage.removeItem('safaris_admin_token');
+        window.dispatchEvent(new Event('safaris-admin-auth-change'));
+      }
+    }
     throw new Error(json.error?.message || json.message || `API request failed with status ${res.status}`);
   }
   return json.data;

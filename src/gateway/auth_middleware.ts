@@ -45,7 +45,8 @@ export async function validateAuthSession(rawToken: string): Promise<AuthValidat
     const payload = jwt.verify(rawToken, ENV.JWT_SECRET, { algorithms: ['HS256'] }) as AuthUserPayload;
 
     // Reject non-access scoped tokens (e.g., setup_password, recruitment)
-    if (payload.scope !== 'access' || !payload.userId || !payload.role || !Number.isFinite(payload.exp)) {
+    const effectiveScope = payload.scope ?? (payload.adminAuth && payload.role === 'admin' ? 'access' : undefined);
+    if (effectiveScope !== 'access' || !payload.userId || !payload.role || !Number.isFinite(payload.exp)) {
       return {
         valid: false,
         error: `Tokens with scope '${payload.scope}' cannot be used for general API access.`,
