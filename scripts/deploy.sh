@@ -85,13 +85,9 @@ echo "🔨 Building Docker production containers..."
 # Always build backend container for the new commit
 docker compose -f docker-compose.prod.yml --env-file .env.production build backend
 
-# Rebuild admin dashboard if admin/ has changes or on initial deploy
-if [ -z "$CURRENT_RUNNING_SHA" ] || ! git diff --quiet "$CURRENT_RUNNING_SHA" "$TARGET_COMMIT" -- admin/ 2>/dev/null; then
-  echo "🔨 Building admin dashboard image..."
-  docker compose -f docker-compose.prod.yml --env-file .env.production build admin
-else
-  echo "⏩ Skipping admin dashboard build (no changes in admin/)..."
-fi
+# Always build admin dashboard container for the new commit
+echo "🔨 Building admin dashboard image..."
+docker compose -f docker-compose.prod.yml --env-file .env.production build admin
 
 # The private applicant status flow requires deliverable SMTP, never a logged token fallback.
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backend node -e "const {ENV}=require('./dist/config/env'); if (!ENV.SMTP_HOST || !ENV.SMTP_USER || !ENV.SMTP_PASS) throw new Error('SMTP configuration is required for private application status links');"
@@ -100,13 +96,13 @@ docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --
 # Verify certificates and Nginx syntax before replacing running services.
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps nginx sh -c 'printf "127.0.0.1 backend admin\n" >> /etc/hosts; nginx -t'
 # Switch the services only after migration success.
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --force-recreate --remove-orphans
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if docker exec safaris_nginx_prod nginx -t >/dev/null 2>&1; then break; fi
   sleep 1
 done
 docker exec safaris_nginx_prod nginx -t
-docker compose -f docker-compose.prod.yml --env-file .env.production restart nginx
+docker compose -f docker-compose.prod.yml --env-file .env.production restart admin nginx
 
 # 8. Verify API Health Endpoint & Database Readiness
 echo "🩺 Verifying API Gateway health check..."
