@@ -56,12 +56,13 @@ export const Sidebar: React.FC = () => {
   useEffect(() => {
     api
       .getDpoConfigStatus()
-      .then((res) => {
-        if (res?.data) {
+      .then((res: any) => {
+        const d = res?.data || res;
+        if (d) {
           setDpoStatus({
-            env: res.data.environment || res.data.activeEnvironment || 'production',
-            serviceType: String(res.data.service_type_id || res.data.serviceTypeId || '28087'),
-            ticketRef: String(res.data.ticket_ref || res.data.supportTicketRef || '2777504'),
+            env: d.environment || d.activeEnvironment || 'production',
+            serviceType: String(d.service_type_id || d.serviceTypeId || '28087'),
+            ticketRef: String(d.ticket_ref || d.supportTicketRef || '2777504'),
           });
         }
       })

@@ -144,26 +144,47 @@ export default function DashboardOverviewPage() {
   const fetchAllData = useCallback(async () => {
     setLoading(true);
     try {
-      const [statsRes, payStatsRes, payListRes, configRes, usersRes, refundsRes] = await Promise.all([
-        api.getDashboardStats().catch(() => null),
-        api.getPaymentStats().catch(() => null),
-        api.getPayments({ limit: 200 }).catch(() => null),
-        api.getAppConfig().catch(() => null),
-        api.getUsers().catch(() => null),
-        api.getRefunds().catch(() => null),
-      ]);
+      const [statsRes, payStatsRes, payListRes, configRes, usersRes, refundsRes, finOverviewRes] =
+        await Promise.all([
+          api.getStats().catch(() => null),
+          api.getPaymentStats().catch(() => null),
+          api.getPayments({ limit: 200 }).catch(() => null),
+          api.getConfig().catch(() => null),
+          api.getUsers().catch(() => null),
+          api.getRefunds().catch(() => null),
+          api.getFinancialOverview().catch(() => null),
+        ]);
 
-      if (statsRes?.data) setStats(statsRes.data);
-      if (payStatsRes?.data) setPaymentStats(payStatsRes.data);
-      if (payListRes?.data?.items) setPaymentsList(payListRes.data.items);
-      else if (Array.isArray(payListRes?.data)) setPaymentsList(payListRes.data);
-      if (configRes?.data) setAppConfig(configRes.data);
+      const resolvedStats = (statsRes as any)?.data || statsRes;
+      if (resolvedStats) {
+        setStats({
+          ...resolvedStats,
+          financialOverview: (finOverviewRes as any)?.data || finOverviewRes || null,
+        });
+      }
 
-      const loadedUsers = Array.isArray(usersRes?.data) ? usersRes.data : [];
-      setUsersList(loadedUsers);
+      const resolvedPayStats = (payStatsRes as any)?.data || payStatsRes;
+      if (resolvedPayStats) setPaymentStats(resolvedPayStats);
 
-      const loadedRefunds = Array.isArray(refundsRes?.data) ? refundsRes.data : [];
-      setRefundsList(loadedRefunds);
+      const rawPayList = (payListRes as any)?.data || payListRes;
+      if (Array.isArray(rawPayList?.items)) setPaymentsList(rawPayList.items);
+      else if (Array.isArray(rawPayList?.payments)) setPaymentsList(rawPayList.payments);
+      else if (Array.isArray(rawPayList)) setPaymentsList(rawPayList);
+
+      const resolvedConfig = (configRes as any)?.data || configRes;
+      if (resolvedConfig) setAppConfig(resolvedConfig);
+
+      const rawUsers = (usersRes as any)?.data || usersRes;
+      setUsersList(Array.isArray(rawUsers) ? rawUsers : []);
+
+      const rawRefunds = (refundsRes as any)?.data || refundsRes;
+      setRefundsList(
+        Array.isArray(rawRefunds?.refunds)
+          ? rawRefunds.refunds
+          : Array.isArray(rawRefunds)
+            ? rawRefunds
+            : []
+      );
     } catch (err) {
       console.error('Failed to load dashboard telemetry:', err);
     } finally {
@@ -173,6 +194,24 @@ export default function DashboardOverviewPage() {
 
   useEffect(() => {
     fetchAllData();
+  }, [fetchAllData]);
+
+  // Connect to Live SSE Stream so Overview updates automatically on new payments
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try {
+      const streamUrl = api.getLiveFleetStreamUrl();
+      es = new EventSource(streamUrl);
+      es.addEventListener('payment:update', () => {
+        fetchAllData();
+      });
+      es.addEventListener('financial:kpis', () => {
+        fetchAllData();
+      });
+    } catch (_) {}
+    return () => {
+      if (es) es.close();
+    };
   }, [fetchAllData]);
 
   // Build real list of payers + Gmail users from database
@@ -268,15 +307,22 @@ export default function DashboardOverviewPage() {
     Number(paymentStats?.sandbox?.expiredCount ?? 0);
 
   const custodialWalletEscrowUgx = Number(
-    stats?.financials?.custodialWalletLiabilityUGX ??
+    stats?.financialOverview?.customer_wallet_liabilities_ugx ??
+      stats?.financials?.custodialWalletLiabilityUGX ??
       usersList.reduce((acc, u) => acc + Number(u.wallet_balance_ugx || 0), 0)
   );
   const platformCommissionUgx = Number(
-    stats?.revenue?.platformCommissionUGX ?? Math.round(liveCollectedUgx * 0.15)
+    stats?.financialOverview?.platform_commission_earned_ugx ??
+      stats?.revenue?.platformCommissionUGX ??
+      Math.round(liveCollectedUgx * 0.15)
   );
   const partnerAllocationUgx = Math.max(0, liveCollectedUgx - platformCommissionUgx);
 
-  const settledPartnerPayoutsUgx = Number(stats?.financials?.settledPartnerPayoutsUGX ?? 0);
+  const settledPartnerPayoutsUgx = Number(
+    stats?.financialOverview?.completed_payouts_ugx ??
+      stats?.financials?.settledPartnerPayoutsUGX ??
+      0
+  );
   const settledRefundsUgx = refundsList
     .filter((r) => r.status === 'PROCESSED' || r.status === 'APPROVED')
     .reduce((acc, r) => acc + Number(r.refund_amount_ugx || r.amount_ugx || 0), 0);
@@ -525,7 +571,10 @@ export default function DashboardOverviewPage() {
     setTransferBanner(null);
     try {
       await api.recordFinancialAdjustment({
+        targetType: 'USER_WALLET',
+        targetId: selectedRecipient.id,
         userId: selectedRecipient.id,
+        adjustmentType: 'CREDIT',
         type: 'CREDIT',
         amountUgx: numericUgx,
         reason: `Admin Quick Transfer Credit to ${selectedRecipient.full_name} (${selectedRecipient.email || selectedRecipient.phone})`,
@@ -548,12 +597,15 @@ export default function DashboardOverviewPage() {
   // Reconcile Pending DPO Payments
   const handleReconcileGateway = async () => {
     setReconciling(true);
+    setTransferBanner(null);
     try {
-      const res = await api.reconcilePendingPayments();
+      const res = await api.reconcileOpenPayments();
       await fetchAllData();
       setTransferBanner({
         type: 'success',
-        text: res?.message || 'DPO Gateway reconciliation completed.',
+        text:
+          res?.message ||
+          `DPO Gateway reconciliation completed (${res?.reconciledCount ?? 0} verified).`,
       });
     } catch (err: any) {
       setTransferBanner({
@@ -573,7 +625,10 @@ export default function DashboardOverviewPage() {
     setAdjustSubmitting(true);
     try {
       await api.recordFinancialAdjustment({
+        targetType: 'USER_WALLET',
+        targetId: adjustUserId,
         userId: adjustUserId,
+        adjustmentType: adjustType,
         type: adjustType,
         amountUgx: amt,
         reason: adjustReason,
@@ -600,8 +655,9 @@ export default function DashboardOverviewPage() {
         ...appConfig.features,
         [featureKey]: !appConfig.features[featureKey],
       };
-      const res = await api.updateAppConfig({ features: updatedFeatures });
-      if (res?.data) setAppConfig(res.data);
+      const res = await api.updateFeatures(updatedFeatures);
+      const updatedCfg = (res as any)?.data || res;
+      if (updatedCfg) setAppConfig(updatedCfg);
     } catch (err) {
       console.error('Failed to toggle mobile feature:', err);
     } finally {

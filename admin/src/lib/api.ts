@@ -28,7 +28,7 @@ async function fetcher<T>(endpoint: string, options?: RequestInit): Promise<T> {
   });
 
   const json = await res.json();
-  if (!res.ok || !json.success) {
+  if (!res.ok || json.success === false) {
     if ((res.status === 401 || res.status === 403) && typeof window !== 'undefined') {
       const hadToken = !!localStorage.getItem('safaris_admin_token');
       if (hadToken && (json.error?.code === 'TOKEN_EXPIRED' || json.error?.code === 'SESSION_REVOKED' || json.error?.code === 'INVALID_TOKEN' || json.error?.code === 'INVALID_TOKEN_SCOPE')) {
@@ -36,19 +36,22 @@ async function fetcher<T>(endpoint: string, options?: RequestInit): Promise<T> {
         window.dispatchEvent(new Event('safaris-admin-auth-change'));
       }
     }
-    throw new Error(json.error?.message || json.message || `API request failed with status ${res.status}`);
+    throw new Error(json.error?.message || json.error || json.message || `API request failed with status ${res.status}`);
   }
-  return json.data;
+  return (json && json.data !== undefined ? json.data : json) as T;
 }
 
 export const api = {
   // System & KPIs
   getStats: () => fetcher<any>('/admin/stats'),
+  getDashboardStats: () => fetcher<any>('/admin/stats'),
   getHealth: () => fetcher<any>('/health'),
 
   // App Master Config
   getConfig: () => fetcher<any>('/app-config'),
+  getAppConfig: () => fetcher<any>('/app-config'),
   updateConfig: (body: any) => fetcher<any>('/app-config', { method: 'PUT', body: JSON.stringify(body) }),
+  updateAppConfig: (body: any) => fetcher<any>('/app-config', { method: 'PUT', body: JSON.stringify(body) }),
   updateServices: (services: any[]) => fetcher<any>('/app-config/services', { method: 'PUT', body: JSON.stringify({ services }) }),
   updateBanners: (banners: any[]) => fetcher<any>('/app-config/banners', { method: 'PUT', body: JSON.stringify({ banners }) }),
   updateFeatures: (features: Record<string, boolean>) => fetcher<any>('/app-config/features', { method: 'PUT', body: JSON.stringify({ features }) }),
@@ -293,6 +296,8 @@ export const api = {
   reconcilePayment: (paymentId: string) =>
     fetcher<any>(`/admin/payments/${paymentId}/reconcile`, { method: 'POST' }),
   reconcileOpenPayments: () =>
+    fetcher<any>('/admin/payments/reconcile-open', { method: 'POST' }),
+  reconcilePendingPayments: () =>
     fetcher<any>('/admin/payments/reconcile-open', { method: 'POST' }),
 
   // Financial Engine, Customer Wallets & Automatic Refunds
