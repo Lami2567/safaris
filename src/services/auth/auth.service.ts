@@ -344,6 +344,42 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  public static async refreshToken(token: string) {
+    if (!token) throw new Error("Refresh token is required.");
+
+    let payload: any;
+    try {
+      payload = jwt.verify(token, ENV.REFRESH_TOKEN_SECRET, { algorithms: ['HS256'] });
+    } catch (err: any) {
+      throw new Error("Refresh token expired or invalid. Please log in again.");
+    }
+
+    if (!payload.userId) {
+      throw new Error("Malformed token claims.");
+    }
+
+    const liveUser = await db.getUserById(payload.userId);
+    if (!liveUser) {
+      throw new Error("User account no longer exists.");
+    }
+
+    if (liveUser.approval_status && liveUser.approval_status !== 'APPROVED') {
+      throw new Error("Your account has been suspended.");
+    }
+
+    const tokenVer = Number(payload.tokenVersion ?? 1);
+    const userVer = Number(liveUser.token_version ?? 1);
+    if (tokenVer !== userVer) {
+      throw new Error("Session has been revoked. Please log in again.");
+    }
+
+    const tokens = this.generateTokens(liveUser);
+    return {
+      user: this.sanitizeUser(liveUser),
+      ...tokens,
+    };
+  }
+
   public static sanitizeUser(user: any) {
     const { password_hash, password, otp, token, setupToken, setup_token, ...sanitized } = user;
     try {

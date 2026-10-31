@@ -83,6 +83,19 @@ export class AuthController {
     }
   }
 
+  public static async refreshToken(req: Request, res: Response) {
+    try {
+      const { refreshToken } = req.body;
+      if (!refreshToken) {
+        return sendError(res, 'VALIDATION_ERROR', 'Refresh token is required.');
+      }
+      const result = await AuthService.refreshToken(refreshToken);
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      return sendError(res, 'AUTH_REFRESH_FAILED', err.message, 401);
+    }
+  }
+
   public static me(req: any, res: Response) {
     try {
       const user = req.user;

@@ -107,11 +107,11 @@ export const ENV = {
   JWT_SECRET: process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' 
     ? (() => { throw new Error('FATAL: JWT_SECRET environment variable must be set in production.'); })() 
     : 'safaris_super_secret_jwt_key_uganda_2026'),
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '90d',
   REFRESH_TOKEN_SECRET: process.env.REFRESH_TOKEN_SECRET || (process.env.NODE_ENV === 'production'
     ? (() => { throw new Error('FATAL: REFRESH_TOKEN_SECRET environment variable must be set in production.'); })()
     : 'safaris_refresh_token_secret_uganda_2026'),
-  REFRESH_TOKEN_EXPIRES_IN: process.env.REFRESH_TOKEN_EXPIRES_IN || '30d',
+  REFRESH_TOKEN_EXPIRES_IN: process.env.REFRESH_TOKEN_EXPIRES_IN || '180d',
   CONFIG_ENCRYPTION_SECRET: process.env.CONFIG_ENCRYPTION_SECRET || process.env.JWT_SECRET || 'safaris_config_encryption_key_2026_uganda_32b',
   
   // CORS Configuration
