@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useTheme } from '@/components/ThemeProvider';
+import { Header } from '@/components/Header';
 
 interface PaymentRecord {
   id: string;
@@ -729,7 +730,9 @@ export default function PaymentsPage() {
   const platformCommissionEstimate = Math.round(computedGrossRevenue * 0.15);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#0c0d12] text-slate-900 dark:text-slate-100 p-4 md:p-8 space-y-8 transition-colors duration-200">
+    <div className="min-h-screen bg-[#F8F9FD] dark:bg-[#0A0C10] text-slate-900 dark:text-slate-100 transition-colors duration-200">
+      <Header title="Overview" />
+      <div className="p-4 md:p-8 space-y-8 max-w-[1440px] mx-auto">
       {/* Toast Alert */}
       {toastMessage && (
         <div
@@ -2196,6 +2199,7 @@ export default function PaymentsPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

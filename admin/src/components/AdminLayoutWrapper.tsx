@@ -59,14 +59,14 @@ export function AdminLayoutWrapper({ children }: { children: React.ReactNode }) 
 
   if (hideSidebar) {
     return (
-      <main className="min-h-screen w-full bg-black text-white">
+      <main className="min-h-screen w-full bg-[#F8F9FD] dark:bg-[#0B0C10] text-slate-900 dark:text-slate-100">
         {children}
       </main>
     );
   }
 
   if (!authChecked) {
-    return <div className="min-h-screen w-full bg-black" />;
+    return <div className="min-h-screen w-full bg-[#F8F9FD] dark:bg-[#0B0C10]" />;
   }
 
   // Only show and enforce the login screen AFTER credentials have been set in the admin panel
@@ -75,9 +75,9 @@ export function AdminLayoutWrapper({ children }: { children: React.ReactNode }) 
   }
 
   return (
-    <div className="flex min-h-screen bg-black">
+    <div className="flex min-h-screen bg-[#F8F9FD] dark:bg-[#0B0C10] text-slate-900 dark:text-slate-100">
       <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0 bg-black">{children}</div>
+      <div className="flex-1 flex flex-col min-w-0 bg-[#F8F9FD] dark:bg-[#0B0C10] overflow-x-hidden">{children}</div>
     </div>
   );
 }
