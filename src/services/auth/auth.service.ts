@@ -76,6 +76,8 @@ export class AuthService {
     email: string;
     password: string;
     role?: string;
+    avatarUrl?: string;
+    googleDataConsent?: boolean;
   }) {
     this.loadOtps();
     const role = data.role || 'customer';
@@ -129,6 +131,13 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(data.password, 10);
     const userId = `usr_${uuidv4().substring(0, 8)}`;
 
+    const resolvedAvatarUrl =
+      typeof data.avatarUrl === 'string' && data.avatarUrl.trim()
+        ? data.avatarUrl.trim()
+        : data.googleDataConsent !== false && cleanEmail
+          ? `https://unavatar.io/google/${encodeURIComponent(cleanEmail)}`
+          : '';
+
     const newUser = {
       id: userId,
       full_name: data.fullName.trim(),
@@ -136,7 +145,7 @@ export class AuthService {
       email: cleanEmail,
       password_hash: passwordHash,
       role: 'customer',
-      avatar_url: '',
+      avatar_url: resolvedAvatarUrl,
       rating: 5.0,
       total_trips: 0,
       wallet_balance_ugx: 0.0,

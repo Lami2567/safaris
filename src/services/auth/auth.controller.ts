@@ -5,12 +5,12 @@ import { sendSuccess, sendError } from '../../shared/response';
 export class AuthController {
   public static async register(req: Request, res: Response) {
     try {
-      const { fullName, phone, email, password, role } = req.body;
+      const { fullName, phone, email, password, role, avatarUrl, googleDataConsent } = req.body;
       if (!fullName || !phone || !email || !password) {
         return sendError(res, 'VALIDATION_ERROR', 'All registration fields are required.');
       }
 
-      const result = await AuthService.register({ fullName, phone, email, password, role });
+      const result = await AuthService.register({ fullName, phone, email, password, role, avatarUrl, googleDataConsent });
       return sendSuccess(res, result, 201);
     } catch (err: any) {
       return sendError(res, 'REGISTER_FAILED', err.message);

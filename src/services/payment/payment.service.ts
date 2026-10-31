@@ -1422,13 +1422,23 @@ export class PaymentService {
     const limit = Math.min(500, Math.max(1, Number(filters.limit || 100)));
     return {
       total,
-      items: rows.slice(offset, offset + limit).map((p) => ({
-        ...p,
-        status: normalizeStatus(p.status),
-        dpo_trans_token: p.dpo_trans_token ? `${p.dpo_trans_token.slice(0, 8)}…` : '',
-        payment_url: undefined,
-        customer_message: this.customerMessage(p),
-      })),
+      items: rows.slice(offset, offset + limit).map((p) => {
+        const user = p.user_id ? localStore.users.get(p.user_id) : undefined;
+        const email = user?.email || '';
+        const googleAvatar = email ? `https://unavatar.io/google/${encodeURIComponent(email)}` : '';
+        return {
+          ...p,
+          status: normalizeStatus(p.status),
+          dpo_trans_token: p.dpo_trans_token ? `${p.dpo_trans_token.slice(0, 8)}…` : '',
+          payment_url: undefined,
+          customer_message: this.customerMessage(p),
+          customer_name: user?.full_name || p.user_id || 'Registered Customer',
+          customer_email: email,
+          customer_phone: user?.phone || '',
+          customer_avatar: user?.avatar_url || googleAvatar,
+          customer_role: user?.role || 'customer',
+        };
+      }),
     };
   }
 
@@ -1449,6 +1459,25 @@ export class PaymentService {
       sandbox: emptyBucket(),
       production: emptyBucket(),
     };
+    const payerMap = new Map<
+      string,
+      {
+        id: string;
+        full_name: string;
+        email: string;
+        phone: string;
+        role: string;
+        avatar_url: string;
+        google_avatar_url: string;
+        verified_paid_ugx: number;
+        total_attempted_ugx: number;
+        successful_count: number;
+        total_attempts_count: number;
+        last_payment_at: string;
+        wallet_balance_ugx: number;
+      }
+    >();
+
     for (const raw of localStore.payments.values()) {
       const p = this.hydrate(raw);
       const b = buckets[p.environment];
@@ -1464,7 +1493,68 @@ export class PaymentService {
       } else if (st === 'FAILED') b.failedCount++;
       else if (st === 'CANCELLED') b.cancelledCount++;
       else if (st === 'EXPIRED') b.expiredCount++;
+
+      if (p.user_id) {
+        const u = localStore.users.get(p.user_id);
+        const email = u?.email || '';
+        const googleAvatar = email ? `https://unavatar.io/google/${encodeURIComponent(email)}` : '';
+        const existing = payerMap.get(p.user_id) || {
+          id: p.user_id,
+          full_name: u?.full_name || p.user_id,
+          email,
+          phone: u?.phone || '',
+          role: u?.role || 'customer',
+          avatar_url: u?.avatar_url || googleAvatar,
+          google_avatar_url: googleAvatar,
+          verified_paid_ugx: 0,
+          total_attempted_ugx: 0,
+          successful_count: 0,
+          total_attempts_count: 0,
+          last_payment_at: p.created_at,
+          wallet_balance_ugx: Number(u?.wallet_balance_ugx || 0),
+        };
+        existing.total_attempts_count += 1;
+        existing.total_attempted_ugx += Number(p.amount_ugx) || 0;
+        if (st === 'SUCCESSFUL' && !p.duplicate_of_payment_id) {
+          existing.successful_count += 1;
+          existing.verified_paid_ugx += Number(p.amount_ugx) || 0;
+        }
+        if (new Date(p.created_at).getTime() > new Date(existing.last_payment_at).getTime()) {
+          existing.last_payment_at = p.created_at;
+        }
+        payerMap.set(p.user_id, existing);
+      }
     }
+
+    for (const u of localStore.users.values()) {
+      if (u.role === 'admin') continue;
+      if (!payerMap.has(u.id)) {
+        const email = u.email || '';
+        const googleAvatar = email ? `https://unavatar.io/google/${encodeURIComponent(email)}` : '';
+        payerMap.set(u.id, {
+          id: u.id,
+          full_name: u.full_name || u.id,
+          email,
+          phone: u.phone || '',
+          role: u.role || 'customer',
+          avatar_url: u.avatar_url || googleAvatar,
+          google_avatar_url: googleAvatar,
+          verified_paid_ugx: 0,
+          total_attempted_ugx: 0,
+          successful_count: 0,
+          total_attempts_count: 0,
+          last_payment_at: u.created_at || new Date().toISOString(),
+          wallet_balance_ugx: Number(u.wallet_balance_ugx || 0),
+        });
+      }
+    }
+
+    const recentPayers = Array.from(payerMap.values()).sort((a, b) => {
+      if (b.verified_paid_ugx !== a.verified_paid_ugx) return b.verified_paid_ugx - a.verified_paid_ugx;
+      if (b.total_attempts_count !== a.total_attempts_count) return b.total_attempts_count - a.total_attempts_count;
+      return new Date(b.last_payment_at).getTime() - new Date(a.last_payment_at).getTime();
+    });
+
     const totalCount = buckets.sandbox.count + buckets.production.count;
     const successfulCount = buckets.sandbox.successfulCount + buckets.production.successfulCount;
     const pendingCount = buckets.sandbox.pendingCount + buckets.production.pendingCount;
@@ -1483,6 +1573,7 @@ export class PaymentService {
       total_sandbox_tested_ugx: buckets.sandbox.collectedUgx,
       live: buckets.production,
       sandbox: buckets.sandbox,
+      recent_payers: recentPayers,
       note: 'Sandbox totals are test transactions and are never counted as collected revenue.',
     };
   }

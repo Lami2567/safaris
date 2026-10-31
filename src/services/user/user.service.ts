@@ -81,6 +81,8 @@ export class UserService {
     const avatarUrl = data.avatarUrl || data.avatar_url;
     if (typeof avatarUrl === 'string') {
       user.avatar_url = avatarUrl.trim();
+    } else if (data.googleDataConsent === true && user.email && !user.avatar_url) {
+      user.avatar_url = `https://unavatar.io/google/${encodeURIComponent(user.email.trim().toLowerCase())}`;
     }
 
     user.updated_at = new Date().toISOString();

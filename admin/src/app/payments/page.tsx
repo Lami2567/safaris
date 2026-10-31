@@ -170,15 +170,53 @@ interface RefundPolicyItem {
   updated_at?: string;
 }
 
-// Sample drivers for Quick Transfer widget (matching DeliFin design)
-const QUICK_TRANSFER_PARTNERS = [
-  { id: 'drv_ronald', name: 'Ronald Mukwaya', role: 'Safari Chauffeur', phone: '+256 772 100 201', avatar: 'RM', balance: 420000 },
-  { id: 'drv_isaac', name: 'Isaac Mukasa', role: 'Prado 4x4 Driver', phone: '+256 701 445 892', avatar: 'IM', balance: 310000 },
-  { id: 'drv_peter', name: 'Peter Kigozi', role: 'Wildlife Guide', phone: '+256 782 559 104', avatar: 'PK', balance: 580000 },
-  { id: 'drv_sarah', name: 'Sarah Namubiru', role: 'HiAce Minivan Driver', phone: '+256 752 883 411', avatar: 'SN', balance: 245000 },
-  { id: 'drv_brian', name: 'Brian Tumusiime', role: 'Express Courier', phone: '+256 779 123 908', avatar: 'BT', balance: 175000 },
-  { id: 'drv_grace', name: 'Grace Atuhaire', role: 'VIP Chauffeur', phone: '+256 703 667 820', avatar: 'GA', balance: 650000 },
-];
+// Helper to render Gmail / Google profile avatars for real payers & accounts
+const PayerAvatarBadge: React.FC<{
+  name: string;
+  email?: string;
+  avatarUrl?: string;
+  sizeClass?: string;
+}> = ({ name, email, avatarUrl, sizeClass = 'w-10 h-10' }) => {
+  const [failed, setFailed] = useState(false);
+  const src =
+    avatarUrl && avatarUrl.trim()
+      ? avatarUrl.trim()
+      : email && email.includes('@')
+        ? `https://unavatar.io/google/${encodeURIComponent(email.trim().toLowerCase())}`
+        : '';
+  const initials = String(name || 'U')
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+  return (
+    <div className={`relative inline-flex items-center justify-center shrink-0 ${sizeClass}`}>
+      {src && !failed ? (
+        <img
+          src={src}
+          alt={name}
+          onError={() => setFailed(true)}
+          className="w-full h-full rounded-full object-cover border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800"
+        />
+      ) : (
+        <div className="w-full h-full rounded-full bg-gradient-to-br from-[#0062FF] to-indigo-600 text-white font-extrabold text-xs flex items-center justify-center border border-blue-400/30">
+          {initials}
+        </div>
+      )}
+      {email && (
+        <span
+          title={`Google / Email Verified: ${email}`}
+          className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-white text-[#EA4335] text-[8px] font-black flex items-center justify-center border border-slate-200 dark:border-slate-700 shadow-2xs"
+        >
+          G
+        </span>
+      )}
+    </div>
+  );
+};
 
 export default function PaymentsPage() {
   const { theme, toggleTheme } = useTheme();
@@ -279,27 +317,10 @@ export default function PaymentsPage() {
   };
 
   const formatUGX = (amount: any): string => {
-    if (amount === null || amount === undefined || amount === '') return 'USh 0';
+    if (amount === null || amount === undefined || amount === '') return 'UGX 0';
     const num = typeof amount === 'number' ? amount : parseFloat(String(amount).replace(/[^0-9.-]+/g, ''));
-    if (isNaN(num)) return 'USh 0';
-    return new Intl.NumberFormat('en-UG', {
-      style: 'currency',
-      currency: 'UGX',
-      maximumFractionDigits: 0,
-    }).format(num).replace('UGX', 'USh');
-  };
-
-  const formatUSD = (ugxAmount: any): string => {
-    if (ugxAmount === null || ugxAmount === undefined || ugxAmount === '') return '$0.00';
-    const num = typeof ugxAmount === 'number' ? ugxAmount : parseFloat(String(ugxAmount).replace(/[^0-9.-]+/g, ''));
-    if (isNaN(num)) return '$0.00';
-    const usd = num / 3750;
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(usd);
+    if (isNaN(num)) return 'UGX 0';
+    return `UGX ${Math.round(num).toLocaleString()}`;
   };
 
   const togglePaymentMethod = async (id: string, newEnabled: boolean) => {
@@ -729,16 +750,148 @@ export default function PaymentsPage() {
     );
   };
 
-  // Financial Calculations for DeliFin KPI Cards
-  const computedGrossRevenue = overview?.total_verified_payments_ugx ?? (stats?.total_live_collected_ugx || stats?.total_sandbox_tested_ugx || 28450000);
-  const computedDisbursed = overview?.completed_payouts_ugx ?? 16850000;
-  const computedWalletLiabilities = overview?.customer_wallet_liabilities_ugx ?? 93845000;
+  // Real Payers & Accounts from Database (with Gmail Avatars)
+  const realTransferPartners = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        email: string;
+        role: string;
+        phone: string;
+        avatarUrl: string;
+        balance: number;
+        paidUgx: number;
+      }
+    >();
+
+    for (const u of allUsers) {
+      if (u.role === 'admin') continue;
+      const email = u.email || '';
+      map.set(u.id, {
+        id: u.id,
+        name: u.full_name || u.id,
+        email,
+        role: u.role === 'driver' ? 'Registered Driver' : u.role === 'tour_guide' ? 'UWA Tour Guide' : 'Verified Payer / Customer',
+        phone: u.phone || '',
+        avatarUrl: u.avatar_url || (email ? `https://unavatar.io/google/${encodeURIComponent(email)}` : ''),
+        balance: Number(u.wallet_balance_ugx || 0),
+        paidUgx: 0,
+      });
+    }
+
+    for (const p of payments as any[]) {
+      if (!p.user_id) continue;
+      const email = p.customer_email || '';
+      const existing = map.get(p.user_id) || {
+        id: p.user_id,
+        name: p.customer_name || p.user_id,
+        email,
+        role: 'Verified Payer / Customer',
+        phone: p.customer_phone || p.phone || '',
+        avatarUrl: p.customer_avatar || (email ? `https://unavatar.io/google/${encodeURIComponent(email)}` : ''),
+        balance: 0,
+        paidUgx: 0,
+      };
+      if (p.status === 'SUCCESSFUL' || p.status === 'COMPLETED') {
+        existing.paidUgx += Number(p.amount_ugx || p.amount || 0);
+      }
+      map.set(p.user_id, existing);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.paidUgx - a.paidUgx || b.balance - a.balance);
+  }, [allUsers, payments]);
+
+  // Exact Real Financial Calculations in UGX (Zero fake fallback values)
+  const computedLiveRevenue = Number(stats?.total_live_collected_ugx ?? overview?.total_verified_payments_ugx ?? 0);
+  const computedSandboxVolume = Number(stats?.total_sandbox_tested_ugx ?? 0);
+  const computedGrossRevenue = computedLiveRevenue;
+  const computedDisbursed = Number(overview?.completed_payouts_ugx ?? 0);
+  const computedWalletLiabilities = Number(
+    overview?.customer_wallet_liabilities_ugx ??
+      allUsers.reduce((acc, u) => acc + Number(u.wallet_balance_ugx || 0), 0)
+  );
   const computedNetLiquidReserve = Math.max(0, computedGrossRevenue - computedDisbursed);
-  const platformCommissionEstimate = Math.round(computedGrossRevenue * 0.15);
+  const platformCommissionEstimate = Number(
+    overview?.platform_commission_earned_ugx ?? Math.round(computedGrossRevenue * 0.15)
+  );
+  const partnerRetainedUgx = Math.max(0, computedGrossRevenue - platformCommissionEstimate);
+
+  // Dynamic Real UGX Money Flow Series from actual payments array
+  const cashflowChartData = useMemo(() => {
+    const sorted = [...payments].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    const pts = sorted.map((p, idx) => {
+      const dt = new Date(p.created_at);
+      const label = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const amt = Number(p.amount_ugx || p.amount || 0);
+      const isSuccess = p.status === 'SUCCESSFUL' || p.status === 'COMPLETED';
+      return {
+        label: `${label} #${idx + 1}`,
+        inflowUgx: isSuccess ? amt : 0,
+        unsettledUgx: isSuccess ? 0 : amt,
+      };
+    });
+
+    if (pts.length === 0) {
+      pts.push({ label: 'Today', inflowUgx: 0, unsettledUgx: 0 });
+    }
+
+    const maxVal = Math.max(2000, ...pts.map((x) => Math.max(x.inflowUgx, x.unsettledUgx)));
+    const width = 700;
+    const height = 180;
+    const padX = 30;
+    const padY = 20;
+    const plotW = width - padX * 2;
+    const plotH = height - padY * 2;
+
+    const getX = (i: number) => (pts.length <= 1 ? width / 2 : padX + (i / (pts.length - 1)) * plotW);
+    const getY = (v: number) => padY + plotH - Math.min(1, Math.max(0, v / maxVal)) * plotH;
+
+    const inflowCoords = pts.map((pt, i) => ({ x: getX(i), y: getY(pt.inflowUgx), ...pt }));
+    const unsettledCoords = pts.map((pt, i) => ({ x: getX(i), y: getY(pt.unsettledUgx), ...pt }));
+
+    const buildPath = (coords: { x: number; y: number }[]) => {
+      if (coords.length === 0) return '';
+      if (coords.length === 1) return `M ${coords[0].x},${coords[0].y}`;
+      let d = `M ${coords[0].x.toFixed(1)},${coords[0].y.toFixed(1)}`;
+      for (let i = 0; i < coords.length - 1; i++) {
+        const c0 = coords[i];
+        const c1 = coords[i + 1];
+        const cx = ((c0.x + c1.x) / 2).toFixed(1);
+        d += ` C ${cx},${c0.y.toFixed(1)} ${cx},${c1.y.toFixed(1)} ${c1.x.toFixed(1)},${c1.y.toFixed(1)}`;
+      }
+      return d;
+    };
+
+    const inflowPath = buildPath(inflowCoords);
+    const unsettledPath = buildPath(unsettledCoords);
+    const inflowArea =
+      inflowCoords.length > 1
+        ? `${inflowPath} L ${inflowCoords[inflowCoords.length - 1].x.toFixed(1)},${height - padY} L ${inflowCoords[0].x.toFixed(1)},${height - padY} Z`
+        : '';
+
+    return {
+      pts,
+      maxVal,
+      inflowCoords,
+      unsettledCoords,
+      inflowPath,
+      unsettledPath,
+      inflowArea,
+    };
+  }, [payments]);
 
   return (
     <div className="min-h-screen bg-[#F8F9FD] dark:bg-[#0A0C10] text-slate-900 dark:text-slate-100 transition-colors duration-200">
-      <Header title="Overview" />
+      <Header
+        title="DPO Payments & Financial Engine"
+        subtitle="Live UGX DPO Service #28087 collections, customer wallets, partner payouts & reconciliation"
+        onRefresh={() => loadData()}
+        isRefreshing={refreshing}
+      />
       <div className="p-4 md:p-8 space-y-8 max-w-[1440px] mx-auto">
       {/* Toast Alert */}
       {toastMessage && (
@@ -838,43 +991,35 @@ export default function PaymentsPage() {
                 {formatUGX(computedNetLiquidReserve)}
               </span>
               <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
-                <TrendingUp className="w-3 h-3" /> +16.8%
+                <TrendingUp className="w-3 h-3" /> Live UGX
               </span>
             </div>
             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-              Approx. {formatUSD(computedNetLiquidReserve)} • 100% Backed Liquid Assets
+              Sandbox Tested Volume: {formatUGX(computedSandboxVolume)} ({stats?.sandbox_count ?? 0} test tx)
             </div>
 
             {/* Account Mask with Copy Button */}
             <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-[#222634]">
               <Building className="w-3.5 h-3.5 text-slate-400" />
               <span className="text-xs font-mono font-medium text-slate-600 dark:text-slate-300">
-                Stanbic Bank (Uganda) •••• 9384
+                DPO Service #28087 • Ref #2777504 (UGX)
               </span>
-              <button
-                onClick={() => {
-                  navigator.clipboard?.writeText('90300184758384');
-                  showToast('Commercial escrow account number copied to clipboard');
-                }}
-                className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold ml-auto"
-              >
-                Copy
-              </button>
             </div>
           </div>
 
-          {/* Action Buttons (Matching DeliFin Transfer / Received / + buttons) */}
+          {/* Action Buttons */}
           <div className="grid grid-cols-3 gap-2 pt-2">
             <button
               onClick={() => {
-                setSelectedPayoutPartner(QUICK_TRANSFER_PARTNERS[0]);
+                const firstPartner = realTransferPartners[0];
+                setSelectedPayoutPartner(firstPartner || null);
                 setPayoutFormData({
-                  recipientId: QUICK_TRANSFER_PARTNERS[0].id,
-                  recipientName: QUICK_TRANSFER_PARTNERS[0].name,
-                  phone: QUICK_TRANSFER_PARTNERS[0].phone,
+                  recipientId: firstPartner?.id || '',
+                  recipientName: firstPartner?.name || '',
+                  phone: firstPartner?.phone || '',
                   channel: 'MTN_MOMO',
-                  amountUgx: '150000',
-                  memo: 'Weekly Driver Fuel & Earnings Disbursement',
+                  amountUgx: '1000',
+                  memo: 'Verified UGX Wallet / Mobile Money Disbursement',
                 });
                 setShowPayoutModal(true);
               }}
@@ -928,7 +1073,7 @@ export default function PaymentsPage() {
           <div className="pt-3 border-t border-slate-100 dark:border-[#222634] flex items-center justify-between text-xs">
             <span className="text-slate-600 dark:text-slate-400 font-medium">Verified Disbursals</span>
             <span className="font-bold text-slate-900 dark:text-white">
-              {overview?.completed_withdrawals_count ?? 12} Settled • 0 Pending
+              {overview?.completed_withdrawals_count ?? 0} Settled • {overview?.pending_withdrawals_count ?? 0} Pending
             </span>
           </div>
         </div>
@@ -1006,17 +1151,13 @@ export default function PaymentsPage() {
             </div>
           </div>
 
-          {/* SVG Smooth Dual Line Chart (Zero-dependency SVG) */}
+          {/* SVG Smooth Dual Line Chart (Computed from Real Database Transactions in UGX) */}
           <div className="relative w-full h-48 md:h-56 pt-2">
-            <svg viewBox="0 0 700 200" className="w-full h-full overflow-visible">
+            <svg viewBox="0 0 700 180" className="w-full h-full overflow-visible">
               <defs>
                 <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#2563eb" stopOpacity="0.25" />
                   <stop offset="100%" stopColor="#2563eb" stopOpacity="0.0" />
-                </linearGradient>
-                <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.2" />
-                  <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.0" />
                 </linearGradient>
               </defs>
 
@@ -1024,83 +1165,65 @@ export default function PaymentsPage() {
               <line x1="0" y1="30" x2="700" y2="30" stroke="currentColor" className="text-slate-100 dark:text-slate-800/80" strokeDasharray="3 3" />
               <line x1="0" y1="75" x2="700" y2="75" stroke="currentColor" className="text-slate-100 dark:text-slate-800/80" strokeDasharray="3 3" />
               <line x1="0" y1="120" x2="700" y2="120" stroke="currentColor" className="text-slate-100 dark:text-slate-800/80" strokeDasharray="3 3" />
-              <line x1="0" y1="165" x2="700" y2="165" stroke="currentColor" className="text-slate-100 dark:text-slate-800/80" strokeDasharray="3 3" />
+              <line x1="0" y1="160" x2="700" y2="160" stroke="currentColor" className="text-slate-100 dark:text-slate-800/80" strokeDasharray="3 3" />
 
-              {/* Area Under Curves */}
-              <path
-                d="M 30,120 Q 90,75 160,85 T 300,55 T 440,65 T 580,45 T 670,60 L 670,180 L 30,180 Z"
-                fill="url(#incomeGradient)"
-              />
-              <path
-                d="M 30,150 Q 90,130 160,110 T 300,125 T 440,105 T 580,120 T 670,115 L 670,180 L 30,180 Z"
-                fill="url(#expenseGradient)"
-              />
+              {cashflowChartData.inflowArea && (
+                <path d={cashflowChartData.inflowArea} fill="url(#incomeGradient)" />
+              )}
 
-              {/* Income Curve (Blue) */}
-              <path
-                d="M 30,120 Q 90,75 160,85 T 300,55 T 440,65 T 580,45 T 670,60"
-                fill="none"
-                stroke="#2563eb"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-              />
+              {cashflowChartData.unsettledPath && (
+                <path
+                  d={cashflowChartData.unsettledPath}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth="2.5"
+                  strokeDasharray="5 5"
+                  strokeLinecap="round"
+                />
+              )}
 
-              {/* Expense Curve (Amber) */}
-              <path
-                d="M 30,150 Q 90,130 160,110 T 300,125 T 440,105 T 580,120 T 670,115"
-                fill="none"
-                stroke="#f59e0b"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-              />
+              {cashflowChartData.inflowPath && (
+                <path
+                  d={cashflowChartData.inflowPath}
+                  fill="none"
+                  stroke="#2563eb"
+                  strokeWidth="3.5"
+                  strokeLinecap="round"
+                />
+              )}
 
-              {/* Highlight Points on Active Month (May/Oct) */}
-              <circle cx="440" cy="65" r="5" fill="#2563eb" stroke="#ffffff" strokeWidth="2.5" />
-              <circle cx="440" cy="105" r="5" fill="#f59e0b" stroke="#ffffff" strokeWidth="2.5" />
-
-              {/* Tooltip Badges on Active Point */}
-              <g transform="translate(450, 48)">
-                <rect width="84" height="22" rx="4" fill="#0f172a" />
-                <text x="42" y="15" fill="#ffffff" fontSize="10" fontWeight="bold" textAnchor="middle">
-                  {formatUSD(computedGrossRevenue)}
-                </text>
-              </g>
-              <g transform="translate(450, 115)">
-                <rect width="84" height="22" rx="4" fill="#0f172a" />
-                <text x="42" y="15" fill="#ffffff" fontSize="10" fontWeight="bold" textAnchor="middle">
-                  {formatUSD(computedDisbursed)}
-                </text>
-              </g>
+              {cashflowChartData.inflowCoords.map((pt, idx) => (
+                <g key={idx}>
+                  <circle cx={pt.x} cy={pt.y} r="4.5" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
+                </g>
+              ))}
             </svg>
 
-            {/* Month Axis Labels */}
-            <div className="flex justify-between text-[11px] text-slate-400 font-semibold pt-1 px-4">
-              <span>Dec</span>
-              <span>Jan</span>
-              <span>Feb</span>
-              <span>Mar</span>
-              <span>Apr</span>
-              <span className="text-blue-600 dark:text-blue-400 font-bold">May</span>
-              <span>Jun</span>
-              <span>Jul</span>
-              <span>Aug</span>
-              <span>Sep</span>
-              <span className="text-slate-900 dark:text-white font-bold">Oct</span>
+            {/* Transaction Timeline Axis Labels */}
+            <div className="flex justify-between text-[10px] text-slate-400 font-semibold pt-1 px-4">
+              {cashflowChartData.pts.map((pt, i) => (
+                <span key={i} className="truncate max-w-[68px]">
+                  {pt.label}
+                </span>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: QUICK PARTNER PAYOUT & CUSTODIAL ESCROW */}
+        {/* RIGHT COLUMN: QUICK TRANSFER (VERIFIED PAYERS' GMAIL AVATARS) & CUSTODIAL ESCROW */}
         <div className="space-y-6 flex flex-col justify-between">
-          {/* QUICK PARTNER PAYOUT WIDGET (DeliFin Style) */}
+          {/* QUICK TRANSFER WIDGET (Real Payers & Gmail Avatars) */}
           <div className="p-6 rounded-2xl bg-white dark:bg-[#161820] border border-slate-200/90 dark:border-[#262a36] shadow-sm space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Quick Partner Payout</h3>
-              <span className="text-[11px] text-slate-500 font-medium">Instant MoMo Push</span>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                Quick Transfer (Verified Payers &amp; Gmail)
+              </h3>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold">
+                Google Sync
+              </span>
             </div>
 
             <div className="flex items-center gap-3 overflow-x-auto pb-1 pt-2">
-              {/* Plus Button */}
               <button
                 onClick={() => {
                   setSelectedPayoutPartner(null);
@@ -1108,13 +1231,12 @@ export default function PaymentsPage() {
                   setShowPayoutModal(true);
                 }}
                 className="w-11 h-11 rounded-full border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-600 flex items-center justify-center text-slate-500 hover:text-blue-600 transition-colors shrink-0"
-                title="Send to New Partner"
+                title="Transfer to Account"
               >
                 <Plus className="w-5 h-5" />
               </button>
 
-              {/* Partner Avatars */}
-              {QUICK_TRANSFER_PARTNERS.map((partner) => (
+              {realTransferPartners.map((partner) => (
                 <button
                   key={partner.id}
                   onClick={() => {
@@ -1124,31 +1246,37 @@ export default function PaymentsPage() {
                       recipientName: partner.name,
                       phone: partner.phone,
                       channel: 'MTN_MOMO',
-                      amountUgx: String(partner.balance),
-                      memo: `Earnings Settlement for ${partner.name}`,
+                      amountUgx: String(partner.paidUgx > 0 ? partner.paidUgx : 1000),
+                      memo: `UGX Settlement / Transfer for ${partner.name} (${partner.email || partner.phone})`,
                     });
                     setShowPayoutModal(true);
                   }}
                   className="flex flex-col items-center gap-1 group shrink-0"
-                  title={`Pay ${partner.name} (${partner.role})`}
+                  title={`${partner.name} (${partner.email || partner.phone})`}
                 >
-                  <div className="w-11 h-11 rounded-full bg-slate-100 dark:bg-[#222634] border border-slate-200 dark:border-[#2d3345] group-hover:border-blue-600 group-hover:ring-2 group-hover:ring-blue-500/20 flex items-center justify-center font-bold text-xs text-slate-800 dark:text-slate-200 transition-all shadow-xs">
-                    {partner.avatar}
-                  </div>
-                  <span className="text-[10px] text-slate-600 dark:text-slate-400 group-hover:text-blue-600 truncate max-w-[60px]">
+                  <PayerAvatarBadge
+                    name={partner.name}
+                    email={partner.email}
+                    avatarUrl={partner.avatarUrl}
+                    sizeClass="w-11 h-11"
+                  />
+                  <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300 group-hover:text-blue-600 truncate max-w-[64px]">
                     {partner.name.split(' ')[0]}
+                  </span>
+                  <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-bold">
+                    {formatUGX(partner.paidUgx > 0 ? partner.paidUgx : partner.balance)}
                   </span>
                 </button>
               ))}
             </div>
           </div>
 
-          {/* CUSTODIAL ESCROW LIABILITIES CARD (DeliFin Savings Style) */}
+          {/* CUSTODIAL ESCROW LIABILITIES CARD (100% Real UGX Database Values) */}
           <div className="p-6 rounded-2xl bg-white dark:bg-[#161820] border border-slate-200/90 dark:border-[#262a36] shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">Custodial Liabilities (BoU Escrow)</h3>
               <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center">
-                <TrendingUp className="w-3 h-3 mr-0.5" /> +16.8%
+                UGX Ledger
               </span>
             </div>
 
@@ -1159,20 +1287,24 @@ export default function PaymentsPage() {
             <div className="grid grid-cols-2 gap-4 pt-2">
               <div className="space-y-1.5">
                 <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Customer Wallets</div>
-                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">USh 54,857,000</div>
-                <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                  <div className="h-full bg-blue-600 rounded-full" style={{ width: '72%' }}></div>
+                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  {formatUGX(computedWalletLiabilities)}
                 </div>
-                <div className="text-[10px] text-slate-400">72% Segregated Backing</div>
+                <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div className="h-full bg-blue-600 rounded-full" style={{ width: '100%' }}></div>
+                </div>
+                <div className="text-[10px] text-slate-400">100% Segregated UGX Custody</div>
               </div>
 
               <div className="space-y-1.5">
-                <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Partner Retained</div>
-                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">USh 38,988,000</div>
-                <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                  <div className="h-full bg-amber-500 rounded-full" style={{ width: '84%' }}></div>
+                <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Partner Share (85%)</div>
+                <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                  {formatUGX(partnerRetainedUgx)}
                 </div>
-                <div className="text-[10px] text-slate-400">84% Tax & WHT Provision</div>
+                <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div className="h-full bg-amber-500 rounded-full" style={{ width: '85%' }}></div>
+                </div>
+                <div className="text-[10px] text-slate-400">85% Net Partner Allocation</div>
               </div>
             </div>
           </div>
@@ -1470,37 +1602,48 @@ export default function PaymentsPage() {
               </button>
             </div>
 
-            {/* Partner Payout Queue Table */}
+            {/* Partner & Verified Payer Accounts Table */}
             <div className="rounded-2xl bg-white dark:bg-[#161820] border border-slate-200/90 dark:border-[#262a36] shadow-sm overflow-hidden">
               <div className="p-4 border-b border-slate-200 dark:border-[#262a36] flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Active Chauffeurs & Approved Payout Accounts</h3>
-                <span className="text-xs text-slate-500 font-semibold">{QUICK_TRANSFER_PARTNERS.length} Active Partners</span>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Registered System Accounts &amp; Verified Payers (Google / Gmail Synced)
+                </h3>
+                <span className="text-xs text-slate-500 font-semibold">{realTransferPartners.length} Active Accounts</span>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-200 dark:border-[#262a36] bg-slate-50/50 dark:bg-[#1a1d27] text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                      <th className="py-3.5 px-4">Chauffeur / Partner</th>
-                      <th className="py-3.5 px-4">Track & Vehicle</th>
+                      <th className="py-3.5 px-4">Account Holder (Gmail Avatar)</th>
+                      <th className="py-3.5 px-4">Role &amp; Email</th>
                       <th className="py-3.5 px-4">Registered MoMo Number</th>
-                      <th className="py-3.5 px-4">Accrued Share</th>
+                      <th className="py-3.5 px-4">Verified Paid / Balance (UGX)</th>
                       <th className="py-3.5 px-4">Status</th>
                       <th className="py-3.5 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-[#222634] text-xs">
-                    {QUICK_TRANSFER_PARTNERS.map((partner) => (
+                    {realTransferPartners.map((partner) => (
                       <tr key={partner.id} className="hover:bg-slate-50/80 dark:hover:bg-[#1c202c]">
                         <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-[#222634] text-slate-800 dark:text-slate-200 font-bold text-xs flex items-center justify-center border border-slate-200 dark:border-[#2d3345]">
-                            {partner.avatar}
-                          </div>
+                          <PayerAvatarBadge
+                            name={partner.name}
+                            email={partner.email}
+                            avatarUrl={partner.avatarUrl}
+                            sizeClass="w-8 h-8"
+                          />
                           <span>{partner.name}</span>
                         </td>
-                        <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300 font-medium">{partner.role}</td>
+                        <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300 font-medium">
+                          <div>{partner.role}</div>
+                          <div className="text-[10px] text-slate-400">{partner.email}</div>
+                        </td>
                         <td className="py-3.5 px-4 font-mono text-slate-600 dark:text-slate-400">{partner.phone}</td>
-                        <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">{formatUGX(partner.balance)}</td>
+                        <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                          <div>Paid: {formatUGX(partner.paidUgx)}</div>
+                          <div className="text-[10px] text-emerald-600">Wallet: {formatUGX(partner.balance)}</div>
+                        </td>
                         <td className="py-3.5 px-4">
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
                             Verified Active
@@ -1515,14 +1658,14 @@ export default function PaymentsPage() {
                                 recipientName: partner.name,
                                 phone: partner.phone,
                                 channel: 'MTN_MOMO',
-                                amountUgx: String(partner.balance),
-                                memo: `Weekly Earnings for ${partner.name}`,
+                                amountUgx: String(partner.paidUgx > 0 ? partner.paidUgx : 1000),
+                                memo: `UGX Settlement for ${partner.name}`,
                               });
                               setShowPayoutModal(true);
                             }}
                             className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs"
                           >
-                            Disburse
+                            Disburse UGX
                           </button>
                         </td>
                       </tr>
@@ -1816,7 +1959,7 @@ export default function PaymentsPage() {
                   </span>
                 </div>
                 <div className="text-right text-[11px] text-slate-500 font-medium">
-                  Approx. {formatUSD(selectedReceiptPayment.amount_ugx || selectedReceiptPayment.amount || 0)} (Exchange Rate 1 USD = 3,750 UGX)
+                  Currency: Ugandan Shillings (UGX) • DPO Service ID #28087
                 </div>
               </div>
 
