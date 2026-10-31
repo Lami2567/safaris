@@ -278,20 +278,27 @@ export default function PaymentsPage() {
     setTimeout(() => setToastMessage(null), 4500);
   };
 
-  const formatUGX = (amount: number) => {
+  const formatUGX = (amount: any): string => {
+    if (amount === null || amount === undefined || amount === '') return 'USh 0';
+    const num = typeof amount === 'number' ? amount : parseFloat(String(amount).replace(/[^0-9.-]+/g, ''));
+    if (isNaN(num)) return 'USh 0';
     return new Intl.NumberFormat('en-UG', {
       style: 'currency',
       currency: 'UGX',
       maximumFractionDigits: 0,
-    }).format(amount);
+    }).format(num).replace('UGX', 'USh');
   };
 
-  const formatUSD = (ugxAmount: number) => {
-    const usd = ugxAmount / 3750;
+  const formatUSD = (ugxAmount: any): string => {
+    if (ugxAmount === null || ugxAmount === undefined || ugxAmount === '') return '$0.00';
+    const num = typeof ugxAmount === 'number' ? ugxAmount : parseFloat(String(ugxAmount).replace(/[^0-9.-]+/g, ''));
+    if (isNaN(num)) return '$0.00';
+    const usd = num / 3750;
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
-      maximumFractionDigits: 0,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     }).format(usd);
   };
 
