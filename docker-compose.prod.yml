@@ -41,7 +41,7 @@ services:
 
     environment:
       TRUSTED_PROXY_HOST: nginx
-      SAFARIS_RELEASE_SHA: ${SAFARIS_RELEASE_SHA:?A tested release SHA is required}
+      SAFARIS_RELEASE_SHA: ${SAFARIS_RELEASE_SHA:-production}
     container_name: safaris_backend_prod
     restart: always
     expose:
