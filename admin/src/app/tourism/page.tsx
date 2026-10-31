@@ -676,7 +676,6 @@ export default function TourismPage() {
                         <p className="text-base font-mono font-bold text-white mt-0.5">
                           UGX {Number(pkg.priceUgx || 0).toLocaleString()}
                         </p>
-                        <p className="text-xs text-white/50 font-mono">${pkg.priceUsd} USD</p>
                       </div>
 
                       <div className="flex items-center gap-1.5">
@@ -1579,7 +1578,7 @@ export default function TourismPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-white/60 uppercase font-mono">Duration (Days)</label>
                     <input
@@ -1597,16 +1596,6 @@ export default function TourismPage() {
                       step="50000"
                       value={pkgForm.priceUgx}
                       onChange={e => setPkgForm(prev => ({ ...prev, priceUgx: parseInt(e.target.value) || 0 }))}
-                      className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-white/60 uppercase font-mono">Display Price (USD)</label>
-                    <input
-                      type="number"
-                      step="10"
-                      value={pkgForm.priceUsd}
-                      onChange={e => setPkgForm(prev => ({ ...prev, priceUsd: parseInt(e.target.value) || 0 }))}
                       className="w-full mt-1 bg-black border border-white/20 rounded-md px-3 py-2 text-xs text-white font-mono"
                     />
                   </div>

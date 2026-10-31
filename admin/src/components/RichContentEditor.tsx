@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Type,
   Heading,
@@ -20,8 +20,130 @@ import {
   Edit3,
   Mic,
   Square,
+  Play,
 } from 'lucide-react';
 import { uploadMediaToR2, validateExternalMediaUrl } from '@/lib/storage';
+
+export function extractYouTubeId(rawUrl?: string): string | null {
+  if (!rawUrl) return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'youtu.be' || host.endsWith('.youtu.be')) {
+      const id = parsed.pathname.split('/').filter(Boolean)[0];
+      return id ? id.slice(0, 20) : null;
+    }
+    if (host.includes('youtube.com') || host.includes('youtube-nocookie.com')) {
+      const vParam = parsed.searchParams.get('v');
+      if (vParam) return vParam.slice(0, 20);
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts.length >= 2 && ['shorts', 'embed', 'live', 'v'].includes(parts[0])) {
+        return parts[1].slice(0, 20);
+      }
+    }
+  } catch {
+    const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([A-Za-z0-9_-]{6,20})/i);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function InlinePlayableVideo({
+  url,
+  title,
+  caption,
+}: {
+  url: string;
+  title?: string;
+  caption?: string;
+}) {
+  const [playing, setPlaying] = useState(false);
+  const ytId = extractYouTubeId(url);
+  const displayTitle = (title || caption || 'Safari Expedition Video').trim();
+
+  useEffect(() => {
+    setPlaying(false);
+  }, [url]);
+
+  if (!url) return null;
+
+  return (
+    <div className="space-y-1.5">
+      {playing ? (
+        ytId ? (
+          <div className="relative w-full aspect-video max-h-72 rounded-xl overflow-hidden border border-white/15 bg-black shadow-lg">
+            <iframe
+              src={`https://www.youtube.com/embed/${ytId}?autoplay=1&playsinline=1&rel=0&modestbranding=1`}
+              title={displayTitle}
+              referrerPolicy="strict-origin-when-cross-origin"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              className="w-full h-full border-0"
+            />
+          </div>
+        ) : (
+          <video
+            src={url}
+            controls
+            autoPlay
+            playsInline
+            className="w-full aspect-video max-h-72 rounded-xl border border-white/15 bg-black shadow-lg"
+          />
+        )
+      ) : (
+        <button
+          type="button"
+          onClick={() => setPlaying(true)}
+          className="relative w-full aspect-video max-h-64 rounded-xl overflow-hidden border border-white/15 bg-neutral-950 group text-left block shadow-lg focus:outline-none focus:ring-2 focus:ring-amber-400/60"
+        >
+          {ytId ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`https://img.youtube.com/vi/${ytId}/hqdefault.jpg`}
+              alt={displayTitle}
+              className="w-full h-full object-cover opacity-85 group-hover:scale-[1.02] transition-transform duration-300"
+            />
+          ) : (
+            <video
+              src={`${url}#t=0.5`}
+              preload="metadata"
+              muted
+              playsInline
+              className="w-full h-full object-cover opacity-80 pointer-events-none"
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/25 flex flex-col justify-between p-4">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/65 backdrop-blur-md border border-white/15 text-[10px] font-semibold uppercase tracking-wider text-amber-300">
+                <Video className="w-3 h-3" /> Safari Video
+              </span>
+            </div>
+
+            <div className="flex items-center justify-center my-auto">
+              <span className="w-14 h-14 rounded-full bg-amber-400 text-black flex items-center justify-center shadow-xl shadow-black/50 group-hover:scale-110 group-hover:bg-amber-300 transition-all">
+                <Play className="w-6 h-6 fill-current ml-0.5" />
+              </span>
+            </div>
+
+            <div>
+              <p className="text-sm font-bold text-white line-clamp-1 drop-shadow">
+                {displayTitle}
+              </p>
+              <p className="text-[11px] text-white/70">
+                Tap play button to watch inline
+              </p>
+            </div>
+          </div>
+        </button>
+      )}
+      {caption && caption !== displayTitle && (
+        <p className="text-[11px] text-white/50">{caption}</p>
+      )}
+    </div>
+  );
+}
 
 export interface ContentBlockItem {
   id: string;
@@ -197,7 +319,7 @@ export function RichContentEditor({ blocks, onChange }: RichContentEditorProps) 
             { type: 'heading', label: 'Heading', icon: Heading },
             { type: 'paragraph', label: 'Paragraph', icon: Type },
             { type: 'image', label: 'Photo (R2 / URL)', icon: ImageIcon },
-            { type: 'video', label: 'Video (R2 / URL)', icon: Video },
+            { type: 'video', label: 'Video (YouTube / R2)', icon: Video },
             { type: 'audio', label: 'Audio / Voice Guide', icon: Volume2 },
             { type: 'list', label: 'Bullet List', icon: List },
             { type: 'quote', label: 'Highlight Quote', icon: Quote },
@@ -255,10 +377,7 @@ export function RichContentEditor({ blocks, onChange }: RichContentEditorProps) 
                   </figure>
                 )}
                 {b.type === 'video' && b.url && (
-                  <div className="space-y-1">
-                    <video src={b.url} controls className="w-full max-h-64 rounded-lg border border-white/15 bg-black" />
-                    {b.caption && <p className="text-[11px] text-white/50">{b.caption}</p>}
-                  </div>
+                  <InlinePlayableVideo url={b.url} title={b.title} caption={b.caption} />
                 )}
                 {b.type === 'audio' && b.url && (
                   <div className="p-3 rounded-lg border border-white/15 bg-white/5 space-y-1.5">
@@ -277,7 +396,7 @@ export function RichContentEditor({ blocks, onChange }: RichContentEditorProps) 
                     className="inline-flex items-center gap-1.5 text-xs text-amber-400 underline"
                   >
                     <LinkIcon className="w-3.5 h-3.5" />
-                    {b.title || b.url}
+                    {b.title || b.caption || 'Open Resource'}
                   </a>
                 )}
               </div>
@@ -289,7 +408,7 @@ export function RichContentEditor({ blocks, onChange }: RichContentEditorProps) 
         <div className="space-y-3">
           {blocks.length === 0 && (
             <div className="text-center py-6 border border-dashed border-white/15 rounded-lg text-xs text-white/40">
-              No rich content blocks yet. Click any button above to insert text, Cloudflare R2 images, videos, or voice recordings.
+              No rich content blocks yet. Click any button above to insert text, YouTube or R2 videos, photos, or voice recordings.
             </div>
           )}
 
@@ -308,9 +427,14 @@ export function RichContentEditor({ blocks, onChange }: RichContentEditorProps) 
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/10 text-amber-300 uppercase">
                       #{idx + 1} • {block.type}
                     </span>
-                    {block.url && block.sourceType === 'CLOUDFLARE_R2' && (
+                    {block.url && (
                       <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" /> Cloudflare R2
+                        <CheckCircle2 className="w-3 h-3" />
+                        {extractYouTubeId(block.url)
+                          ? 'YouTube Video Ready'
+                          : block.sourceType === 'CLOUDFLARE_R2'
+                          ? 'Cloudflare R2 Ready'
+                          : 'Media Link Ready'}
                       </span>
                     )}
                   </div>
@@ -488,13 +612,25 @@ export function RichContentEditor({ blocks, onChange }: RichContentEditorProps) 
                       )}
                     </div>
 
-                    {/* Method 2: Paste External or Cloudflare R2 URL */}
+                    {/* Method 2: Paste YouTube, External, or Cloudflare R2 URL */}
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={block.url || ''}
-                        onChange={(e) => updateBlock(block.id, { url: e.target.value })}
-                        placeholder={`Or paste Cloudflare R2 / external ${block.type} URL (https://...)`}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const isR2 = val.includes('.r2.dev') || val.includes('r2.cloudflarestorage.com');
+                          setBlockErrors((prev) => ({ ...prev, [block.id]: '' }));
+                          updateBlock(block.id, {
+                            url: val,
+                            sourceType: isR2 ? 'CLOUDFLARE_R2' : 'EXTERNAL_URL',
+                          });
+                        }}
+                        placeholder={
+                          block.type === 'video'
+                            ? 'Paste YouTube link (https://youtu.be/... or youtube.com/watch?v=...) or R2 video URL'
+                            : `Or paste Cloudflare R2 / external ${block.type} URL (https://...)`
+                        }
                         className="flex-1 bg-black border border-white/15 rounded px-2.5 py-1.5 text-xs font-mono text-white"
                       />
                       <button
@@ -530,7 +666,9 @@ export function RichContentEditor({ blocks, onChange }: RichContentEditorProps) 
                       <img src={block.url} alt={block.caption || 'Preview'} className="h-32 rounded border border-white/15 object-cover" />
                     )}
                     {block.url && block.type === 'video' && (
-                      <video src={block.url} controls className="h-36 rounded border border-white/15 bg-black" />
+                      <div className="max-w-md pt-1">
+                        <InlinePlayableVideo url={block.url} title={block.title} caption={block.caption} />
+                      </div>
                     )}
                     {block.url && block.type === 'audio' && (
                       <audio src={block.url} controls className="w-full h-9" />

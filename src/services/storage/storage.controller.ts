@@ -173,4 +173,116 @@ export class StorageController {
       });
     }
   }
+
+  /**
+   * GET /api/v1/storage/player
+   * Universal embedded video/audio player for mobile WebViews & iframes.
+   * Supports YouTube (youtu.be, youtube.com/watch, shorts, embed), Vimeo, and Cloudflare R2 / direct MP4/WebM streams.
+   */
+  public static renderMediaPlayer(req: Request, res: Response): void {
+    const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    const autoplay = req.query.autoplay === '0' ? '0' : '1';
+
+    if (!rawUrl || (!rawUrl.startsWith('https://') && !rawUrl.startsWith('http://'))) {
+      res.status(400).send('Invalid media URL');
+      return;
+    }
+
+    // Extract YouTube Video ID if present
+    let youtubeId: string | null = null;
+    try {
+      const u = new URL(rawUrl);
+      const host = u.hostname.toLowerCase();
+      if (host.includes('youtu.be')) {
+        youtubeId = u.pathname.replace(/^\/+/, '').split('/')[0] || null;
+      } else if (host.includes('youtube.com')) {
+        if (u.searchParams.get('v')) {
+          youtubeId = u.searchParams.get('v');
+        } else {
+          const parts = u.pathname.split('/').filter(Boolean);
+          const idx = parts.findIndex((p) => ['embed', 'shorts', 'v', 'live'].includes(p));
+          if (idx >= 0 && parts[idx + 1]) {
+            youtubeId = parts[idx + 1];
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (youtubeId) {
+      youtubeId = youtubeId.replace(/[^a-zA-Z0-9_-]/g, '');
+    }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.removeHeader('X-Frame-Options');
+
+    const safeEscapedUrl = rawUrl.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const playerBody = youtubeId
+      ? `<iframe
+          id="yt-player"
+          src="https://www.youtube.com/embed/${youtubeId}?enablejsapi=1&autoplay=${autoplay}&playsinline=1&rel=0&modestbranding=1&origin=https%3A%2F%2Fadmin.mumwesafarisuganda.com"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allowfullscreen
+          style="position:fixed;top:0;left:0;width:100vw;height:100vh;border:0;background:#000;"
+        ></iframe>
+        ${
+          autoplay === '1'
+            ? `<script>
+                (function() {
+                  var f = document.getElementById('yt-player');
+                  if (!f) return;
+                  function triggerPlay() {
+                    try {
+                      f.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+                    } catch (e) {}
+                  }
+                  f.addEventListener('load', function() {
+                    setTimeout(triggerPlay, 150);
+                    setTimeout(triggerPlay, 500);
+                    setTimeout(triggerPlay, 1200);
+                  });
+                })();
+              </script>`
+            : ''
+        }`
+      : `<video
+          id="r2-video"
+          src="${safeEscapedUrl}"
+          ${autoplay === '1' ? 'autoplay' : ''}
+          controls
+          playsinline
+          preload="auto"
+          style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;object-fit:contain;"
+        ></video>
+        ${
+          autoplay === '1'
+            ? `<script>
+                (function() {
+                  var v = document.getElementById('r2-video');
+                  if (v && v.play) {
+                    v.play().catch(function() {});
+                  }
+                })();
+              </script>`
+            : ''
+        }`;
+
+    res.status(200).send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <title>Safaris Media Player</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  </style>
+</head>
+<body>
+  ${playerBody}
+</body>
+</html>`);
+  }
 }

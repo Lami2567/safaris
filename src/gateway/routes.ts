@@ -41,6 +41,7 @@ apiRouter.post('/storage/upload', authenticate, StorageController.uploadDirect);
 apiRouter.post('/storage/validate-media-url', StorageController.validateMediaUrl);
 apiRouter.get('/storage/status', StorageController.getStatus);
 apiRouter.get('/storage/private-url', authenticate, StorageController.getPresignedDownloadUrl);
+apiRouter.get('/storage/player', StorageController.renderMediaPlayer);
 
 // -------------------------------------------------------------
 // Centralized Vehicle Catalogue & Server-Side Pricing Engine
