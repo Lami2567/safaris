@@ -276,10 +276,15 @@ export class PaymentController {
    */
   public static adminListPayments(req: Request, res: Response) {
     try {
+      const rawEnv = (req.query.environment || req.query.payment_environment) as string;
+      const envFilter = rawEnv && rawEnv.toUpperCase() !== 'ALL' ? rawEnv : undefined;
+      const rawStatus = req.query.status as string;
+      const statusFilter = rawStatus && rawStatus.toUpperCase() !== 'ALL' ? rawStatus : undefined;
+
       const result = PaymentService.listPayments({
         search: req.query.search as string,
-        status: req.query.status as string,
-        environment: req.query.environment as string,
+        status: statusFilter,
+        environment: envFilter,
         method: req.query.method as string,
         referenceType: req.query.referenceType as string,
         from: req.query.from as string,
@@ -287,7 +292,11 @@ export class PaymentController {
         limit: req.query.limit ? Number(req.query.limit) : undefined,
         offset: req.query.offset ? Number(req.query.offset) : undefined,
       });
-      return sendSuccess(res, result);
+      return sendSuccess(res, {
+        total: result.total,
+        items: result.items,
+        payments: result.items,
+      });
     } catch (err: any) {
       return sendError(res, 'ADMIN_PAYMENTS_ERROR', err.message, 500);
     }

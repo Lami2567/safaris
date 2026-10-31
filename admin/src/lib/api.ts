@@ -231,6 +231,7 @@ export const api = {
   // DPO Payments & Gateway Administration
   getPayments: (params?: {
     status?: string;
+    environment?: string;
     payment_environment?: string;
     service_type?: string;
     search?: string;
@@ -239,7 +240,11 @@ export const api = {
   }) => {
     const q = new URLSearchParams();
     if (params?.status) q.set('status', params.status);
-    if (params?.payment_environment) q.set('payment_environment', params.payment_environment);
+    const env = params?.environment || params?.payment_environment;
+    if (env) {
+      q.set('environment', env);
+      q.set('payment_environment', env);
+    }
     if (params?.service_type) q.set('service_type', params.service_type);
     if (params?.search) q.set('search', params.search);
     if (params?.limit) q.set('limit', String(params.limit));
@@ -247,6 +252,7 @@ export const api = {
     const qs = q.toString();
     return fetcher<{
       payments: any[];
+      items?: any[];
       total: number;
       limit: number;
       offset: number;
