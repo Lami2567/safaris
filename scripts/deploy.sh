@@ -85,9 +85,23 @@ echo "🔨 Building Docker production containers..."
 # Always build backend container for the new commit
 docker compose -f docker-compose.prod.yml --env-file .env.production build backend
 
-# Always build admin dashboard container for the new commit
-echo "🔨 Building admin dashboard image..."
-docker compose -f docker-compose.prod.yml --env-file .env.production build admin
+# Admin dashboard deployment: check for prebuilt bundle to protect 512MB RAM VPS from swap thrashing
+if [ -f "admin_build.tar.gz" ]; then
+  echo "📦 Extracting prebuilt admin bundle from admin_build.tar.gz..."
+  rm -rf admin_prebuilt
+  mkdir -p admin_prebuilt
+  tar -xzf admin_build.tar.gz -C admin_prebuilt
+fi
+
+if [ -d "admin_prebuilt" ] && [ -f "admin_prebuilt/Dockerfile" ]; then
+  echo "🔨 Building admin dashboard image from admin_prebuilt (fast runner)..."
+  docker build -t safaris-admin:latest -t safaris-admin admin_prebuilt
+elif docker image inspect safaris-admin:latest >/dev/null 2>&1; then
+  echo "ℹ️  Preserving existing safaris-admin container image to protect low-memory host."
+else
+  echo "🔨 Building admin dashboard image from source..."
+  docker compose -f docker-compose.prod.yml --env-file .env.production build admin
+fi
 
 # The private applicant status flow requires deliverable SMTP, never a logged token fallback.
 docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backend node -e "const {ENV}=require('./dist/config/env'); if (!ENV.SMTP_HOST || !ENV.SMTP_USER || !ENV.SMTP_PASS) throw new Error('SMTP configuration is required for private application status links');"
