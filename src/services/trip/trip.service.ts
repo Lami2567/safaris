@@ -104,10 +104,31 @@ export class TripService {
     const serviceKey = serviceCategory === 'AIRPORT_SHUTTLE' ? 'airport_shuttle' : 'ride_hailing';
 
     // Calculate server-authoritative route distance based on coordinates
-    const pickupLat = Number(data.pickupLat ?? 0.3136);
-    const pickupLng = Number(data.pickupLng ?? 32.5811);
-    const destLat = Number(data.destLat ?? 0.0424);
-    const destLng = Number(data.destLng ?? 32.4435);
+    if (
+      data.pickupLat === undefined ||
+      data.pickupLng === undefined ||
+      data.destLat === undefined ||
+      data.destLng === undefined ||
+      !Number.isFinite(Number(data.pickupLat)) ||
+      !Number.isFinite(Number(data.pickupLng)) ||
+      !Number.isFinite(Number(data.destLat)) ||
+      !Number.isFinite(Number(data.destLng))
+    ) {
+      throw new Error('Verified pickup and destination coordinates are required to create a trip.');
+    }
+    const pickupLat = Number(data.pickupLat);
+    const pickupLng = Number(data.pickupLng);
+    const destLat = Number(data.destLat);
+    const destLng = Number(data.destLng);
+
+    if (
+      (!data.quotationId &&
+        ((Math.abs(pickupLat) < 0.0001 && Math.abs(pickupLng) < 0.0001) ||
+          (Math.abs(destLat) < 0.0001 && Math.abs(destLng) < 0.0001))) ||
+      (Math.abs(pickupLat - destLat) < 0.00001 && Math.abs(pickupLng - destLng) < 0.00001)
+    ) {
+      throw new Error('Invalid (0, 0) coordinates rejected. Real Uganda pickup and destination coordinates are required.');
+    }
 
     const serverDistanceKm = PricingEngineService.calculateServerDistanceKm(
       pickupLat,
@@ -116,8 +137,8 @@ export class TripService {
       destLng
     );
 
-    // Authoritative chargeable distance server-side; client distance parameter is ignored
-    const distanceKm = serverDistanceKm;
+    // Authoritative chargeable distance server-side; updated from verified quotation if present
+    let distanceKm = serverDistanceKm;
 
     let fareUGX = 0;
     let quotationId: string | null = data.quotationId || null;
@@ -138,6 +159,9 @@ export class TripService {
       });
       fareUGX = Number(existingQuote.total_price_ugx || existingQuote.totalPriceUgx || 0);
       pricingVersion = Number(existingQuote.pricing_version || existingQuote.pricingVersion || 1);
+      if (Number(existingQuote.distance_km || existingQuote.distanceKm) > 0) {
+        distanceKm = Number(existingQuote.distance_km || existingQuote.distanceKm);
+      }
       quotationSnapshot = existingQuote;
     } else {
       const catVehicle = PricingEngineService.getCatalogueVehicleByIdOrCode(tierKey);
@@ -189,14 +213,14 @@ export class TripService {
       customer_name: customer?.full_name || 'Safaris Customer',
       customer_phone: customer?.phone || '',
       driver_id: null,
-      pickup_title: data.pickupTitle || 'Kampala Pickup',
-      pickup_address: data.pickupAddress || data.pickupTitle || 'Kampala',
-      pickup_lat: Number(data.pickupLat ?? 0.3136),
-      pickup_lng: Number(data.pickupLng ?? 32.5811),
+      pickup_title: data.pickupTitle || 'Pickup Location',
+      pickup_address: data.pickupAddress || data.pickupTitle || 'Uganda',
+      pickup_lat: pickupLat,
+      pickup_lng: pickupLng,
       dest_title: data.destTitle || 'Destination',
-      dest_address: data.destAddress || data.destTitle || 'Kampala',
-      dest_lat: Number(data.destLat ?? 0.3476),
-      dest_lng: Number(data.destLng ?? 32.5825),
+      dest_address: data.destAddress || data.destTitle || 'Uganda',
+      dest_lat: destLat,
+      dest_lng: destLng,
       vehicle_tier: tierKey,
       service_category: serviceCategory,
       quotation_id: quotationId,
@@ -341,9 +365,11 @@ export class TripService {
     if (trip.customer_id) {
       emitToUser(trip.customer_id, 'trip:driver_assigned', assignedPayload);
       emitToUser(trip.customer_id, 'trip:status_change', assignedPayload);
+      emitToUser(trip.customer_id, 'trip:status_changed', assignedPayload);
     }
     emitToUser(driverId, 'trip:driver_assigned', assignedPayload);
     emitToTrip(tripId, 'trip:status_change', assignedPayload);
+    emitToTrip(tripId, 'trip:status_changed', assignedPayload);
 
     // Update Admin Map marker to Blue (Assigned/In Trip) immediately
     broadcastDriverSnapshot(driverId, 'fleet:status_update');
@@ -406,6 +432,10 @@ export class TripService {
     const trip = localStore.trips.get(tripId);
     if (!trip) throw new Error('Trip not found.');
 
+    if (driverId && trip.driver_id && driverId !== trip.driver_id) {
+      throw new Error('Unauthorized: only the assigned driver can update this trip location.');
+    }
+
     const effectiveDriverId = driverId || trip.driver_id;
     if (effectiveDriverId) {
       const driver = localStore.drivers.get(effectiveDriverId);
@@ -421,21 +451,39 @@ export class TripService {
       }
     }
 
+    const isEnRouteToDestination = trip.status === 'TRIP_STARTED';
+    const targetLat = Number(isEnRouteToDestination ? trip.dest_lat : trip.pickup_lat);
+    const targetLng = Number(isEnRouteToDestination ? trip.dest_lng : trip.pickup_lng);
+    const remainingDistanceKm = PricingEngineService.calculateServerDistanceKm(
+      Number(lat),
+      Number(lng),
+      targetLat,
+      targetLng
+    );
+    const etaMinutes = Math.max(1, Math.round((remainingDistanceKm / 35) * 60));
+
     const locPayload = {
       tripId,
       driverId: effectiveDriverId,
       lat: Number(lat),
       lng: Number(lng),
+      latitude: Number(lat),
+      longitude: Number(lng),
       heading: Number(heading || 0),
+      targetStage: isEnRouteToDestination ? 'TO_DESTINATION' : 'TO_PICKUP',
+      remainingDistanceKm,
+      etaMinutes,
       timestamp: Date.now(),
     };
 
     emitToTrip(tripId, 'trip:driver_location', locPayload);
+    emitToTrip(tripId, 'driver:location_update', locPayload);
     if (trip.customer_id) {
       emitToUser(trip.customer_id, 'trip:driver_location', locPayload);
+      emitToUser(trip.customer_id, 'driver:location_update', locPayload);
     }
 
-    return { tripId, lat: Number(lat), lng: Number(lng), heading: Number(heading || 0) };
+    return locPayload;
   }
 
   /**
@@ -560,15 +608,18 @@ export class TripService {
 
     // Emit live update to trip room, customer, driver, and admin fleet
     emitToTrip(tripId, 'trip:status_change', statusPayload);
+    emitToTrip(tripId, 'trip:status_changed', statusPayload);
     broadcastToFleet(statusPayload, 'trip:status_change');
 
     if (trip.driver_id) {
       broadcastDriverSnapshot(trip.driver_id, 'fleet:status_update');
       emitToUser(trip.driver_id, 'trip:status_change', statusPayload);
+      emitToUser(trip.driver_id, 'trip:status_changed', statusPayload);
     }
 
     if (trip.customer_id) {
       emitToUser(trip.customer_id, 'trip:status_change', statusPayload);
+      emitToUser(trip.customer_id, 'trip:status_changed', statusPayload);
 
       let notifTitle = '';
       let notifMessage = '';

@@ -17,6 +17,7 @@ import { StorageController } from '../services/storage/storage.controller';
 import { CareerController } from '../services/career/career.controller';
 import { FinancialController } from '../services/financial/financial.controller';
 import { PricingEngineController } from '../services/pricing/pricing_engine.controller';
+import { MapsController } from '../services/maps/maps.controller';
 import { authenticate, requireRole } from './auth_middleware';
 
 export const apiRouter = Router();
@@ -56,6 +57,13 @@ apiRouter.put('/admin/pricing/rules/:serviceKey', authenticate, requireRole('adm
 
 apiRouter.post('/pricing/quote', authenticate, PricingEngineController.calculateQuote);
 apiRouter.get('/pricing/quote/:quotationId', authenticate, PricingEngineController.getQuotation);
+
+// -------------------------------------------------------------
+// Maps, Uganda Destination Search & Verified Road Routing
+// -------------------------------------------------------------
+apiRouter.get('/maps/search', MapsController.searchPlaces);
+apiRouter.get('/maps/route', MapsController.getRoute);
+apiRouter.post('/maps/route', MapsController.getRoute);
 
 // -------------------------------------------------------------
 // Careers Portal Integration (careers.mumwesafarisuganda.com)

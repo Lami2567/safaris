@@ -1,18 +1,19 @@
-import 'dart:math' as math;
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/config/remote_config_service.dart';
 import '../../../core/services/live_fleet_service.dart';
+import '../../../core/services/mapbox_service.dart';
 import '../../../core/services/navigation_service.dart';
 import '../../../core/services/user_location_provider.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/utils/currency_formatter.dart';
-import '../../../core/utils/geo_utils.dart';
 import '../../../shared/components/safaris_map_view.dart';
 import '../../../shared/models/location_model.dart';
+import '../../../shared/widgets/safaris_button.dart';
 import '../../rides/models/ride_model.dart';
 import '../../rides/ride_provider.dart';
 import '../../tourism/services/tourism_api_service.dart';
@@ -41,33 +42,43 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
   LocationModel _pickupLocation = LocationModel.kampalaCentral;
   LocationModel? _destinationLocation;
   bool _isNavigating = false;
-  int _selectedVehicleIndex = 1; // Default to Safaris Go (Economy)
+  int _selectedVehicleIndex = 1; // Default to Safaris Go
+
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _manualPickupController = TextEditingController();
-  bool _isSearching = false;
-  bool _showManualPickupInput = false;
-  List<LocationModel> _filteredPresets = [];
 
-  final NavigationManeuver _demoManeuver = NavigationManeuver(
-    type: ManeuverType.turnRight,
-    instruction: 'In 300m, turn right onto Entebbe Expressway (Tollway)',
-    distanceMeters: 300,
-    estimatedSeconds: 25,
-    roadName: 'Entebbe Expressway',
-  );
+  bool _isSearching = false;
+  bool _isLoadingSearch = false;
+  bool _showManualPickupInput = false;
+  bool _isLoadingPickupSearch = false;
+
+  List<LocationModel> _destinationSuggestions = [];
+  List<LocationModel> _pickupSuggestions = [];
+  Timer? _destDebounce;
+  Timer? _pickupDebounce;
+  int _destSearchSeq = 0;
+  int _pickupSearchSeq = 0;
+
+  double _verifiedRoadDistanceKm = 0.0;
+  int _verifiedDurationMins = 0;
+  bool _isRouteUnavailable = false;
+  NavigationManeuver? _activeManeuver;
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialDestination != null) {
+    if (widget.initialDestination != null &&
+        widget.initialDestination!.hasValidUgandaCoordinates) {
       _destinationLocation = widget.initialDestination;
       _searchController.text = widget.initialDestination!.title;
     }
-    _filteredPresets = LocationModel.presets;
+    _destinationSuggestions = LocationModel.presets;
   }
 
   @override
   void dispose() {
+    _destDebounce?.cancel();
+    _pickupDebounce?.cancel();
     _searchController.dispose();
     _manualPickupController.dispose();
     super.dispose();
@@ -76,75 +87,165 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
   List<LocationModel> _getAllDestinations() {
     final live = ref.read(destinationsListProvider).value;
     if (live != null && live.isNotEmpty) {
-      return live.map((d) => d.toLocationModel()).toList();
+      return live
+          .map((d) => d.toLocationModel())
+          .where((l) => l.hasValidUgandaCoordinates)
+          .toList();
     }
     return LocationModel.presets;
   }
 
-  void _onPickupChoiceChanged(MapPickupChoice choice) {
+  Future<void> _onPickupChoiceChanged(MapPickupChoice choice) async {
     setState(() {
       _pickupChoice = choice;
-      if (choice == MapPickupChoice.kampalaCenter) {
+    });
+
+    if (choice == MapPickupChoice.kampalaCenter) {
+      setState(() {
         _pickupLocation = LocationModel.kampalaCentral;
         _showManualPickupInput = false;
-      } else if (choice == MapPickupChoice.currentLocation) {
+        _pickupSuggestions = [];
+      });
+    } else if (choice == MapPickupChoice.currentLocation) {
+      setState(() {
         _showManualPickupInput = false;
-        final userLoc = ref.read(userLocationProvider);
-        if (userLoc.hasCoordinates) {
+        _pickupSuggestions = [];
+      });
+      var userLoc = ref.read(userLocationProvider);
+      if (!userLoc.hasCoordinates) {
+        await ref
+            .read(userLocationProvider.notifier)
+            .requestLocationAggressively();
+        userLoc = ref.read(userLocationProvider);
+      }
+      if (!mounted) return;
+      if (userLoc.hasCoordinates) {
+        setState(() {
           _pickupLocation = LocationModel(
             id: 'current_gps',
             title: 'My Current Location',
-            address: userLoc.locality.isNotEmpty ? userLoc.locality : 'Kampala, Uganda',
+            address: userLoc.locality.isNotEmpty
+                ? userLoc.locality
+                : 'GPS (${userLoc.latitude!.toStringAsFixed(4)}, ${userLoc.longitude!.toStringAsFixed(4)})',
             city: userLoc.locality.split(',').first,
             latitude: userLoc.latitude!,
             longitude: userLoc.longitude!,
           );
-        } else {
-          _pickupLocation = LocationModel.kampalaCentral;
-        }
+        });
       } else {
-        // Manual entry
-        _showManualPickupInput = true;
-      }
-    });
-  }
-
-  void _onManualPickupEntered(String value) {
-    if (value.trim().isNotEmpty) {
-      setState(() {
-        _pickupLocation = LocationModel(
-          id: 'manual_pickup',
-          title: value.trim(),
-          address: value.trim(),
-          city: 'Kampala',
-          latitude: 0.3136,
-          longitude: 32.5811,
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Hardware GPS is unavailable or denied. Please enable GPS or search your pickup location manually.',
+            ),
+            backgroundColor: AppColors.error,
+          ),
         );
+      }
+    } else {
+      setState(() {
+        _showManualPickupInput = true;
       });
     }
   }
 
-  void _onSearchChanged(String query) {
-    final all = _getAllDestinations();
+  /// Searches Uganda locations for manual pickup — never assigns hardcoded Kampala coordinates
+  void _onManualPickupSearchChanged(String query) {
+    _pickupDebounce?.cancel();
+    final trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setState(() {
+        _pickupSuggestions = [];
+        _isLoadingPickupSearch = false;
+      });
+      return;
+    }
+
+    setState(() => _isLoadingPickupSearch = true);
+    final seq = ++_pickupSearchSeq;
+
+    _pickupDebounce = Timer(const Duration(milliseconds: 280), () async {
+      final userLoc = ref.read(userLocationProvider);
+      final results = await MapboxService().searchPlaces(
+        trimmed,
+        proximityLat: userLoc.latitude,
+        proximityLng: userLoc.longitude,
+        limit: 8,
+      );
+      if (!mounted || seq != _pickupSearchSeq) return;
+      setState(() {
+        _pickupSuggestions = results;
+        _isLoadingPickupSearch = false;
+      });
+    });
+  }
+
+  void _selectManualPickupLocation(LocationModel loc) {
+    if (!loc.hasValidUgandaCoordinates) return;
     setState(() {
-      if (query.trim().isEmpty) {
-        _filteredPresets = all;
-      } else {
-        _filteredPresets = all.where((loc) {
-          return loc.title.toLowerCase().contains(query.toLowerCase()) ||
-              loc.address.toLowerCase().contains(query.toLowerCase()) ||
-              loc.city.toLowerCase().contains(query.toLowerCase());
-        }).toList();
-      }
+      _pickupLocation = loc;
+      _manualPickupController.text = loc.title;
+      _pickupSuggestions = [];
+      _verifiedRoadDistanceKm = 0.0;
+    });
+    FocusScope.of(context).unfocus();
+  }
+
+  void _onSearchChanged(String query) {
+    _destDebounce?.cancel();
+    final trimmed = query.trim();
+    if (_destinationLocation != null &&
+        _destinationLocation!.title != trimmed) {
+      _destinationLocation = null;
+      _verifiedRoadDistanceKm = 0.0;
+      _verifiedDurationMins = 0;
+    }
+
+    if (trimmed.length < 2) {
+      setState(() {
+        _destinationSuggestions = _getAllDestinations();
+        _isLoadingSearch = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _isLoadingSearch = true;
+    });
+    final seq = ++_destSearchSeq;
+
+    _destDebounce = Timer(const Duration(milliseconds: 280), () async {
+      final results = await MapboxService().searchPlaces(
+        trimmed,
+        proximityLat: _pickupLocation.latitude,
+        proximityLng: _pickupLocation.longitude,
+        limit: 12,
+      );
+      if (!mounted || seq != _destSearchSeq) return;
+      setState(() {
+        _destinationSuggestions = results;
+        _isLoadingSearch = false;
+      });
     });
   }
 
   void _selectDestination(LocationModel destination) {
+    if (!destination.hasValidUgandaCoordinates) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selected place does not have verified Uganda coordinates.'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
     setState(() {
       _destinationLocation = destination;
       _searchController.text = destination.title;
       _isSearching = false;
       _isNavigating = false;
+      _isRouteUnavailable = false;
     });
     FocusScope.of(context).unfocus();
   }
@@ -155,42 +256,44 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
       _searchController.clear();
       _isSearching = false;
       _isNavigating = false;
-      _filteredPresets = _getAllDestinations();
+      _verifiedRoadDistanceKm = 0.0;
+      _verifiedDurationMins = 0;
+      _isRouteUnavailable = false;
+      _destinationSuggestions = _getAllDestinations();
     });
   }
 
-  NavigationManeuver _buildNavigationManeuver(LocationModel destination, double distKm) {
-    final title = destination.title.toLowerCase();
-    String road = 'Primary Route Corridor';
-    String instruction = 'Proceed towards ${destination.title}';
-    if (title.contains('airport') || title.contains('entebbe')) {
-      road = 'Entebbe Expressway (Tollway)';
-      instruction = 'Take Entebbe Expressway South towards Entebbe Airport';
-    } else if (title.contains('jinja') || title.contains('source')) {
-      road = 'Kampala-Jinja Highway';
-      instruction = 'Proceed East on Kampala-Jinja Highway towards Nile Bridge';
-    } else if (title.contains('bwindi') || title.contains('mbarara') || title.contains('queen')) {
-      road = 'Masaka-Mbarara Highway';
-      instruction = 'Continue South-West along Masaka-Mbarara Highway';
-    } else if (title.contains('murchison') || title.contains('gulu')) {
-      road = 'Gulu-Kampala Highway';
-      instruction = 'Follow Gulu Highway North towards Murchison Falls';
-    } else {
-      road = destination.address.isNotEmpty ? destination.address.split(',').first : 'Main Corridor';
-      instruction = 'Head towards ${destination.title} via $road';
+  void _onRouteResolved(DirectionsRouteResult route) {
+    if (!mounted) return;
+    if (!route.isValid || route.distanceKm <= 0) {
+      setState(() {
+        _isRouteUnavailable = true;
+        _verifiedRoadDistanceKm = 0.0;
+        _verifiedDurationMins = 0;
+      });
+      return;
     }
-    return NavigationManeuver(
-      type: ManeuverType.straight,
-      instruction: instruction,
-      distanceMeters: (distKm * 1000).clamp(100, 20000),
-      estimatedSeconds: (distKm * 65).clamp(30, 7200).round(),
-      roadName: road,
-    );
+    setState(() {
+      _isRouteUnavailable = false;
+      _verifiedRoadDistanceKm = route.distanceKm;
+      _verifiedDurationMins = route.durationMinutes;
+      if (route.maneuvers.isNotEmpty) {
+        _activeManeuver = route.maneuvers.first;
+      }
+    });
   }
 
   void _onDriverSelected(LiveDriverLocation driver) {
-    if (_destinationLocation != null) {
-      ref.read(rideBookingProvider.notifier).setLocations(_pickupLocation, _destinationLocation!);
+    if (_destinationLocation != null &&
+        _destinationLocation!.hasValidUgandaCoordinates) {
+      ref.read(rideBookingProvider.notifier).setLocations(
+            _pickupLocation,
+            _destinationLocation!,
+            verifiedRoadDistanceKm:
+                _verifiedRoadDistanceKm > 0 ? _verifiedRoadDistanceKm : null,
+            verifiedDurationMinutes:
+                _verifiedDurationMins > 0 ? _verifiedDurationMins : null,
+          );
       context.push(
         '/rides/vehicle-select',
         extra: {
@@ -203,7 +306,9 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Selected ${driver.name} (${driver.plate}). Select destination to plan route.'),
+          content: Text(
+            'Selected ${driver.name} (${driver.plate}). Select a verified destination to plan route.',
+          ),
           backgroundColor: AppColors.surfaceElevated,
           duration: const Duration(seconds: 3),
         ),
@@ -236,33 +341,23 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
     final double? userLng = userLoc.longitude;
 
     final remoteConfig = ref.watch(remoteConfigProvider);
-    final vehicleOptions = VehicleOption.getOptionsWithPricing(remoteConfig.pricing);
+    final vehicleOptions = VehicleOption.getOptionsWithPricing(
+      remoteConfig.pricing,
+      catalogueVehicles: remoteConfig.catalogueVehicles,
+      serviceKey: 'ride_hailing',
+    );
 
     final destinationsAsync = ref.watch(destinationsListProvider);
     final liveDestinations = destinationsAsync.value ?? [];
     final availableDestinations = liveDestinations.isNotEmpty
-        ? liveDestinations.map((d) => d.toLocationModel()).toList()
+        ? liveDestinations
+            .map((d) => d.toLocationModel())
+            .where((l) => l.hasValidUgandaCoordinates)
+            .toList()
         : LocationModel.presets;
 
-    double distanceKm = 0.0;
-    int durationMins = 0;
-    if (_destinationLocation != null) {
-      distanceKm = math.max(
-        1.2,
-        GeoUtils.haversineDistance(
-          _pickupLocation.latitude,
-          _pickupLocation.longitude,
-          _destinationLocation!.latitude,
-          _destinationLocation!.longitude,
-        ),
-      );
-      final speed = distanceKm > 35 ? 55.0 : 32.0;
-      durationMins = math.max(3, (distanceKm / speed * 60).round());
-    }
-
-    final activeManeuver = _destinationLocation != null
-        ? _buildNavigationManeuver(_destinationLocation!, distanceKm)
-        : _demoManeuver;
+    final double distanceKm = _verifiedRoadDistanceKm;
+    final int durationMins = _verifiedDurationMins;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -270,7 +365,11 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
         backgroundColor: AppColors.surface,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: AppColors.textPrimary),
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            size: 18,
+            color: AppColors.textPrimary,
+          ),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
@@ -286,7 +385,10 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
               padding: const EdgeInsets.only(right: 16),
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.success.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
@@ -346,39 +448,110 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      _buildPickupChip('Kampala Center', MapPickupChoice.kampalaCenter),
+                      _buildPickupChip(
+                        'Kampala Center',
+                        MapPickupChoice.kampalaCenter,
+                      ),
                       const SizedBox(width: 6),
-                      _buildPickupChip('Current GPS', MapPickupChoice.currentLocation),
+                      _buildPickupChip(
+                        'Current GPS',
+                        MapPickupChoice.currentLocation,
+                      ),
                       const SizedBox(width: 6),
-                      _buildPickupChip('Manual Location', MapPickupChoice.manual),
+                      _buildPickupChip(
+                        'Manual Location',
+                        MapPickupChoice.manual,
+                      ),
                     ],
                   ),
                   if (_showManualPickupInput) ...[
                     const SizedBox(height: 10),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.surfaceElevated,
                         borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                         border: Border.all(color: AppColors.border, width: 0.8),
                       ),
-                      child: TextField(
-                        controller: _manualPickupController,
-                        style: AppTypography.bodySmall.copyWith(color: AppColors.textPrimary),
-                        decoration: InputDecoration(
-                          hintText: 'Enter pickup address in Uganda...',
-                          hintStyle: AppTypography.bodySmall.copyWith(color: AppColors.textTertiary),
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                        ),
-                        onSubmitted: _onManualPickupEntered,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _manualPickupController,
+                              onChanged: _onManualPickupSearchChanged,
+                              style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.textPrimary,
+                              ),
+                              decoration: InputDecoration(
+                                hintText:
+                                    'Search pickup town, street or landmark in Uganda...',
+                                hintStyle: AppTypography.bodySmall.copyWith(
+                                  color: AppColors.textTertiary,
+                                ),
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  vertical: 8,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (_isLoadingPickupSearch)
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.accent,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
+                    if (_pickupSuggestions.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 160),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceElevated,
+                          borderRadius:
+                              BorderRadius.circular(AppSpacing.radiusSm),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: _pickupSuggestions.length,
+                          separatorBuilder: (_, __) =>
+                              Divider(color: AppColors.border, height: 1),
+                          itemBuilder: (context, idx) {
+                            final loc = _pickupSuggestions[idx];
+                            return ListTile(
+                              dense: true,
+                              title: Text(
+                                loc.title,
+                                style: AppTypography.titleSmall
+                                    .copyWith(fontSize: 12),
+                              ),
+                              subtitle: Text(
+                                loc.address,
+                                style: AppTypography.bodySmall
+                                    .copyWith(fontSize: 10),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onTap: () => _selectManualPickupLocation(loc),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 8),
                   Text(
-                    'From: ${_pickupLocation.title}',
+                    'From: ${_pickupLocation.title} (${_pickupLocation.latitude.toStringAsFixed(4)}, ${_pickupLocation.longitude.toStringAsFixed(4)})',
                     style: AppTypography.bodySmall.copyWith(
                       color: AppColors.textTertiary,
                       fontSize: 11,
@@ -413,7 +586,10 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                   ),
                   const SizedBox(height: 10),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.surfaceElevated,
                       borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
@@ -421,30 +597,69 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.search_rounded, size: 18, color: AppColors.accent),
+                        const Icon(
+                          Icons.search_rounded,
+                          size: 18,
+                          color: AppColors.accent,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: TextField(
                             controller: _searchController,
                             onTap: () => setState(() => _isSearching = true),
                             onChanged: _onSearchChanged,
+                            onSubmitted: (_) {
+                              // Never auto-select first search result on Enter
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Please tap a verified Uganda location from the suggestions list below.',
+                                  ),
+                                ),
+                              );
+                            },
                             style: AppTypography.bodyMedium.copyWith(
                               color: AppColors.textPrimary,
                               fontSize: 13,
                             ),
                             decoration: InputDecoration(
-                              hintText: 'Where to in Uganda? (Search destination)',
-                              hintStyle: AppTypography.bodySmall.copyWith(color: AppColors.textTertiary),
+                              hintText:
+                                  'Where to in Uganda? (Mbarara, Kabale, Rukungiri, Gulu...)',
+                              hintStyle: AppTypography.bodySmall.copyWith(
+                                color: AppColors.textTertiary,
+                              ),
                               border: InputBorder.none,
                               isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                              contentPadding: const EdgeInsets.symmetric(
+                                vertical: 8,
+                              ),
                             ),
                           ),
                         ),
-                        if (_destinationLocation != null || _searchController.text.isNotEmpty)
+                        if (_isLoadingSearch)
+                          const Padding(
+                            padding: EdgeInsets.only(right: 6),
+                            child: SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.accent,
+                              ),
+                            ),
+                          ),
+                        if (_destinationLocation != null ||
+                            _searchController.text.isNotEmpty)
                           GestureDetector(
                             onTap: _clearDestination,
-                            child: Padding(padding: const EdgeInsets.all(4), child: Icon(Icons.close_rounded, size: 16, color: AppColors.iconSecondary)),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.close_rounded,
+                                size: 16,
+                                color: AppColors.iconSecondary,
+                              ),
+                            ),
                           ),
                       ],
                     ),
@@ -466,12 +681,21 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                           return GestureDetector(
                             onTap: () => _selectDestination(loc),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
                               decoration: BoxDecoration(
-                                color: isSelected ? AppColors.accent : AppColors.surfaceElevated,
-                                borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
+                                color: isSelected
+                                    ? AppColors.accent
+                                    : AppColors.surfaceElevated,
+                                borderRadius: BorderRadius.circular(
+                                  AppSpacing.radiusFull,
+                                ),
                                 border: Border.all(
-                                  color: isSelected ? AppColors.accent : AppColors.border,
+                                  color: isSelected
+                                      ? AppColors.accent
+                                      : AppColors.border,
                                   width: 0.8,
                                 ),
                               ),
@@ -479,8 +703,12 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                                 loc.title.split(',').first,
                                 style: AppTypography.labelSmall.copyWith(
                                   fontSize: 11,
-                                  color: isSelected ? Colors.black : AppColors.textPrimary,
-                                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                                  color: isSelected
+                                      ? Colors.black
+                                      : AppColors.textPrimary,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w800
+                                      : FontWeight.w500,
                                 ),
                               ),
                             ),
@@ -491,10 +719,10 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                   ],
 
                   // Autocomplete Search Results Dropdown
-                  if (_isSearching) ...[
+                  if (_isSearching && _destinationSuggestions.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Container(
-                      constraints: const BoxConstraints(maxHeight: 220),
+                      constraints: const BoxConstraints(maxHeight: 240),
                       decoration: BoxDecoration(
                         color: AppColors.surfaceElevated,
                         borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
@@ -503,24 +731,38 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                       child: ListView.separated(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         shrinkWrap: true,
-                        itemCount: _filteredPresets.length,
-                        separatorBuilder: (_, __) => Divider(color: AppColors.border, height: 1),
+                        itemCount: _destinationSuggestions.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(color: AppColors.border, height: 1),
                         itemBuilder: (context, index) {
-                          final loc = _filteredPresets[index];
+                          final loc = _destinationSuggestions[index];
                           return ListTile(
                             dense: true,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 2,
+                            ),
                             title: Text(
                               loc.title,
-                              style: AppTypography.titleSmall.copyWith(fontSize: 13, fontWeight: FontWeight.w600),
+                              style: AppTypography.titleSmall.copyWith(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                             subtitle: Text(
                               loc.address,
-                              style: AppTypography.bodySmall.copyWith(fontSize: 11, color: AppColors.textSecondary),
+                              style: AppTypography.bodySmall.copyWith(
+                                fontSize: 11,
+                                color: AppColors.textSecondary,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            trailing: Icon(Icons.north_west_rounded, size: 14, color: AppColors.iconSecondary),
+                            trailing: Icon(
+                              Icons.north_west_rounded,
+                              size: 14,
+                              color: AppColors.iconSecondary,
+                            ),
                             onTap: () => _selectDestination(loc),
                           );
                         },
@@ -533,11 +775,14 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
 
             const SizedBox(height: 16),
 
-            // 3. The Map Section (Appears after selecting pickup and destination to show route line connecting the two)
+            // 3. The Map Section
             if (_destinationLocation == null)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 36,
+                  horizontal: 20,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.surface,
                   borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
@@ -553,7 +798,11 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                         color: AppColors.accent.withValues(alpha: 0.12),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.map_rounded, size: 26, color: AppColors.accent),
+                      child: const Icon(
+                        Icons.map_rounded,
+                        size: 26,
+                        color: AppColors.accent,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Text(
@@ -566,7 +815,7 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Choose a destination above. The interactive map will display the route line connecting your pickup and destination.',
+                      'Choose a verified Uganda destination above. The interactive map will display the real road route connecting your pickup and destination.',
                       style: AppTypography.bodySmall.copyWith(
                         color: AppColors.textSecondary,
                         fontSize: 12,
@@ -577,7 +826,6 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                 ),
               )
             else ...[
-              // Live Route Map Container
               Container(
                 decoration: BoxDecoration(
                   color: AppColors.surface,
@@ -593,7 +841,11 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.alt_route_rounded, size: 16, color: AppColors.accent),
+                            const Icon(
+                              Icons.alt_route_rounded,
+                              size: 16,
+                              color: AppColors.accent,
+                            ),
                             const SizedBox(width: 6),
                             Text(
                               'ROUTE MAP',
@@ -606,9 +858,15 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                           ],
                         ),
                         Text(
-                          '${distanceKm.toStringAsFixed(1)} km • $durationMins mins',
+                          _isRouteUnavailable
+                              ? 'Route unavailable'
+                              : distanceKm > 0
+                                  ? '${distanceKm.toStringAsFixed(1)} km • $durationMins mins'
+                                  : 'Calculating road route...',
                           style: AppTypography.labelSmall.copyWith(
-                            color: AppColors.textPrimary,
+                            color: _isRouteUnavailable
+                                ? AppColors.error
+                                : AppColors.textPrimary,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -631,13 +889,16 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                         nearbyDrivers: nearbyDrivers,
                         isLiveTrip: _isNavigating,
                         isNavigating: _isNavigating,
-                        activeManeuver: _isNavigating ? activeManeuver : null,
-                        etaText: '$durationMins mins',
-                        distanceText: '${distanceKm.toStringAsFixed(1)} km',
+                        activeManeuver: _isNavigating ? _activeManeuver : null,
+                        etaText: durationMins > 0 ? '$durationMins mins' : null,
+                        distanceText: distanceKm > 0
+                            ? '${distanceKm.toStringAsFixed(1)} km'
+                            : null,
                         userLat: userLat,
                         userLng: userLng,
                         showUserLocation: true,
                         onDriverSelected: _onDriverSelected,
+                        onRouteResolved: _onRouteResolved,
                         bottomPadding: 16.0,
                       ),
                     ),
@@ -647,7 +908,7 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
 
               const SizedBox(height: 16),
 
-              // 4. Vehicle Selection & Price Calculation Section
+              // 4. Vehicle Selection & Dynamic Admin Price Calculation Section
               Container(
                 decoration: BoxDecoration(
                   color: AppColors.surface,
@@ -655,7 +916,11 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                   border: Border.all(color: AppColors.border, width: 1),
                 ),
                 padding: const EdgeInsets.all(14),
-                child: _buildRouteDetailsCard(vehicleOptions, distanceKm, durationMins),
+                child: _buildRouteDetailsCard(
+                  vehicleOptions,
+                  distanceKm,
+                  durationMins,
+                ),
               ),
             ],
 
@@ -703,17 +968,25 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
     double distanceKm,
     int durationMins,
   ) {
+    final safeIdx = _selectedVehicleIndex.clamp(0, vehicleOptions.length - 1);
+    final selectedVehicle = vehicleOptions[safeIdx];
+    final selectedFare =
+        selectedVehicle.calculateFare(distanceKm, durationMinutes: durationMins);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Row(
               children: [
-                const Icon(Icons.directions_car_filled_rounded, size: 16, color: AppColors.accent),
+                const Icon(
+                  Icons.directions_car_filled_rounded,
+                  size: 16,
+                  color: AppColors.accent,
+                ),
                 const SizedBox(width: 6),
                 Text(
                   'SELECT VEHICLE & FARE',
@@ -734,57 +1007,66 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                   shape: BoxShape.circle,
                   border: Border.all(color: AppColors.border, width: 0.8),
                 ),
-                child: Icon(Icons.close_rounded, size: 14, color: AppColors.textSecondary),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 10),
-
-        // Route Summary Bar
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _destinationLocation!.title,
-              style: AppTypography.titleSmall.copyWith(
-                fontWeight: FontWeight.w700,
-                fontSize: 15,
-                color: AppColors.textPrimary,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              '${distanceKm.toStringAsFixed(1)} km • $durationMins mins from ${_pickupLocation.title.split(',').first}',
-              style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary, fontSize: 11),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
+        Text(
+          _destinationLocation!.title,
+          style: AppTypography.titleSmall.copyWith(
+            fontWeight: FontWeight.w700,
+            fontSize: 15,
+            color: AppColors.textPrimary,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _isRouteUnavailable
+              ? 'Road route temporarily unavailable'
+              : distanceKm > 0
+                  ? '${distanceKm.toStringAsFixed(1)} km road route • $durationMins mins from ${_pickupLocation.title.split(',').first}'
+                  : 'Resolving road route from ${_pickupLocation.title.split(',').first}...',
+          style: AppTypography.bodySmall.copyWith(
+            color: _isRouteUnavailable
+                ? AppColors.error
+                : AppColors.textSecondary,
+            fontSize: 11,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         const SizedBox(height: 12),
-
-        // Horizontally scrollable vehicle options with dynamic Admin calculated fares
         SizedBox(
-          height: 84,
+          height: 88,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: vehicleOptions.length,
             separatorBuilder: (_, __) => const SizedBox(width: 8),
             itemBuilder: (context, index) {
               final vehicle = vehicleOptions[index];
-              final isSelected = _selectedVehicleIndex == index;
-              final fare = vehicle.calculateFare(distanceKm);
+              final isSelected = safeIdx == index;
+              final fare = vehicle.calculateFare(
+                distanceKm,
+                durationMinutes: durationMins,
+              );
 
               return GestureDetector(
                 onTap: () => setState(() => _selectedVehicleIndex = index),
                 child: Container(
-                  width: 120,
+                  width: 132,
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: isSelected ? AppColors.surfaceHigher : AppColors.surfaceElevated,
+                    color: isSelected
+                        ? AppColors.surfaceHigher
+                        : AppColors.surfaceElevated,
                     borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                     border: Border.all(
                       color: isSelected ? AppColors.accent : AppColors.border,
@@ -801,36 +1083,38 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                           Icon(
                             _getVehicleIcon(vehicle.tier),
                             size: 18,
-                            color: isSelected ? AppColors.accent : AppColors.iconSecondary,
+                            color: isSelected
+                                ? AppColors.accent
+                                : AppColors.iconSecondary,
                           ),
                           Text(
-                            '${vehicle.capacity} seat',
-                            style: AppTypography.bodySmall.copyWith(fontSize: 9, color: AppColors.textTertiary),
+                            '${vehicle.capacity}p',
+                            style: AppTypography.bodySmall.copyWith(
+                              fontSize: 10,
+                              color: AppColors.textSecondary,
+                            ),
                           ),
                         ],
                       ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            vehicle.title,
-                            style: AppTypography.labelSmall.copyWith(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 11,
-                              color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          Text(
-                            CurrencyFormatter.formatShort(fare.round()),
-                            style: AppTypography.bodySmall.copyWith(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 10,
-                              color: isSelected ? AppColors.accent : AppColors.textTertiary,
-                            ),
-                          ),
-                        ],
+                      Text(
+                        vehicle.title,
+                        style: AppTypography.labelSmall.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textPrimary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        distanceKm > 0
+                            ? CurrencyFormatter.formatUGX(fare)
+                            : 'Calculating...',
+                        style: AppTypography.labelSmall.copyWith(
+                          color: isSelected
+                              ? AppColors.accent
+                              : AppColors.textSecondary,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ],
                   ),
@@ -839,53 +1123,25 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
             },
           ),
         ),
-        const SizedBox(height: 10),
-
-        // Action Buttons Row
+        const SizedBox(height: 12),
         Row(
           children: [
-            // GPS Nav toggle button
-            OutlinedButton.icon(
-              icon: Icon(
-                _isNavigating ? Icons.stop_rounded : Icons.navigation_rounded,
-                size: 16,
-                color: _isNavigating ? AppColors.error : AppColors.accent,
-              ),
-              label: Text(_isNavigating ? 'Exit Nav' : 'GPS Nav'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                side: BorderSide(
-                  color: _isNavigating ? AppColors.error : AppColors.border,
-                  width: 1,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                ),
-              ),
-              onPressed: () {
-                setState(() {
-                  _isNavigating = !_isNavigating;
-                });
-              },
-            ),
-            const SizedBox(width: 8),
-
-            // Request Vehicle Primary CTA
             Expanded(
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                  ),
-                ),
+              child: SafarisButton(
+                text: distanceKm > 0
+                    ? 'Book ${selectedVehicle.title} (${CurrencyFormatter.formatUGX(selectedFare)})'
+                    : 'Proceed to ${selectedVehicle.title}',
                 onPressed: () {
-                  final vehicle = vehicleOptions[_selectedVehicleIndex.clamp(0, vehicleOptions.length - 1)];
-                  ref.read(rideBookingProvider.notifier).setLocations(_pickupLocation, _destinationLocation!);
-                  ref.read(rideBookingProvider.notifier).selectVehicle(vehicle);
+                  if (_isRouteUnavailable) return;
+                  ref.read(rideBookingProvider.notifier).selectVehicle(selectedVehicle);
+                  ref.read(rideBookingProvider.notifier).setLocations(
+                        _pickupLocation,
+                        _destinationLocation!,
+                        verifiedRoadDistanceKm:
+                            distanceKm > 0 ? distanceKm : null,
+                        verifiedDurationMinutes:
+                            durationMins > 0 ? durationMins : null,
+                      );
                   context.push(
                     '/rides/vehicle-select',
                     extra: {
@@ -894,17 +1150,28 @@ class _LiveMapboxScreenState extends ConsumerState<LiveMapboxScreen> {
                     },
                   );
                 },
-                child: Text(
-                  'Book ${vehicleOptions[_selectedVehicleIndex.clamp(0, vehicleOptions.length - 1)].title}',
-                  style: AppTypography.titleSmall.copyWith(
-                    color: Colors.black,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _isNavigating
+                      ? AppColors.accent
+                      : AppColors.surfaceElevated,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Icon(
+                  Icons.navigation_rounded,
+                  size: 18,
+                  color: _isNavigating ? Colors.black : AppColors.accent,
                 ),
               ),
+              onPressed: () {
+                setState(() => _isNavigating = !_isNavigating);
+              },
             ),
           ],
         ),

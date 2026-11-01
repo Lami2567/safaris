@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../shared/models/location_model.dart';
 import 'device_location_service.dart';
 
 class UserLocationState {
@@ -27,9 +28,35 @@ class UserLocationState {
     this.lastUpdated,
   });
 
-  bool get isGranted => permissionStatus == DeviceLocationPermissionStatus.granted;
-  bool get hasCoordinates => latitude != null && longitude != null;
+  bool get isGranted =>
+      permissionStatus == DeviceLocationPermissionStatus.granted ||
+      permissionStatus == DeviceLocationPermissionStatus.grantedAlways;
+
+  bool get hasCoordinates =>
+      latitude != null &&
+      longitude != null &&
+      LocationModel.isValidCoordinate(latitude, longitude);
+
+  bool get hasVerifiedFix => hasCoordinates;
+
   bool get isReady => isGranted && hasCoordinates;
+
+  LocationModel? toLocationModel() {
+    if (!hasCoordinates) return null;
+    return LocationModel(
+      id: 'user_live_gps',
+      title: 'My Current Location',
+      address: locality.isNotEmpty
+          ? locality
+          : 'GPS (${latitude!.toStringAsFixed(5)}, ${longitude!.toStringAsFixed(5)})',
+      city: locality.split(',').first,
+      latitude: latitude!,
+      longitude: longitude!,
+      category: 'gps',
+      source: 'device_gps',
+      isVerified: true,
+    );
+  }
 
   UserLocationState copyWith({
     double? latitude,
@@ -71,14 +98,16 @@ class UserLocationNotifier extends Notifier<UserLocationState> {
     return const UserLocationState();
   }
 
-  /// Aggressively requests location permissions and obtains a high-precision hardware GPS fix
+  /// Requests location permissions and obtains a high-precision hardware GPS fix.
+  /// Never fabricates Kampala coordinates when GPS is denied or unavailable.
   Future<bool> requestLocationAggressively() async {
     state = state.copyWith(isLoading: true, errorMessage: null);
 
     try {
       final status = await _service.requestLocationPermission();
 
-      if (status != DeviceLocationPermissionStatus.granted) {
+      if (status != DeviceLocationPermissionStatus.granted &&
+          status != DeviceLocationPermissionStatus.grantedAlways) {
         state = state.copyWith(
           isLoading: false,
           permissionStatus: status,
@@ -91,7 +120,6 @@ class UserLocationNotifier extends Notifier<UserLocationState> {
         return false;
       }
 
-      // Granted: fetch high accuracy fix
       final locData = await _service.getCurrentPosition();
 
       if (locData != null) {
@@ -102,18 +130,17 @@ class UserLocationNotifier extends Notifier<UserLocationState> {
           speed: locData.speed,
           accuracy: locData.accuracy,
           locality: locData.locality,
-          permissionStatus: DeviceLocationPermissionStatus.granted,
+          permissionStatus: status,
           isLoading: false,
           lastUpdated: locData.timestamp,
         );
 
-        // Start listening to continuous GPS stream
         _startListening();
         return true;
       } else {
         state = state.copyWith(
           isLoading: false,
-          permissionStatus: DeviceLocationPermissionStatus.granted,
+          permissionStatus: status,
           errorMessage: 'Acquiring GPS satellite fix...',
         );
         return false;
@@ -151,7 +178,9 @@ class UserLocationNotifier extends Notifier<UserLocationState> {
   void _startListening() {
     _positionSubscription?.cancel();
     try {
-      _positionSubscription = _service.getPositionStream().listen(
+      _positionSubscription = _service
+          .getPositionStream(profile: GpsTrackingProfile.customerForeground)
+          .listen(
         (locData) {
           state = state.copyWith(
             latitude: locData.latitude,
@@ -164,9 +193,7 @@ class UserLocationNotifier extends Notifier<UserLocationState> {
             lastUpdated: locData.timestamp,
           );
         },
-        onError: (err) {
-          // Keep existing coordinates on intermittent stream errors
-        },
+        onError: (_) {},
       );
     } catch (_) {}
   }

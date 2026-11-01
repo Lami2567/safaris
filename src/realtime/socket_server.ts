@@ -277,8 +277,8 @@ export function initSocketServer(httpServer: HttpServer): Server {
           return;
         }
 
-        const lat = Number(data?.lat);
-        const lng = Number(data?.lng);
+        const lat = Number(data?.lat ?? (data as any)?.latitude);
+        const lng = Number(data?.lng ?? (data as any)?.longitude);
         const heading = Number(data?.heading ?? 0);
         const speed = Number(data?.speed ?? 0);
         const accuracy = Number(data?.accuracy ?? 5);
@@ -379,18 +379,23 @@ export function initSocketServer(httpServer: HttpServer): Server {
 
         // If active trip, broadcast directly to trip room and customer
         if (effectiveTripId) {
+          const tripObj = activeTrip || localStore.trips.get(effectiveTripId);
           const locPayload = {
             tripId: effectiveTripId,
             driverId: effectiveDriverId,
             lat,
             lng,
+            latitude: lat,
+            longitude: lng,
             heading,
             speed,
             timestamp: packetTs,
           };
           emitToTrip(effectiveTripId, 'trip:driver_location', locPayload);
-          if (activeTrip?.customer_id) {
-            emitToUser(activeTrip.customer_id, 'trip:driver_location', locPayload);
+          emitToTrip(effectiveTripId, 'driver:location_update', locPayload);
+          if (tripObj?.customer_id) {
+            emitToUser(tripObj.customer_id, 'trip:driver_location', locPayload);
+            emitToUser(tripObj.customer_id, 'driver:location_update', locPayload);
           }
         }
 

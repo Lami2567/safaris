@@ -162,8 +162,15 @@ class _VehicleSelectionScreenState extends ConsumerState<VehicleSelectionScreen>
             child: SafarisMapView(
               pickupLocation: rideState.pickup,
               destinationLocation: rideState.destination,
-              distanceText: '${rideState.distanceKm.toStringAsFixed(1)} km',
-              etaText: rideState.formattedDuration,
+              distanceText: rideState.isRouteUnavailable
+                  ? 'Route unavailable'
+                  : '${rideState.distanceKm.toStringAsFixed(1)} km',
+              etaText: rideState.isRouteUnavailable
+                  ? 'Retry route'
+                  : rideState.formattedDuration,
+              onRouteResolved: (route) {
+                ref.read(rideBookingProvider.notifier).onRouteResolved(route);
+              },
             ),
           ),
 
@@ -194,23 +201,51 @@ class _VehicleSelectionScreenState extends ConsumerState<VehicleSelectionScreen>
                   // Route Summary Tag
                   Row(
                     children: [
-                      const Icon(Icons.route_rounded, size: 16, color: AppColors.accent),
+                      Icon(
+                        rideState.isRouteUnavailable
+                            ? Icons.warning_amber_rounded
+                            : Icons.route_rounded,
+                        size: 16,
+                        color: rideState.isRouteUnavailable
+                            ? AppColors.error
+                            : AppColors.accent,
+                      ),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          '${rideState.pickup.title} ➔ ${rideState.destination.title}',
+                          rideState.isRouteUnavailable
+                              ? (rideState.routeErrorMessage ??
+                                  'Verified road route temporarily unavailable')
+                              : '${rideState.pickup.title} ➔ ${rideState.destination.title}',
                           style: AppTypography.labelSmall.copyWith(
-                            color: AppColors.textPrimary,
+                            color: rideState.isRouteUnavailable
+                                ? AppColors.error
+                                : AppColors.textPrimary,
                             fontWeight: FontWeight.w600,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      Text(
-                        '${rideState.distanceKm.toStringAsFixed(1)} km',
-                        style: AppTypography.bodySmall,
-                      ),
+                      if (rideState.isRouteUnavailable)
+                        TextButton(
+                          onPressed: () {
+                            ref.read(rideBookingProvider.notifier).setLocations(
+                                  rideState.pickup,
+                                  rideState.destination,
+                                );
+                          },
+                          child: Text(
+                            'Retry',
+                            style: AppTypography.labelSmall
+                                .copyWith(color: AppColors.accent),
+                          ),
+                        )
+                      else
+                        Text(
+                          '${rideState.distanceKm.toStringAsFixed(1)} km road',
+                          style: AppTypography.bodySmall,
+                        ),
                     ],
                   ),
                   const SizedBox(height: AppSpacing.sm),
@@ -224,7 +259,14 @@ class _VehicleSelectionScreenState extends ConsumerState<VehicleSelectionScreen>
                       itemBuilder: (context, index) {
                         final option = vehicleOptions[index];
                         final isSelected = rideState.selectedVehicle.tier == option.tier;
-                        final fare = option.calculateFare(rideState.distanceKm);
+                        final fare = isSelected && rideState.serverQuotedFareUGX != null
+                            ? rideState.serverQuotedFareUGX!
+                            : option.calculateFare(
+                                rideState.distanceKm,
+                                durationMinutes: rideState.tripMinutes,
+                              );
+                        final perKmRate =
+                            option.effectivePerKmRate(rideState.distanceKm);
 
                         return Material(
                           color: isSelected
@@ -297,7 +339,9 @@ class _VehicleSelectionScreenState extends ConsumerState<VehicleSelectionScreen>
                                     crossAxisAlignment: CrossAxisAlignment.end,
                                     children: [
                                       Text(
-                                        CurrencyFormatter.formatUGX(fare),
+                                        rideState.isRouteUnavailable
+                                            ? 'Route Required'
+                                            : CurrencyFormatter.formatUGX(fare),
                                         style: AppTypography.titleSmall.copyWith(
                                           fontSize: 15,
                                           fontWeight: FontWeight.w700,
@@ -305,7 +349,7 @@ class _VehicleSelectionScreenState extends ConsumerState<VehicleSelectionScreen>
                                         ),
                                       ),
                                       Text(
-                                        'UGX Flat',
+                                        '${CurrencyFormatter.formatUGX(perKmRate)}/km • Base ${CurrencyFormatter.formatUGX(option.baseFareUGX)}',
                                         style: AppTypography.labelSmall.copyWith(fontSize: 9),
                                       ),
                                     ],
@@ -363,9 +407,24 @@ class _VehicleSelectionScreenState extends ConsumerState<VehicleSelectionScreen>
 
                   // Confirm & Request Button
                   SafarisButton(
-                    text: 'Request ${rideState.selectedVehicle.title} (${rideState.formattedDuration})',
-                    icon: Icon(Icons.check_circle_rounded, size: 18, color: AppColors.backgroundDark),
+                    text: rideState.isRouteUnavailable
+                        ? 'Route Unavailable — Tap Retry Above'
+                        : 'Request ${rideState.selectedVehicle.title} (${CurrencyFormatter.formatUGX(rideState.totalFareUGX.toDouble())} • ${rideState.formattedDuration})',
+                    icon: Icon(
+                      rideState.isRouteUnavailable
+                          ? Icons.refresh_rounded
+                          : Icons.check_circle_rounded,
+                      size: 18,
+                      color: AppColors.backgroundDark,
+                    ),
                     onPressed: () {
+                      if (rideState.isRouteUnavailable || rideState.distanceKm <= 0) {
+                        ref.read(rideBookingProvider.notifier).setLocations(
+                              rideState.pickup,
+                              rideState.destination,
+                            );
+                        return;
+                      }
                       ref.read(rideBookingProvider.notifier).startSearching();
                       context.push('/rides/searching');
                     },

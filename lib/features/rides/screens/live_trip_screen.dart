@@ -7,6 +7,7 @@ import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../shared/components/safaris_map_view.dart';
+import '../../../shared/models/location_model.dart';
 import '../../../shared/widgets/safaris_app_bar.dart';
 import '../../../shared/widgets/safaris_button.dart';
 import '../models/ride_model.dart';
@@ -15,16 +16,68 @@ import '../ride_provider.dart';
 class LiveTripScreen extends ConsumerWidget {
   const LiveTripScreen({super.key});
 
+  String _statusBannerText(RideStatus status) {
+    switch (status) {
+      case RideStatus.driverAssigned:
+      case RideStatus.driverArriving:
+        return 'DRIVER EN ROUTE TO PICKUP';
+      case RideStatus.driverArrived:
+        return 'DRIVER HAS ARRIVED AT PICKUP';
+      case RideStatus.inProgress:
+        return 'ON THE WAY TO DESTINATION';
+      case RideStatus.completed:
+        return 'TRIP COMPLETED';
+      default:
+        return 'ACTIVE TRIP TRACKING';
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen<RideBookingState>(rideBookingProvider, (previous, next) {
+      if (next.status == RideStatus.completed && context.mounted) {
+        context.go('/rides/completed');
+      } else if (next.status == RideStatus.cancelled && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Trip was cancelled.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+        context.go('/customer');
+      }
+    });
+
     final ride = ref.watch(rideBookingProvider);
-    final driver = ride.driver ?? DriverModel.sampleDriver;
+    final driver = ride.driver;
+    final isApproachingPickup = ride.status == RideStatus.driverAssigned ||
+        ride.status == RideStatus.driverArriving ||
+        ride.status == RideStatus.driverArrived;
+
+    // Before pickup: route from Driver's real GPS -> Pickup.
+    // After pickup: route from Driver's real GPS (or Pickup) -> Destination.
+    final LocationModel mapOrigin = (ride.driverLat != null &&
+            ride.driverLng != null &&
+            LocationModel.isValidCoordinate(ride.driverLat, ride.driverLng))
+        ? LocationModel(
+            id: 'driver_live_pos',
+            title: driver?.fullName ?? 'Assigned Driver',
+            address: 'Live GPS Position',
+            latitude: ride.driverLat!,
+            longitude: ride.driverLng!,
+          )
+        : ride.pickup;
+
+    final LocationModel mapTarget =
+        isApproachingPickup ? ride.pickup : ride.destination;
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: SafarisAppBar(
-        title: 'Active Trip',
-        subtitle: 'Heading to ${ride.destination.title}',
+        title: isApproachingPickup ? 'Driver Approaching' : 'Active Trip',
+        subtitle: isApproachingPickup
+            ? 'Pickup at ${ride.pickup.title}'
+            : 'Heading to ${ride.destination.title}',
         showBack: false,
         actions: [
           IconButton(
@@ -52,7 +105,9 @@ class LiveTripScreen extends ConsumerWidget {
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Safaris 24/7 Security & Uganda Police Emergency Hotline notified'),
+                  content: Text(
+                    'Safaris 24/7 Security & Uganda Police Emergency Hotline notified',
+                  ),
                   backgroundColor: AppColors.error,
                 ),
               );
@@ -66,8 +121,8 @@ class LiveTripScreen extends ConsumerWidget {
           Expanded(
             flex: 5,
             child: SafarisMapView(
-              pickupLocation: ride.pickup,
-              destinationLocation: ride.destination,
+              pickupLocation: mapOrigin,
+              destinationLocation: mapTarget,
               showDriver: true,
               isLiveTrip: true,
               driverLat: ride.driverLat,
@@ -76,6 +131,9 @@ class LiveTripScreen extends ConsumerWidget {
               etaText: '${ride.formattedDuration} remaining',
               distanceText: '${ride.distanceKm.toStringAsFixed(1)} km',
               connectionState: OfflineLocationQueue().connectionState,
+              onRouteResolved: (route) {
+                ref.read(rideBookingProvider.notifier).onRouteResolved(route);
+              },
             ),
           ),
 
@@ -83,7 +141,9 @@ class LiveTripScreen extends ConsumerWidget {
           Container(
             decoration: BoxDecoration(
               color: AppColors.surface,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.radiusXl)),
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(AppSpacing.radiusXl),
+              ),
               border: Border(top: BorderSide(color: AppColors.border, width: 1)),
             ),
             padding: const EdgeInsets.all(AppSpacing.md),
@@ -92,7 +152,7 @@ class LiveTripScreen extends ConsumerWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Status Pill
+                  // Status Pill + Verified Fare
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -101,16 +161,20 @@ class LiveTripScreen extends ConsumerWidget {
                           Container(
                             width: 8,
                             height: 8,
-                            decoration: const BoxDecoration(
-                              color: AppColors.success,
+                            decoration: BoxDecoration(
+                              color: ride.isDriverLocationStale
+                                  ? Colors.orange
+                                  : AppColors.success,
                               shape: BoxShape.circle,
                             ),
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'ON THE WAY TO DESTINATION',
+                            _statusBannerText(ride.status),
                             style: AppTypography.labelSmall.copyWith(
-                              color: AppColors.success,
+                              color: ride.isDriverLocationStale
+                                  ? Colors.orange
+                                  : AppColors.success,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.8,
                             ),
@@ -118,7 +182,9 @@ class LiveTripScreen extends ConsumerWidget {
                         ],
                       ),
                       Text(
-                        CurrencyFormatter.formatUGX(ride.estimatedFareUGX),
+                        CurrencyFormatter.formatUGX(
+                          ride.totalFareUGX.toDouble(),
+                        ),
                         style: AppTypography.titleSmall.copyWith(
                           color: AppColors.accent,
                           fontWeight: FontWeight.w700,
@@ -126,116 +192,215 @@ class LiveTripScreen extends ConsumerWidget {
                       ),
                     ],
                   ),
+                  if (ride.isDriverLocationStale) ...[
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Driver GPS signal delayed — showing last verified position',
+                        style: AppTypography.bodySmall.copyWith(
+                          color: Colors.orange,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.sm),
                   Divider(color: AppColors.divider),
                   const SizedBox(height: AppSpacing.sm),
 
                   // Driver Details Row
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 26,
-                        backgroundColor: AppColors.accent,
-                        child: Text(
-                          driver.fullName[0],
-                          style: AppTypography.titleMedium.copyWith(
-                            color: AppColors.backgroundDark,
-                            fontWeight: FontWeight.w800,
+                  if (driver != null)
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 26,
+                          backgroundColor: AppColors.accent,
+                          child: Text(
+                            driver.fullName.isNotEmpty ? driver.fullName[0] : 'D',
+                            style: AppTypography.titleMedium.copyWith(
+                              color: AppColors.backgroundDark,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    driver.fullName,
+                                    style: AppTypography.titleSmall
+                                        .copyWith(fontSize: 16),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Icon(
+                                    Icons.star_rounded,
+                                    size: 14,
+                                    color: AppColors.accent,
+                                  ),
+                                  Text(
+                                    driver.rating.toStringAsFixed(2),
+                                    style: AppTypography.bodySmall.copyWith(
+                                      color: AppColors.textPrimary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${driver.vehicleModel} • ${driver.vehicleColor}',
+                                style: AppTypography.bodySmall,
+                              ),
+                              const SizedBox(height: 2),
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.surfaceElevated,
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: AppColors.borderLight,
+                                        width: 0.8,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      driver.licensePlate,
+                                      style: AppTypography.labelSmall.copyWith(
+                                        color: AppColors.accent,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 1.0,
+                                      ),
+                                    ),
+                                  ),
+                                  if (ride.driverLat != null &&
+                                      ride.driverLng != null) ...[
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'GPS ${ride.driverLat!.toStringAsFixed(4)}, ${ride.driverLng!.toStringAsFixed(4)}',
+                                      style: AppTypography.bodySmall
+                                          .copyWith(fontSize: 10),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Action Icons
+                        Row(
                           children: [
-                            Row(
-                              children: [
-                                Text(
-                                  driver.fullName,
-                                  style: AppTypography.titleSmall.copyWith(fontSize: 16),
-                                ),
-                                const SizedBox(width: 6),
-                                const Icon(Icons.star_rounded, size: 14, color: AppColors.accent),
-                                Text(
-                                  driver.rating.toStringAsFixed(2),
-                                  style: AppTypography.bodySmall.copyWith(
-                                    color: AppColors.textPrimary,
-                                    fontWeight: FontWeight.w600,
+                            IconButton(
+                              icon: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceElevated,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: AppColors.border,
+                                    width: 0.8,
                                   ),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${driver.vehicleModel} • ${driver.vehicleColor}',
-                              style: AppTypography.bodySmall,
-                            ),
-                            const SizedBox(height: 2),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceElevated,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: AppColors.borderLight, width: 0.8),
-                              ),
-                              child: Text(
-                                driver.licensePlate,
-                                style: AppTypography.labelSmall.copyWith(
-                                  color: AppColors.accent,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 1.0,
+                                child: Icon(
+                                  Icons.phone_rounded,
+                                  size: 18,
+                                  color: AppColors.iconPrimary,
                                 ),
                               ),
+                              onPressed: () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Calling driver ${driver.phone}...',
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            IconButton(
+                              icon: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceElevated,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: AppColors.border,
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.chat_bubble_outline_rounded,
+                                  size: 18,
+                                  color: AppColors.iconPrimary,
+                                ),
+                              ),
+                              onPressed: () =>
+                                  context.push('/messaging/driver', extra: driver),
                             ),
                           ],
                         ),
-                      ),
-                      // Action Icons
-                      Row(
+                      ],
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Row(
                         children: [
-                          IconButton(
-                            icon: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceElevated,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: AppColors.border, width: 0.8),
-                              ),
-                              child: Icon(Icons.phone_rounded, size: 18, color: AppColors.iconPrimary),
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.accent,
                             ),
-                            onPressed: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Calling driver ${driver.phone}...')),
-                              );
-                            },
                           ),
-                          IconButton(
-                            icon: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceElevated,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: AppColors.border, width: 0.8),
-                              ),
-                              child: Icon(Icons.chat_bubble_outline_rounded, size: 18, color: AppColors.iconPrimary),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Synchronizing assigned driver telemetry from server...',
+                              style: AppTypography.bodySmall,
                             ),
-                            onPressed: () => context.push('/messaging/driver', extra: driver),
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                    ),
                   const SizedBox(height: AppSpacing.md),
 
-                  // Actions
-                  SafarisButton(
-                    text: 'Complete Trip (Simulate Arrival)',
-                    variant: SafarisButtonVariant.primary,
-                    onPressed: () {
-                      ref.read(rideBookingProvider.notifier).completeTrip();
-                      context.go('/rides/completed');
-                    },
+                  // Real Trip Actions (Sync status or Cancel if before pickup)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SafarisButton(
+                          text: 'Sync Live Trip Status',
+                          variant: SafarisButtonVariant.secondary,
+                          onPressed: () {
+                            ref
+                                .read(rideBookingProvider.notifier)
+                                .checkActiveTrip();
+                          },
+                        ),
+                      ),
+                      if (isApproachingPickup) ...[
+                        const SizedBox(width: 8),
+                        SafarisButton(
+                          text: 'Cancel',
+                          variant: SafarisButtonVariant.outline,
+                          isFullWidth: false,
+                          onPressed: () {
+                            ref.read(rideBookingProvider.notifier).cancelRide();
+                            context.go('/customer');
+                          },
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),

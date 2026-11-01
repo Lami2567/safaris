@@ -203,6 +203,98 @@ class DestinationModel {
       category: 'national_park',
       basePriceUgx: 1500000,
     ),
+    DestinationModel(
+      id: 'dest_mgahinga',
+      title: 'Mgahinga Gorilla National Park',
+      subtitle: 'Where Gold Meets Silver in the Virunga Volcanoes',
+      region: 'South-Western Uganda (Kisoro)',
+      description:
+          'High-altitude volcanic peaks bordering Rwanda and DR Congo, home to endangered mountain gorillas and golden monkeys.',
+      highlights: [
+        'Golden Monkey Tracking',
+        'Nyakagezi Gorilla Family Trek',
+        'Mount Sabinyo Volcano Summit',
+      ],
+      bestTimeToVisit: 'June to August, December to February',
+      distanceHoursFromKampala: 9,
+      heroTag: 'VIRUNGA PEAKS',
+      latitude: -1.3650,
+      longitude: 29.6300,
+      imageUrl:
+          'https://pub-e2b1ab49fd8c4f2caad6781a542cd1b2.r2.dev/images/tourism/mgahinga-gorilla-park.jpg',
+      rating: 4.92,
+      category: 'national_park',
+      basePriceUgx: 1200000,
+    ),
+    DestinationModel(
+      id: 'dest_kibale',
+      title: 'Kibale Forest National Park',
+      subtitle: 'Primate Capital of the World',
+      region: 'Western Uganda (Fort Portal)',
+      description:
+          'Lush tropical rainforest hosting 13 primate species including over 1,500 wild chimpanzees and Bigodi Wetland Sanctuary.',
+      highlights: [
+        'Chimpanzee Habituation Experience',
+        'Bigodi Swamp Walk',
+        'Nocturnal Forest Walk',
+      ],
+      bestTimeToVisit: 'December to February, June to September',
+      distanceHoursFromKampala: 5,
+      heroTag: 'PRIMATE CAPITAL',
+      latitude: 0.4867,
+      longitude: 30.3883,
+      imageUrl:
+          'https://pub-e2b1ab49fd8c4f2caad6781a542cd1b2.r2.dev/images/tourism/kibale-chimpanzee-park.jpg',
+      rating: 4.94,
+      category: 'national_park',
+      basePriceUgx: 900000,
+    ),
+    DestinationModel(
+      id: 'dest_queen_elizabeth',
+      title: 'Queen Elizabeth National Park',
+      subtitle: 'Tree-Climbing Lions & Kazinga Channel',
+      region: 'Western Uganda (Kasese)',
+      description:
+          'Uganda’s most popular savanna reserve featuring crater lakes, Kazinga Channel hippos, and Ishasha tree-climbing lions.',
+      highlights: [
+        'Kazinga Channel Boat Launch',
+        'Ishasha Tree-Climbing Lions',
+        'Kyambura Gorge Chimps',
+      ],
+      bestTimeToVisit: 'January to February, June to July',
+      distanceHoursFromKampala: 6,
+      heroTag: 'KAZINGA WILDLIFE',
+      latitude: -0.1972,
+      longitude: 30.0028,
+      imageUrl:
+          'https://pub-e2b1ab49fd8c4f2caad6781a542cd1b2.r2.dev/images/tourism/queen-elizabeth-park.jpg',
+      rating: 4.93,
+      category: 'national_park',
+      basePriceUgx: 950000,
+    ),
+    DestinationModel(
+      id: 'dest_lake_mburo',
+      title: 'Lake Mburo National Park',
+      subtitle: 'Whispers of the Wild — Closest Savanna to Kampala',
+      region: 'Western Uganda (Kiruhura)',
+      description:
+          'Compact acacia woodland and wetland park famous for zebras, impalas, elands, and guided walking/horseback safaris.',
+      highlights: [
+        'Guided Walking Safari',
+        'Zebra & Giraffe Viewing',
+        'Lake Mburo Boat Trip',
+      ],
+      bestTimeToVisit: 'June to August, December to February',
+      distanceHoursFromKampala: 4,
+      heroTag: 'ACACIA SAVANNA',
+      latitude: -0.6066,
+      longitude: 30.9547,
+      imageUrl:
+          'https://pub-e2b1ab49fd8c4f2caad6781a542cd1b2.r2.dev/images/tourism/lake-mburo-park.jpg',
+      rating: 4.89,
+      category: 'national_park',
+      basePriceUgx: 650000,
+    ),
   ];
 }
 
@@ -273,6 +365,43 @@ class TourPackageModel {
       ],
       imageUrl:
           'https://pub-e2b1ab49fd8c4f2caad6781a542cd1b2.r2.dev/images/tourism/1790793736631-51949ed3-park-entry-fees-bwindi.jpg',
+    ),
+    TourPackageModel(
+      id: 'pkg_murchison_2d',
+      destinationId: 'dest_murchison',
+      title: '2-Day Murchison Falls & Nile Boat Safari',
+      durationDays: 2,
+      pricePerPersonUGX: 1450000,
+      groupType: 'Private 4x4 Safari',
+      inclusions: [
+        'Park Entry Fees & Ferry Crossing',
+        'Bottom of the Falls Boat Cruise',
+        'Safari 4x4 Land Cruiser & Professional Guide',
+      ],
+      itinerarySummary: [
+        'Day 1: Kampala to Murchison Falls & Top of the Falls Hike',
+        'Day 2: Morning Game Drive, Nile Launch Cruise & Return',
+      ],
+      imageUrl:
+          'https://pub-e2b1ab49fd8c4f2caad6781a542cd1b2.r2.dev/images/tourism/1790750196777-b5c00805-murchison-falls-national-park-1-3.jpg',
+    ),
+    TourPackageModel(
+      id: 'pkg_jinja_1d',
+      destinationId: 'dest_lake_mburo',
+      title: '1-Day Lake Mburo Wildlife & Walking Safari',
+      durationDays: 1,
+      pricePerPersonUGX: 420000,
+      groupType: 'Day Excursion',
+      inclusions: [
+        'UWA Park Entry & Ranger Walking Permit',
+        'Equator Stopover & Lunch in Mbarara/Lyantonde',
+        '4x4 Safari Vehicle Transport',
+      ],
+      itinerarySummary: [
+        'Day 1: Early departure from Kampala, Equator stop, Game Drive & Boat Cruise',
+      ],
+      imageUrl:
+          'https://pub-e2b1ab49fd8c4f2caad6781a542cd1b2.r2.dev/images/tourism/lake-mburo-park.jpg',
     ),
   ];
 }

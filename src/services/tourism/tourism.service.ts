@@ -8,6 +8,7 @@ import { emitToUser, broadcastToFleet, broadcastConfigUpdate } from '../../realt
 import { NotificationService } from '../notification/notification.service';
 import { PricingEngineService, TouristPricingTier } from '../pricing/pricing_engine.service';
 import { StorageService } from '../storage/storage.service';
+import { MapsService } from '../maps/maps.service';
 import { ENV } from '../../config/env';
 
 export type PublicationStatus = 'DRAFT' | 'PUBLISHED' | 'UNPUBLISHED' | 'ARCHIVED';
@@ -310,8 +311,7 @@ export class TourismService {
       distanceFromKampala: String(raw.distanceFromKampala || raw.distance_from_kampala || `${hours * 60} km`),
       travelDuration: String(raw.travelDuration || raw.travel_duration || `${hours} hours`),
       hero_tag: String(raw.hero_tag || raw.heroTag || 'SAFARI').trim(),
-      latitude: Number(raw.latitude ?? raw.lat ?? 0.3136),
-      longitude: Number(raw.longitude ?? raw.lng ?? 32.5811),
+      ...this.resolveVerifiedDestinationCoordinates(raw, name),
       rating: Number(raw.rating || 4.9),
       isPopular: raw.isPopular !== false && raw.is_popular !== false,
       is_popular: raw.isPopular !== false && raw.is_popular !== false,
@@ -338,6 +338,47 @@ export class TourismService {
       created_at: raw.created_at ? new Date(raw.created_at).toISOString() : new Date().toISOString(),
       updated_at: raw.updated_at ? new Date(raw.updated_at).toISOString() : new Date().toISOString(),
     };
+  }
+
+  private static resolveVerifiedDestinationCoordinates(
+    raw: any,
+    name: string
+  ): { latitude: number; longitude: number; coordinates: { lat: number; lng: number } } {
+    const rawLat = raw.latitude ?? raw.lat ?? raw.coordinates?.lat;
+    const rawLng = raw.longitude ?? raw.lng ?? raw.coordinates?.lng;
+
+    if (rawLat !== undefined && rawLat !== null && rawLat !== '' && rawLng !== undefined && rawLng !== null && rawLng !== '') {
+      const lat = Number(rawLat);
+      const lng = Number(rawLng);
+      if (!MapsService.isWithinUganda(lat, lng)) {
+        throw new Error(
+          `Invalid destination coordinates (${lat}, ${lng}) for '${name}'. Coordinates must be valid locations within Uganda.`
+        );
+      }
+      return { latitude: lat, longitude: lng, coordinates: { lat, lng } };
+    }
+
+    // Attempt to resolve from verified Uganda Gazetteer by destination name, district, or location address (never broad region)
+    const candidates = [
+      name,
+      String(raw.district || '').trim(),
+      String(raw.location_address || raw.locationAddress || '').trim(),
+    ].filter(Boolean);
+
+    for (const query of candidates) {
+      const matches = MapsService.searchGazetteer(query);
+      if (matches.length > 0 && MapsService.isWithinUganda(matches[0].latitude, matches[0].longitude)) {
+        return {
+          latitude: matches[0].latitude,
+          longitude: matches[0].longitude,
+          coordinates: { lat: matches[0].latitude, lng: matches[0].longitude },
+        };
+      }
+    }
+
+    throw new Error(
+      `Verified Uganda coordinates are required (latitude, longitude) for destination '${name}'. Never silently substitute Kampala coordinates.`
+    );
   }
 
   private static normalizePackageRecord(raw: any): any {

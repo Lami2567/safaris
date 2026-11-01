@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/socket_service.dart';
 import '../../../core/services/device_location_service.dart';
+import '../../../core/services/mapbox_service.dart';
 import '../../../core/services/navigation_service.dart';
 import '../../../core/services/offline_location_queue.dart';
 import '../../../core/services/user_location_provider.dart';
@@ -45,6 +46,8 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
   double _currentHeading = 0.0;
   double _currentSpeedKmh = 0.0;
   bool _hasHardwareGpsFix = false;
+  bool _hasShownBackgroundRationale = false;
+  GpsTrackingProfile? _activeGpsProfile;
   StreamSubscription<DeviceLocationData>? _gpsSubscription;
   Timer? _heartbeatTimer;
 
@@ -121,12 +124,121 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
           _activeTrip = active;
         });
 
+        _configureAdaptiveGpsStream();
+        if (active == null && NavigationService().isNavigating) {
+          NavigationService().stopNavigation();
+        }
+
         // If we already have a real hardware GPS fix, sync it to backend immediately
         if (_hasHardwareGpsFix) {
           _transmitLocationToBackend(_currentLat, _currentLng, _currentHeading, _currentSpeedKmh);
         }
       }
     } catch (_) {}
+  }
+
+  void _configureAdaptiveGpsStream() {
+    final GpsTrackingProfile desiredProfile;
+    if (_activeTrip != null) {
+      final status = (_activeTrip!['status'] ?? '').toString();
+      desiredProfile = (status == 'TRIP_STARTED' || status == 'IN_PROGRESS')
+          ? GpsTrackingProfile.activeTripNavigation
+          : GpsTrackingProfile.approachingPickup;
+    } else {
+      desiredProfile = GpsTrackingProfile.driverOnlineIdle;
+    }
+
+    if (_activeGpsProfile == desiredProfile && _gpsSubscription != null) {
+      return;
+    }
+    _activeGpsProfile = desiredProfile;
+    _gpsSubscription?.cancel();
+    _gpsSubscription = DeviceLocationService()
+        .getPositionStream(profile: desiredProfile)
+        .listen((pos) {
+      if (!mounted) return;
+      setState(() {
+        _currentLat = pos.latitude;
+        _currentLng = pos.longitude;
+        _currentHeading = pos.heading ?? _currentHeading;
+        _currentSpeedKmh = (pos.speed ?? 0.0) * 3.6;
+        _hasHardwareGpsFix = true;
+      });
+      _transmitLocationToBackend(
+        _currentLat,
+        _currentLng,
+        _currentHeading,
+        _currentSpeedKmh,
+      );
+    });
+  }
+
+  Future<void> _ensureBackgroundAndNotificationPermissions() async {
+    await DeviceLocationService().requestNotificationPermission();
+    final currentStatus = await DeviceLocationService().checkPermissionStatus();
+    if (currentStatus == DeviceLocationPermissionStatus.grantedAlways) {
+      return;
+    }
+    if (!_hasShownBackgroundRationale && mounted) {
+      _hasShownBackgroundRationale = true;
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.surfaceElevated,
+          title: Text(
+            'Background Location for Live Navigation',
+            style: AppTypography.titleSmall,
+          ),
+          content: Text(
+            'Mumwe Safaris requires background location access while you are online or on an active trip so customers can track your real-time arrival and turn-by-turn navigation continues when your screen is locked or you switch apps.',
+            style: AppTypography.bodySmall,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Later'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Allow Background GPS'),
+            ),
+          ],
+        ),
+      );
+      if (proceed == true) {
+        await DeviceLocationService().requestBackgroundLocationPermission();
+      }
+    }
+  }
+
+  void _onActiveTripRouteResolved(DirectionsRouteResult route) {
+    final active = _activeTrip;
+    if (active == null || !route.isValid) return;
+
+    final tripId = (active['id'] ?? '').toString();
+    final status = (active['status'] ?? 'DRIVER_ASSIGNED').toString();
+    final isEnRouteToDest = status == 'TRIP_STARTED' || status == 'IN_PROGRESS';
+
+    final targetName = isEnRouteToDest
+        ? (active['dropoffAddress'] ?? 'Destination').toString()
+        : (active['pickupAddress'] ?? 'Customer Pickup').toString();
+    final targetLat = isEnRouteToDest
+        ? ((active['dropoffLat'] as num?)?.toDouble() ?? _currentLat)
+        : ((active['pickupLat'] as num?)?.toDouble() ?? _currentLat);
+    final targetLng = isEnRouteToDest
+        ? ((active['dropoffLng'] as num?)?.toDouble() ?? _currentLng)
+        : ((active['pickupLng'] as num?)?.toDouble() ?? _currentLng);
+
+    NavigationService().startRideNavigation(
+      tripId: tripId,
+      stage: isEnRouteToDest ? 'TRIP_IN_PROGRESS' : 'DRIVER_EN_ROUTE_TO_PICKUP',
+      destinationName: targetName,
+      targetLat: targetLat,
+      targetLng: targetLng,
+      totalDistanceKm: route.distanceKm,
+      estimatedDurationMins: route.durationMinutes,
+      maneuvers: route.maneuvers,
+    );
   }
 
   Future<void> _initHardwareGpsAndSocket() async {
@@ -180,18 +292,7 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
         await _transmitLocationToBackend(_currentLat, _currentLng, _currentHeading, _currentSpeedKmh);
       }
 
-      _gpsSubscription?.cancel();
-      _gpsSubscription = DeviceLocationService().getPositionStream(distanceFilterMeters: 5).listen((pos) {
-        if (!mounted) return;
-        setState(() {
-          _currentLat = pos.latitude;
-          _currentLng = pos.longitude;
-          _currentHeading = pos.heading ?? _currentHeading;
-          _currentSpeedKmh = (pos.speed ?? 0.0) * 3.6;
-          _hasHardwareGpsFix = true;
-        });
-        _transmitLocationToBackend(_currentLat, _currentLng, _currentHeading, _currentSpeedKmh);
-      });
+      _configureAdaptiveGpsStream();
     }
 
     _heartbeatTimer?.cancel();
@@ -238,6 +339,9 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
     if (_isUpdatingStatus) return;
     setState(() => _isUpdatingStatus = true);
     final nextOnline = !_isOnline;
+    if (nextOnline) {
+      await _ensureBackgroundAndNotificationPermissions();
+    }
     try {
       final res = await _api.put('/drivers/status', body: {
         'isOnline': nextOnline,
@@ -252,8 +356,12 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
           _isAvailable = nextOnline && _activeTrip == null;
           if (!nextOnline) {
             _incomingRequests.clear();
+            if (_activeTrip == null) {
+              NavigationService().stopNavigation();
+            }
           }
         });
+        _configureAdaptiveGpsStream();
         await _transmitLocationToBackend(_currentLat, _currentLng, _currentHeading, _currentSpeedKmh);
         if (nextOnline) {
           await _loadDashboardFromBackend();
@@ -350,14 +458,31 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final topIncoming = _incomingRequests.isNotEmpty ? _incomingRequests.first : null;
+    final activeStatus = (_activeTrip?['status'] ?? '').toString();
+    final isApproachingPickup = _activeTrip != null &&
+        (activeStatus == 'DRIVER_ASSIGNED' ||
+            activeStatus == 'DRIVER_ARRIVING' ||
+            activeStatus == 'DRIVER_ARRIVED');
+
+    // Before pickup: route from Driver's real GPS -> Pickup.
+    // After pickup (TRIP_STARTED): route from Driver's real GPS (or Pickup) -> Destination.
     final pickupLoc = _activeTrip != null
-        ? LocationModel(
-            id: 'active_pickup',
-            title: (_activeTrip!['pickupAddress'] ?? 'Pickup').toString(),
-            address: (_activeTrip!['pickupAddress'] ?? '').toString(),
-            latitude: (_activeTrip!['pickupLat'] as num?)?.toDouble() ?? _currentLat,
-            longitude: (_activeTrip!['pickupLng'] as num?)?.toDouble() ?? _currentLng,
-          )
+        ? (isApproachingPickup
+            ? LocationModel(
+                id: 'driver_live_origin',
+                title: 'Your Current GPS Position',
+                address: DeviceLocationService.getUgandaLocalityName(
+                    _currentLat, _currentLng),
+                latitude: _currentLat,
+                longitude: _currentLng,
+              )
+            : LocationModel(
+                id: 'active_pickup',
+                title: (_activeTrip!['pickupAddress'] ?? 'Pickup').toString(),
+                address: (_activeTrip!['pickupAddress'] ?? '').toString(),
+                latitude: (_activeTrip!['pickupLat'] as num?)?.toDouble() ?? _currentLat,
+                longitude: (_activeTrip!['pickupLng'] as num?)?.toDouble() ?? _currentLng,
+              ))
         : topIncoming != null
             ? LocationModel(
                 id: 'req_pickup',
@@ -369,13 +494,21 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
             : null;
 
     final destLoc = _activeTrip != null
-        ? LocationModel(
-            id: 'active_dest',
-            title: (_activeTrip!['dropoffAddress'] ?? 'Destination').toString(),
-            address: (_activeTrip!['dropoffAddress'] ?? '').toString(),
-            latitude: (_activeTrip!['dropoffLat'] as num?)?.toDouble() ?? _currentLat,
-            longitude: (_activeTrip!['dropoffLng'] as num?)?.toDouble() ?? _currentLng,
-          )
+        ? (isApproachingPickup
+            ? LocationModel(
+                id: 'active_pickup_target',
+                title: (_activeTrip!['pickupAddress'] ?? 'Customer Pickup').toString(),
+                address: (_activeTrip!['pickupAddress'] ?? '').toString(),
+                latitude: (_activeTrip!['pickupLat'] as num?)?.toDouble() ?? _currentLat,
+                longitude: (_activeTrip!['pickupLng'] as num?)?.toDouble() ?? _currentLng,
+              )
+            : LocationModel(
+                id: 'active_dest',
+                title: (_activeTrip!['dropoffAddress'] ?? 'Destination').toString(),
+                address: (_activeTrip!['dropoffAddress'] ?? '').toString(),
+                latitude: (_activeTrip!['dropoffLat'] as num?)?.toDouble() ?? _currentLat,
+                longitude: (_activeTrip!['dropoffLng'] as num?)?.toDouble() ?? _currentLng,
+              ))
         : topIncoming != null
             ? LocationModel(
                 id: 'req_dest',
@@ -405,10 +538,12 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
             pickupLocation: pickupLoc,
             destinationLocation: destLoc,
             etaText: _activeTrip != null
-                ? 'Active Trip: ${_activeTrip!['status']}'
+                ? (isApproachingPickup
+                    ? 'Navigate to Pickup (${NavigationService().etaMinutes} mins)'
+                    : 'Navigate to Destination (${NavigationService().etaMinutes} mins)')
                 : (_isOnline ? 'Online & Available' : 'Offline'),
             distanceText: _activeTrip != null
-                ? '${_activeTrip!['distanceKm'] ?? ''} km'
+                ? '${NavigationService().remainingDistanceKm > 0 ? NavigationService().remainingDistanceKm.toStringAsFixed(1) : (_activeTrip!['distanceKm'] ?? '')} km'
                 : DeviceLocationService.getUgandaLocalityName(_currentLat, _currentLng),
             isNavigating: _activeTrip != null,
             activeManeuver: NavigationService().currentManeuver,
@@ -418,6 +553,7 @@ class _DriverDashboardScreenState extends ConsumerState<DriverDashboardScreen> {
             connectionState: OfflineLocationQueue().connectionState,
             queuedUpdatesCount: OfflineLocationQueue().queuedCount,
             bottomPadding: 220,
+            onRouteResolved: _activeTrip != null ? _onActiveTripRouteResolved : null,
           ),
 
           // Top Header Floating Panel

@@ -62,6 +62,10 @@ const testSuites = [
     name: 'End-to-End System Integration Verification Suite',
     file: 'verify_all.ts',
   },
+  {
+    name: 'Maps, Uganda Gazetteer Search, Road Routing, Dynamic Pricing & Live Tracking Suite',
+    file: 'maps_routing_pricing_master.test.ts',
+  },
 ];
 
 let totalPassed = 0;

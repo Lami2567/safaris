@@ -1,4 +1,4 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:safaris/core/services/mapbox_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -41,9 +41,24 @@ void main() {
       expect(resultLong.formattedDuration, '4h 30m');
     });
 
-    test('getDirections returns valid Uganda safari route fallback when offline', () async {
+    test('getDirections returns cached verified route when available and route unavailable when uncached offline', () async {
       final service = MapboxService();
-      // Kampala Serena to Lake Mburo Kigambira
+      // When completely offline and uncached, must not fabricate a 1.35x straight line:
+      final uncachedRoute = await service.getDirections(
+        originLat: 0.3136,
+        originLng: 32.5811,
+        destLat: -0.6066,
+        destLng: 30.9328,
+      );
+      expect(uncachedRoute.isRouteUnavailable, isTrue);
+
+      // Seed a verified road route in SharedPreferences cache and verify retrieval:
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'mapbox_route_cache_v2_route_0.31360_32.58110_-0.60660_30.93280_',
+        '{"coordinates":[{"latitude":0.3136,"longitude":32.5811},{"latitude":-0.6066,"longitude":30.9328}],"distanceMeters":232400,"durationSeconds":12600,"summary":"Kampala-Masaka-Mbarara Highway","savedAt":"${DateTime.now().toIso8601String()}"}',
+      );
+
       final route = await service.getDirections(
         originLat: 0.3136,
         originLng: 32.5811,
@@ -51,6 +66,7 @@ void main() {
         destLng: 30.9328,
       );
 
+      expect(route.isRouteUnavailable, isFalse);
       expect(route.coordinates.isNotEmpty, isTrue);
       expect(route.distanceMeters, greaterThan(150000)); // > 150 km
       expect(route.durationSeconds, greaterThan(7200));   // > 2 hours

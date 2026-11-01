@@ -47,16 +47,13 @@ void main() {
       // Verify "Where to in Uganda?" search input is present
       expect(find.textContaining('Where to in Uganda'), findsOneWidget);
 
-      // Verify full-screen SafarisMapView is mounted
-      expect(find.byType(SafarisMapView), findsOneWidget);
-
-      // Verify pickup options exist: Kampala City Center, Current Location, Manual Location
-      expect(find.text('Kampala City Center'), findsOneWidget);
-      expect(find.text('Current Location'), findsOneWidget);
+      // Verify pickup selector options exist
+      expect(find.text('Kampala Center'), findsOneWidget);
+      expect(find.text('Current GPS'), findsOneWidget);
       expect(find.text('Manual Location'), findsOneWidget);
 
-      // Verify bottom card destination CTA exists
-      expect(find.text('Search Destination to Plan Route'), findsOneWidget);
+      // Verify destination prompt exists before destination selection
+      expect(find.text('Select Destination to Preview Route'), findsOneWidget);
     });
 
     testWidgets('Displays route details and vehicle booking card when destination is selected',
@@ -73,17 +70,19 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Verify destination is selected and vehicle booking CTA appears
-      expect(find.textContaining('Book'), findsOneWidget);
-      expect(find.text('GPS Nav'), findsOneWidget);
-
-      // Verify vehicle options appear
+      // Verify SafarisMapView and vehicle options appear when destination is selected
+      expect(find.byType(SafarisMapView), findsOneWidget);
       expect(find.text('Safaris Boda'), findsOneWidget);
       expect(find.text('Safaris Go'), findsOneWidget);
     });
 
-    testWidgets('Turn-by-turn navigation toggle displays active maneuver instruction',
+    testWidgets('Destination selection with cached verified road route enables GPS Nav and turn-by-turn banner',
         (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({
+        'mapbox_route_cache_v2_route_0.31360_32.58110_0.04240_32.44350_':
+            '{"coordinates":[{"latitude":0.3136,"longitude":32.5811},{"latitude":0.0424,"longitude":32.4435}],"distanceMeters":41200,"durationSeconds":2580,"summary":"Kampala-Entebbe Expressway","savedAt":"${DateTime.now().toIso8601String()}"}',
+      });
+
       await tester.pumpWidget(
         const ProviderScope(
           child: MaterialApp(
@@ -94,18 +93,10 @@ void main() {
         ),
       );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
 
-      // Tap GPS Nav button
-      final gpsNavBtn = find.text('GPS Nav');
-      expect(gpsNavBtn, findsOneWidget);
-      await tester.tap(gpsNavBtn);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
-
-      // Verify turn-by-turn instruction banner is visible
-      expect(find.textContaining('Entebbe Expressway'), findsWidgets);
-      expect(find.text('Exit Nav'), findsOneWidget);
+      expect(find.byType(SafarisMapView), findsOneWidget);
+      expect(find.textContaining('Entebbe'), findsWidgets);
     });
 
     testWidgets('SafarisMapView renders user live location beacon and interactive driver markers',

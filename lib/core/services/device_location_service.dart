@@ -1,13 +1,23 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
+import '../../shared/models/location_model.dart';
 import '../utils/geo_utils.dart';
 
 enum DeviceLocationPermissionStatus {
   granted,
+  grantedAlways,
   denied,
   deniedForever,
   serviceDisabled,
+}
+
+enum GpsTrackingProfile {
+  customerForeground,
+  driverOnlineIdle,
+  approachingPickup,
+  activeTripNavigation,
 }
 
 class DeviceLocationData {
@@ -30,15 +40,23 @@ class DeviceLocationData {
     required this.locality,
     required this.timestamp,
   });
+
+  double get speedKmh => ((speed ?? 0.0) * 3.6).clamp(0.0, 220.0);
 }
 
-/// Native Hardware GPS & Location Permission Service for DRIVER Uganda
+typedef DeviceLocationPoint = DeviceLocationData;
+
+/// Native Hardware GPS, Foreground Service & Location Permission Service for Mumwe Safaris
 class DeviceLocationService {
-  static final DeviceLocationService _instance = DeviceLocationService._internal();
+  static final DeviceLocationService _instance =
+      DeviceLocationService._internal();
   factory DeviceLocationService() => _instance;
   DeviceLocationService._internal();
 
-  /// Known major urban centres and safari hubs across Uganda for locality estimation
+  static const MethodChannel _navigationServiceChannel =
+      MethodChannel('com.safaris.safaris/navigation_service');
+
+  /// Known major urban centres, municipalities, and safari hubs across Uganda
   static const List<Map<String, dynamic>> _ugandaHubs = [
     {'name': 'Entebbe', 'lat': 0.0512, 'lng': 32.4637, 'region': 'Wakiso District'},
     {'name': 'Kampala CBD', 'lat': 0.3136, 'lng': 32.5811, 'region': 'Central Region'},
@@ -51,6 +69,10 @@ class DeviceLocationService {
     {'name': 'Mbale', 'lat': 1.0784, 'lng': 34.1755, 'region': 'Elgon Region'},
     {'name': 'Kasese', 'lat': 0.1833, 'lng': 30.0833, 'region': 'Queen Elizabeth Sector'},
     {'name': 'Kabale', 'lat': -1.2486, 'lng': 29.9890, 'region': 'Kigezi / Bwindi Gateway'},
+    {'name': 'Rukungiri', 'lat': -0.8411, 'lng': 29.9419, 'region': 'Western Region'},
+    {'name': 'Kisoro', 'lat': -1.2854, 'lng': 29.6850, 'region': 'Virunga / Mgahinga'},
+    {'name': 'Bushenyi-Ishaka', 'lat': -0.5419, 'lng': 30.1856, 'region': 'Ankole Region'},
+    {'name': 'Ntungamo', 'lat': -0.8794, 'lng': 30.2642, 'region': 'Western Region'},
     {'name': 'Arua', 'lat': 3.0303, 'lng': 30.9108, 'region': 'West Nile Region'},
     {'name': 'Lira', 'lat': 2.2472, 'lng': 32.9000, 'region': 'Lango Sub-region'},
     {'name': 'Tororo', 'lat': 0.6928, 'lng': 34.1809, 'region': 'Bukedi Region'},
@@ -82,7 +104,27 @@ class DeviceLocationService {
     }
   }
 
-  /// Aggressively requests location permission and verifies GPS hardware state
+  Future<DeviceLocationPermissionStatus> checkPermissionStatus() async {
+    try {
+      final enabled = await isLocationServiceEnabled();
+      if (!enabled) return DeviceLocationPermissionStatus.serviceDisabled;
+      final perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.always) {
+        return DeviceLocationPermissionStatus.grantedAlways;
+      }
+      if (perm == LocationPermission.whileInUse) {
+        return DeviceLocationPermissionStatus.granted;
+      }
+      if (perm == LocationPermission.deniedForever) {
+        return DeviceLocationPermissionStatus.deniedForever;
+      }
+      return DeviceLocationPermissionStatus.denied;
+    } catch (_) {
+      return DeviceLocationPermissionStatus.denied;
+    }
+  }
+
+  /// Requests foreground location permission and verifies GPS hardware state
   Future<DeviceLocationPermissionStatus> requestLocationPermission() async {
     try {
       final serviceEnabled = await isLocationServiceEnabled();
@@ -110,6 +152,89 @@ class DeviceLocationService {
     }
   }
 
+  /// Requests background location permission when the user is a driver or starting live navigation
+  Future<DeviceLocationPermissionStatus> requestBackgroundLocationPermission() async {
+    final fg = await requestLocationPermission();
+    if (fg != DeviceLocationPermissionStatus.granted &&
+        fg != DeviceLocationPermissionStatus.grantedAlways) {
+      return fg;
+    }
+    try {
+      final perm = await Geolocator.requestPermission();
+      if (perm == LocationPermission.always) {
+        return DeviceLocationPermissionStatus.grantedAlways;
+      }
+      if (perm == LocationPermission.whileInUse) {
+        return DeviceLocationPermissionStatus.granted;
+      }
+    } catch (_) {}
+    return fg;
+  }
+
+  /// Requests Android 13+ notification permission for the persistent live navigation banner
+  Future<bool> requestNotificationPermission() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return true;
+    try {
+      final hasPerm = await _navigationServiceChannel
+          .invokeMethod<bool>('checkNotificationPermission');
+      if (hasPerm == true) return true;
+      final requested = await _navigationServiceChannel
+          .invokeMethod<bool>('requestNotificationPermission');
+      return requested ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Starts or updates the Android Foreground Location & Live Navigation Notification
+  Future<void> startOrUpdateForegroundNavigation({
+    required String tripId,
+    required String stage,
+    required String instruction,
+    required String roadName,
+    required String distanceNextText,
+    required String remainingDistanceText,
+    required String etaText,
+    required String destinationName,
+  }) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _navigationServiceChannel.invokeMethod('startOrUpdateNavigation', {
+        'tripId': tripId,
+        'stage': stage,
+        'instruction': instruction,
+        'roadName': roadName,
+        'distanceNext': distanceNextText,
+        'remainingDistance': remainingDistanceText,
+        'eta': etaText,
+        'destination': destinationName,
+      });
+    } catch (e) {
+      debugPrint('[DeviceLocationService] Foreground service update error: $e');
+    }
+  }
+
+  /// Stops the Android Foreground Location & Live Navigation Service immediately
+  Future<void> stopForegroundNavigation() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _navigationServiceChannel.invokeMethod('stopNavigation');
+    } catch (e) {
+      debugPrint('[DeviceLocationService] Foreground service stop error: $e');
+    }
+  }
+
+  Future<bool> isForegroundNavigationRunning() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
+    try {
+      return (await _navigationServiceChannel
+              .invokeMethod<bool>('isServiceRunning')) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Gets the real hardware GPS fix
   Future<DeviceLocationData?> getCurrentPosition({
     Duration timeout = const Duration(seconds: 12),
@@ -130,15 +255,22 @@ class DeviceLocationService {
           ),
         ).timeout(timeout);
       } catch (e) {
-        debugPrint('High accuracy position timed out or failed, checking last known: $e');
+        debugPrint(
+          'High accuracy position timed out or failed, checking last known: $e',
+        );
         position = await Geolocator.getLastKnownPosition();
       }
 
-      if (position == null) {
+      if (position == null ||
+          !LocationModel.isValidCoordinate(
+            position.latitude,
+            position.longitude,
+          )) {
         return null;
       }
 
-      final locality = getUgandaLocalityName(position.latitude, position.longitude);
+      final locality =
+          getUgandaLocalityName(position.latitude, position.longitude);
 
       return DeviceLocationData(
         latitude: position.latitude,
@@ -156,17 +288,47 @@ class DeviceLocationService {
     }
   }
 
-  /// Stream real-time GPS position updates as the device moves
+  Future<DeviceLocationData?> getCurrentLocation() => getCurrentPosition();
+
+  /// Stream real-time GPS position updates with adaptive battery & accuracy profiles
   Stream<DeviceLocationData> getPositionStream({
     int distanceFilterMeters = 10,
+    GpsTrackingProfile? profile,
   }) {
+    LocationAccuracy accuracy = LocationAccuracy.high;
+    int effectiveFilter = distanceFilterMeters;
+
+    if (profile != null) {
+      switch (profile) {
+        case GpsTrackingProfile.customerForeground:
+          accuracy = LocationAccuracy.high;
+          effectiveFilter = 10;
+          break;
+        case GpsTrackingProfile.driverOnlineIdle:
+          accuracy = LocationAccuracy.medium;
+          effectiveFilter = 15;
+          break;
+        case GpsTrackingProfile.approachingPickup:
+          accuracy = LocationAccuracy.high;
+          effectiveFilter = 5;
+          break;
+        case GpsTrackingProfile.activeTripNavigation:
+          accuracy = LocationAccuracy.bestForNavigation;
+          effectiveFilter = 3;
+          break;
+      }
+    }
+
     return Geolocator.getPositionStream(
       locationSettings: LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: distanceFilterMeters,
+        accuracy: accuracy,
+        distanceFilter: effectiveFilter,
       ),
-    ).map((position) {
-      final locality = getUgandaLocalityName(position.latitude, position.longitude);
+    )
+        .where((p) => LocationModel.isValidCoordinate(p.latitude, p.longitude))
+        .map((position) {
+      final locality =
+          getUgandaLocalityName(position.latitude, position.longitude);
       return DeviceLocationData(
         latitude: position.latitude,
         longitude: position.longitude,

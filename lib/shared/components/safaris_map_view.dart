@@ -61,6 +61,7 @@ class SafarisMapView extends StatefulWidget {
   final double? userLng;
   final bool showUserLocation;
   final void Function(LiveDriverLocation driver)? onDriverSelected;
+  final void Function(MapboxRouteResult route)? onRouteResolved;
   final double bottomPadding;
 
   const SafarisMapView({
@@ -92,6 +93,7 @@ class SafarisMapView extends StatefulWidget {
     this.userLng,
     this.showUserLocation = true,
     this.onDriverSelected,
+    this.onRouteResolved,
     this.bottomPadding = 24.0,
   });
 
@@ -112,6 +114,10 @@ class _SafarisMapViewState extends State<SafarisMapView>
 
   List<MapboxCoordinate>? _mapboxRouteCoords;
   String? _mapboxDurationText;
+  String? _mapboxDistanceText;
+  bool _isRouteUnavailable = false;
+  String? _routeUnavailableMessage;
+  int _routeRequestSeq = 0;
 
   String _getEffectiveToken() {
     if (widget.mapboxToken != null && widget.mapboxToken!.trim().isNotEmpty) {
@@ -218,7 +224,8 @@ class _SafarisMapViewState extends State<SafarisMapView>
     });
   }
 
-  Future<void> _fetchMapboxRoute() async {
+  Future<void> _fetchMapboxRoute({bool bypassCache = false}) async {
+    final reqSeq = ++_routeRequestSeq;
     if (widget.pickupLocation != null && widget.destinationLocation != null) {
       try {
         final result = await MapboxService().getDirections(
@@ -226,24 +233,73 @@ class _SafarisMapViewState extends State<SafarisMapView>
           originLng: widget.pickupLocation!.longitude,
           destLat: widget.destinationLocation!.latitude,
           destLng: widget.destinationLocation!.longitude,
+          bypassCache: bypassCache,
         );
-        if (mounted && result.coordinates.isNotEmpty) {
+        if (!mounted || reqSeq != _routeRequestSeq) return;
+        widget.onRouteResolved?.call(result);
+
+        if (result.isValid && result.coordinates.length >= 2) {
           setState(() {
             _mapboxRouteCoords = result.coordinates;
-            if (result.durationSeconds > 0) {
-              _mapboxDurationText = result.formattedDuration;
-            }
+            _mapboxDurationText = result.formattedDuration;
+            _mapboxDistanceText = result.formattedDistance;
+            _isRouteUnavailable = false;
+            _routeUnavailableMessage = null;
+          });
+          _fitCameraToRoute(result.coordinates);
+        } else {
+          setState(() {
+            _mapboxRouteCoords = null;
+            _mapboxDurationText = null;
+            _mapboxDistanceText = null;
+            _isRouteUnavailable = true;
+            _routeUnavailableMessage =
+                result.errorMessage ?? 'Road route temporarily unavailable';
           });
         }
-      } catch (_) {}
-    } else {
-      if (mounted && (_mapboxRouteCoords != null || _mapboxDurationText != null)) {
+      } catch (_) {
+        if (!mounted || reqSeq != _routeRequestSeq) return;
         setState(() {
           _mapboxRouteCoords = null;
           _mapboxDurationText = null;
+          _mapboxDistanceText = null;
+          _isRouteUnavailable = true;
+          _routeUnavailableMessage = 'Road route temporarily unavailable';
+        });
+      }
+    } else {
+      if (mounted &&
+          (_mapboxRouteCoords != null ||
+              _mapboxDurationText != null ||
+              _isRouteUnavailable)) {
+        setState(() {
+          _mapboxRouteCoords = null;
+          _mapboxDurationText = null;
+          _mapboxDistanceText = null;
+          _isRouteUnavailable = false;
+          _routeUnavailableMessage = null;
         });
       }
     }
+  }
+
+  void _fitCameraToRoute(List<MapboxCoordinate> coords) {
+    if (coords.length < 2) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        final points =
+            coords.map((c) => ll.LatLng(c.latitude, c.longitude)).toList();
+        final bounds = LatLngBounds.fromPoints(points);
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: bounds,
+            padding: EdgeInsets.fromLTRB(48, 84, 48, widget.bottomPadding + 64),
+            maxZoom: 16.0,
+          ),
+        );
+      } catch (_) {}
+    });
   }
 
   @override
@@ -283,13 +339,10 @@ class _SafarisMapViewState extends State<SafarisMapView>
     return LayoutBuilder(
       builder: (context, constraints) {
         final List<ll.LatLng> routePolylinePoints = [];
-        if (_mapboxRouteCoords != null && _mapboxRouteCoords!.isNotEmpty) {
+        if (_mapboxRouteCoords != null && _mapboxRouteCoords!.length >= 2) {
           routePolylinePoints.addAll(
             _mapboxRouteCoords!.map((c) => ll.LatLng(c.latitude, c.longitude)),
           );
-        } else if (widget.pickupLocation != null && widget.destinationLocation != null) {
-          routePolylinePoints.add(ll.LatLng(widget.pickupLocation!.latitude, widget.pickupLocation!.longitude));
-          routePolylinePoints.add(ll.LatLng(widget.destinationLocation!.latitude, widget.destinationLocation!.longitude));
         }
 
         final double effectiveUserLat = widget.userLat ?? widget.pickupLocation?.latitude ?? 0.3136;
@@ -300,6 +353,7 @@ class _SafarisMapViewState extends State<SafarisMapView>
             : [];
 
         final String? effectiveEta = _mapboxDurationText ?? widget.etaText;
+        final String? effectiveDist = _mapboxDistanceText ?? widget.distanceText;
 
         return Stack(
           children: [
@@ -334,15 +388,16 @@ class _SafarisMapViewState extends State<SafarisMapView>
                   },
                 ),
 
-                // Multi-Leg Safari Tour Routes or Active Route Polyline
+                // Multi-Leg Safari Tour Routes or Active Verified Road Route Polyline
                 if (widget.safariLegs != null && widget.safariLegs!.isNotEmpty)
                   PolylineLayer(
-                    polylines: widget.safariLegs!.map((leg) {
+                    polylines: widget.safariLegs!
+                        .where((leg) => leg.routeCoordinates.length >= 2)
+                        .map((leg) {
                       return Polyline(
-                        points: [
-                          ll.LatLng(leg.originLat, leg.originLng),
-                          ll.LatLng(leg.destLat, leg.destLng),
-                        ],
+                        points: leg.routeCoordinates
+                            .map((pt) => ll.LatLng(pt[0], pt[1]))
+                            .toList(),
                         color: leg.status == 'completed'
                             ? AppColors.textTertiary
                             : AppColors.accent,
@@ -459,6 +514,48 @@ class _SafarisMapViewState extends State<SafarisMapView>
                 child: _buildDeviationAlert(),
               ),
 
+            // 3b. Route Temporarily Unavailable Banner (no fake straight-line fallback)
+            if (_isRouteUnavailable &&
+                widget.pickupLocation != null &&
+                widget.destinationLocation != null)
+              Positioned(
+                top: widget.isNavigating ? 84 : 16,
+                left: 16,
+                right: 16,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceElevated.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                    border: Border.all(color: AppColors.error.withValues(alpha: 0.65)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.route_outlined,
+                        size: 18,
+                        color: AppColors.error,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _routeUnavailableMessage ??
+                              'Road route temporarily unavailable. Please retry.',
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _fetchMapboxRoute(bypassCache: true),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
             // 4. Connection State Pill
             if (widget.connectionState != null)
               Positioned(
@@ -467,8 +564,10 @@ class _SafarisMapViewState extends State<SafarisMapView>
                 child: _buildConnectionPill(widget.connectionState!, widget.queuedUpdatesCount),
               ),
 
-            // 5. Top ETA & Distance Chip
-            if (!widget.isNavigating && (effectiveEta != null || widget.distanceText != null))
+            // 5. Top ETA & Verified Road Distance Chip
+            if (!widget.isNavigating &&
+                !_isRouteUnavailable &&
+                (effectiveEta != null || effectiveDist != null))
               Positioned(
                 top: 16,
                 left: 16,
@@ -508,14 +607,14 @@ class _SafarisMapViewState extends State<SafarisMapView>
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                        if (effectiveEta != null && widget.distanceText != null)
+                        if (effectiveEta != null && effectiveDist != null)
                           Text(
                             ' • ',
                             style: AppTypography.bodySmall.copyWith(color: AppColors.textTertiary),
                           ),
-                        if (widget.distanceText != null)
+                        if (effectiveDist != null)
                           Text(
-                            widget.distanceText!,
+                            effectiveDist,
                             style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
                           ),
                       ],

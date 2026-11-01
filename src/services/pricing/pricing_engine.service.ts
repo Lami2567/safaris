@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db, localStore } from '../../config/database';
 import { broadcastConfigUpdate } from '../../realtime/socket_server';
+import { MapsService } from '../maps/maps.service';
 
 export type ServiceAssignmentKey = 'ride_hailing' | 'airport_shuttle' | 'tours' | 'express_delivery';
 export type QuoteServiceType = 'RIDE' | 'AIRPORT_SHUTTLE' | 'TOUR' | 'DELIVERY';
@@ -54,6 +55,7 @@ export interface CatalogueVehicle {
     ride_hailing?: {
       baseFareUgx: number;
       minimumFareUgx: number;
+      perKmRateUgx?: number;
       perMinuteUgx: number;
       waitingFeePerMinUgx: number;
       bookingFeeUgx: number;
@@ -764,8 +766,23 @@ export class PricingEngineService {
       ...(data.service_pricing || {}),
     };
 
-    if (servicePricing.ride_hailing?.distanceBands) {
-      servicePricing.ride_hailing.distanceBands = this.validateDistanceBands(servicePricing.ride_hailing.distanceBands);
+    if (servicePricing.ride_hailing) {
+      const rawPerKm = Number(
+        (servicePricing.ride_hailing as any).perKmRateUgx ??
+        (servicePricing.ride_hailing as any).perKmUgx ??
+        0
+      );
+      if (Number.isFinite(rawPerKm) && rawPerKm > 0) {
+        servicePricing.ride_hailing.perKmRateUgx = Math.round(rawPerKm);
+        if (!Array.isArray(data.service_pricing?.ride_hailing?.distanceBands) || data.service_pricing.ride_hailing.distanceBands.length === 0) {
+          servicePricing.ride_hailing.distanceBands = [
+            { minKm: 0, maxKm: null, ratePerKmUgx: Math.round(rawPerKm) },
+          ];
+        }
+      }
+      if (servicePricing.ride_hailing.distanceBands) {
+        servicePricing.ride_hailing.distanceBands = this.validateDistanceBands(servicePricing.ride_hailing.distanceBands);
+      }
     }
     if (servicePricing.express_delivery?.distanceBands) {
       servicePricing.express_delivery.distanceBands = this.validateDistanceBands(servicePricing.express_delivery.distanceBands);
@@ -930,12 +947,30 @@ export class PricingEngineService {
       }
     }
     if (params.pickupLat !== undefined && params.destLat !== undefined) {
-      distanceKm = this.calculateServerDistanceKm(
-        Number(params.pickupLat),
-        Number(params.pickupLng ?? 0),
-        Number(params.destLat),
-        Number(params.destLng ?? 0)
-      );
+      const pLat = Number(params.pickupLat);
+      const pLng = Number(params.pickupLng ?? 0);
+      const dLat = Number(params.destLat);
+      const dLng = Number(params.destLng ?? 0);
+
+      if (MapsService.isWithinUganda(pLat, pLng) && MapsService.isWithinUganda(dLat, dLng)) {
+        try {
+          const verifiedRoute = await MapsService.getVerifiedRoadRoute({
+            originLat: pLat,
+            originLng: pLng,
+            destLat: dLat,
+            destLng: dLng,
+          });
+          distanceKm = verifiedRoute.distanceKm;
+        } catch {
+          if (params.distanceKm && Number(params.distanceKm) > 0) {
+            distanceKm = Number(Number(params.distanceKm).toFixed(2));
+          } else {
+            distanceKm = this.calculateServerDistanceKm(pLat, pLng, dLat, dLng);
+          }
+        }
+      } else {
+        distanceKm = this.calculateServerDistanceKm(pLat, pLng, dLat, dLng);
+      }
     }
     const weightKg = Math.max(0, Number(params.weightKg || 0));
     let durationDays = Math.max(1, Math.floor(Number(params.durationDays || 1)));
@@ -1572,6 +1607,16 @@ export class PricingEngineService {
         (catVehicle && (catVehicle.id === quote.vehicle_id || catVehicle.code.toLowerCase() === String(quote.vehicle_id).toLowerCase()));
       if (!isMatch) {
         throw new Error(`Quotation '${quotationId}' was issued for vehicle '${quote.vehicle_id}', not '${vehicleId}'.`);
+      }
+      if (
+        catVehicle &&
+        quote.pricing_version !== undefined &&
+        catVehicle.pricing_version !== undefined &&
+        Number(catVehicle.pricing_version) > Number(quote.pricing_version)
+      ) {
+        throw new Error(
+          `Pricing configuration for '${catVehicle.name}' was updated by the administrator (v${quote.pricing_version} -> v${catVehicle.pricing_version}). Please review the updated fare before confirming.`
+        );
       }
     }
     if (referenceId && quote.reference_id && quote.reference_id !== referenceId) {
