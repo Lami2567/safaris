@@ -1,0 +1,36 @@
+name: safaris
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  flutter_riverpod: ^3.3.2
+  go_router: ^17.2.3
+  google_fonts: ^8.1.0
+  intl: ^0.20.3
+  uuid: ^4.6.0
+  http: ^1.6.0
+  socket_io_client: ^3.1.6
+  shared_preferences: ^2.5.5
+  flutter_map: ^8.3.2
+  latlong2: ^0.10.1
+  geolocator: ^14.0.2
+  webview_flutter: ^4.9.0
+  webview_flutter_android: ^3.16.9
+  url_launcher: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

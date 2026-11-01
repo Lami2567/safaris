@@ -60,3 +60,24 @@ Thumbs.db
 
 __pycache__/
 *.pyc
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+app.*.symbols
+app.*.map.json
+/android/app/debug
+/android/app/profile
+/android/app/release
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+*.hprof
+*.iml
+*.pem
+admin_build.tar.gz
+admin_prebuilt/
