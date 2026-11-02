@@ -107,14 +107,14 @@ export class TripController {
     }
   }
 
-  public static acceptTrip(req: AuthenticatedRequest, res: Response) {
+  public static async acceptTrip(req: AuthenticatedRequest, res: Response) {
     try {
       const { tripId } = req.params;
       const driverId = req.user!.userId;
-      const result = TripService.acceptTrip(tripId, driverId);
+      const result = await TripService.acceptTrip(tripId, driverId);
       return sendSuccess(res, result);
     } catch (err: any) {
-      const code = err.message?.includes('no longer searching') || err.message?.includes('already have an active trip')
+      const code = err.message?.includes('no longer searching') || err.message?.includes('already have an active trip') || err.message?.includes('being accepted')
         ? 409
         : err.message?.includes('must be approved')
           ? 403
@@ -169,6 +169,26 @@ export class TripController {
       return sendSuccess(res, trips);
     } catch (err: any) {
       return sendError(res, 'FETCH_TRIPS_FAILED', err.message);
+    }
+  }
+
+  public static async triggerSos(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { tripId } = req.params;
+      const userId = req.user!.userId;
+      const userRole = req.user?.role;
+      const { reason, lat, lng } = req.body || {};
+      const result = await TripService.triggerSos(
+        tripId,
+        userId,
+        userRole,
+        reason,
+        lat !== undefined && lng !== undefined ? { lat: Number(lat), lng: Number(lng) } : undefined
+      );
+      return sendSuccess(res, result);
+    } catch (err: any) {
+      const code = err.message?.includes('Unauthorized') ? 403 : err.message?.includes('not found') ? 404 : 400;
+      return sendError(res, 'SOS_FAILED', err.message, code);
     }
   }
 }

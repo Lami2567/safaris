@@ -319,7 +319,7 @@ async function runMapsRoutingPricingMasterSuite() {
     DriverService.setAvailability('drv_mbarara_1', true, { lat: -0.6100, lng: 30.6500 });
 
     // Driver accepts trip
-    const accepted = TripService.acceptTrip(trip.id, 'drv_mbarara_1');
+    const accepted = await TripService.acceptTrip(trip.id, 'drv_mbarara_1');
     assert.strictEqual(accepted.status, 'DRIVER_ASSIGNED');
 
     // Unauthorized driver cannot spoof GPS for this trip

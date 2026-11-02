@@ -55,6 +55,8 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 };
 
 export class TripService {
+  private static acceptingTrips = new Set<string>();
+
   public static getTierPricing(): Record<string, { base: number; perKm: number }> {
     const adminPricing = AdminService.getPricing();
     return {
@@ -279,118 +281,145 @@ export class TripService {
   /**
    * Called when a real approved driver accepts an incoming trip.
    */
-  public static acceptTrip(tripId: string, driverId: string) {
-    const trip = localStore.trips.get(tripId);
-    if (!trip) throw new Error('Trip not found.');
-    if (trip.status !== 'SEARCHING') {
+  public static async acceptTrip(tripId: string, driverId: string) {
+    if (this.acceptingTrips.has(tripId)) {
       throw new Error(
-        `Trip is no longer searching (current status: ${trip.status}). Another driver may have already accepted it.`
+        'Trip is currently being accepted by another driver. Please try another request.'
       );
     }
+    this.acceptingTrips.add(tripId);
 
-    const driver = localStore.drivers.get(driverId);
-    if (!driver) throw new Error('Driver profile not found.');
-    if (!driver.is_approved || driver.approval_status !== 'APPROVED') {
-      throw new Error(
-        'Driver must be approved by Mumwe Safaris administrators before accepting trips.'
-      );
-    }
-    if (!driver.is_online) {
-      throw new Error('Driver must be online to accept a ride request.');
-    }
-
-    // Check if driver already has an active trip
-    for (const existing of localStore.trips.values()) {
-      if (
-        existing.id !== tripId &&
-        existing.driver_id === driverId &&
-        ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(
-          existing.status
-        )
-      ) {
+    try {
+      const trip = localStore.trips.get(tripId);
+      if (!trip) throw new Error('Trip not found.');
+      if (trip.status !== 'SEARCHING' || (trip.driver_id && trip.driver_id !== driverId)) {
         throw new Error(
-          `You already have an active trip (${existing.id}). Complete it before accepting another request.`
+          `Trip is no longer searching (current status: ${trip.status}). Another driver may have already accepted it.`
         );
       }
-    }
 
-    trip.driver_id = driverId;
-    trip.status = 'DRIVER_ASSIGNED';
-    trip.updated_at = new Date().toISOString();
-    driver.is_available = false;
-    driver.updated_at = new Date().toISOString();
-
-    db.persistTrip(trip).catch((err) =>
-      console.error('[TripService.acceptTrip persistTrip error]', err)
-    );
-    db.persistDriver(driver).catch((err) =>
-      console.error('[TripService.acceptTrip persistDriver error]', err)
-    );
-
-    const driverUser = localStore.users.get(driverId);
-    const vehicle = driver.vehicle_id ? localStore.vehicles.get(driver.vehicle_id) : null;
-
-    const driverDetails = {
-      driverId,
-      fullName: driverUser ? driverUser.full_name : 'Driver',
-      phone: driverUser ? driverUser.phone : '',
-      rating: Number(driverUser?.rating ?? 5.0),
-      totalTrips: Number(driverUser?.total_trips ?? 0),
-      vehicleModel: vehicle ? `${vehicle.make} ${vehicle.model}` : 'Safari Vehicle',
-      licensePlate: vehicle ? vehicle.registration_plate : '',
-      vehicleColor: vehicle ? vehicle.color : '',
-      tier: vehicle ? vehicle.tier : trip.vehicle_tier,
-      lat: Number(driver.current_lat ?? trip.pickup_lat),
-      lng: Number(driver.current_lng ?? trip.pickup_lng),
-      heading: Number(driver.heading ?? 0),
-    };
-
-    // Notify all other online drivers that this request is now closed
-    for (const d of localStore.drivers.values()) {
-      if (d.id !== driverId && d.is_online) {
-        emitToUser(d.id, 'trip:request_closed', {
-          tripId,
-          acceptedBy: driverId,
-        });
+      const driver = localStore.drivers.get(driverId);
+      if (!driver) throw new Error('Driver profile not found.');
+      if (!driver.is_approved || driver.approval_status !== 'APPROVED') {
+        throw new Error(
+          'Driver must be approved by Mumwe Safaris administrators before accepting trips.'
+        );
       }
+      if (!driver.is_online) {
+        throw new Error('Driver must be online to accept a ride request.');
+      }
+
+      // Check if driver already has an active trip
+      for (const existing of localStore.trips.values()) {
+        if (
+          existing.id !== tripId &&
+          existing.driver_id === driverId &&
+          ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'DRIVER_ARRIVED', 'TRIP_STARTED'].includes(
+            existing.status
+          )
+        ) {
+          throw new Error(
+            `You already have an active trip (${existing.id}). Complete it before accepting another request.`
+          );
+        }
+      }
+
+      // Atomic Postgres update under concurrency
+      if (db.isPostgresConnected) {
+        const pgRes = await db.query(
+          `UPDATE trips 
+           SET driver_id = $1, status = 'DRIVER_ASSIGNED', updated_at = NOW() 
+           WHERE id = $2 AND status = 'SEARCHING' AND (driver_id IS NULL OR driver_id = '') 
+           RETURNING *`,
+          [driverId, tripId]
+        );
+        if (!pgRes || !pgRes.rows || pgRes.rows.length === 0) {
+          throw new Error(
+            `Trip is no longer searching (current status: ${trip.status}). Another driver may have already accepted it.`
+          );
+        }
+      }
+
+      trip.driver_id = driverId;
+      trip.status = 'DRIVER_ASSIGNED';
+      trip.updated_at = new Date().toISOString();
+      driver.is_available = false;
+      driver.updated_at = new Date().toISOString();
+
+      await db.persistTrip(trip).catch((err) =>
+        console.error('[TripService.acceptTrip persistTrip error]', err)
+      );
+      await db.persistDriver(driver).catch((err) =>
+        console.error('[TripService.acceptTrip persistDriver error]', err)
+      );
+
+      const driverUser = localStore.users.get(driverId);
+      const vehicle = driver.vehicle_id ? localStore.vehicles.get(driver.vehicle_id) : null;
+
+      const driverDetails = {
+        driverId,
+        fullName: driverUser ? driverUser.full_name : 'Driver',
+        phone: driverUser ? driverUser.phone : '',
+        rating: Number(driverUser?.rating ?? 5.0),
+        totalTrips: Number(driverUser?.total_trips ?? 0),
+        vehicleModel: vehicle ? `${vehicle.make} ${vehicle.model}` : 'Safari Vehicle',
+        licensePlate: vehicle ? vehicle.registration_plate : '',
+        vehicleColor: vehicle ? vehicle.color : '',
+        tier: vehicle ? vehicle.tier : trip.vehicle_tier,
+        lat: Number(driver.current_lat ?? trip.pickup_lat),
+        lng: Number(driver.current_lng ?? trip.pickup_lng),
+        heading: Number(driver.heading ?? 0),
+      };
+
+      // Notify all other online drivers that this request is now closed
+      for (const d of localStore.drivers.values()) {
+        if (d.id !== driverId && d.is_online) {
+          emitToUser(d.id, 'trip:request_closed', {
+            tripId,
+            acceptedBy: driverId,
+          });
+        }
+      }
+
+      // Broadcast real-time assignment via WebSockets & SSE to customer and trip room
+      const assignedPayload = {
+        tripId,
+        trip: this.getTrip(tripId),
+        driver: driverDetails,
+        status: 'DRIVER_ASSIGNED',
+      };
+      if (trip.customer_id) {
+        emitToUser(trip.customer_id, 'trip:driver_assigned', assignedPayload);
+        emitToUser(trip.customer_id, 'trip:status_change', assignedPayload);
+        emitToUser(trip.customer_id, 'trip:status_changed', assignedPayload);
+      }
+      emitToUser(driverId, 'trip:driver_assigned', assignedPayload);
+      emitToTrip(tripId, 'trip:status_change', assignedPayload);
+      emitToTrip(tripId, 'trip:status_changed', assignedPayload);
+
+      // Update Admin Map marker to Blue (Assigned/In Trip) immediately
+      broadcastDriverSnapshot(driverId, 'fleet:status_update');
+
+      if (trip.customer_id) {
+        NotificationService.createNotification({
+          userId: trip.customer_id,
+          title: 'Driver Assigned',
+          message: `${driverDetails.fullName} in ${driverDetails.vehicleModel} (${driverDetails.licensePlate}) accepted your trip and is on the way.`,
+          type: 'DRIVER',
+          metadata: {
+            tripId,
+            driverId,
+            driverName: driverDetails.fullName,
+            licensePlate: driverDetails.licensePlate,
+            vehicleModel: driverDetails.vehicleModel,
+          },
+        }).catch((err) => console.error('[TripDriverNotification Error]', err));
+      }
+
+      return { status: 'DRIVER_ASSIGNED', trip: this.getTrip(tripId), driver: driverDetails };
+    } finally {
+      this.acceptingTrips.delete(tripId);
     }
-
-    // Broadcast real-time assignment via WebSockets & SSE to customer and trip room
-    const assignedPayload = {
-      tripId,
-      trip: this.getTrip(tripId),
-      driver: driverDetails,
-      status: 'DRIVER_ASSIGNED',
-    };
-    if (trip.customer_id) {
-      emitToUser(trip.customer_id, 'trip:driver_assigned', assignedPayload);
-      emitToUser(trip.customer_id, 'trip:status_change', assignedPayload);
-      emitToUser(trip.customer_id, 'trip:status_changed', assignedPayload);
-    }
-    emitToUser(driverId, 'trip:driver_assigned', assignedPayload);
-    emitToTrip(tripId, 'trip:status_change', assignedPayload);
-    emitToTrip(tripId, 'trip:status_changed', assignedPayload);
-
-    // Update Admin Map marker to Blue (Assigned/In Trip) immediately
-    broadcastDriverSnapshot(driverId, 'fleet:status_update');
-
-    if (trip.customer_id) {
-      NotificationService.createNotification({
-        userId: trip.customer_id,
-        title: 'Driver Assigned',
-        message: `${driverDetails.fullName} in ${driverDetails.vehicleModel} (${driverDetails.licensePlate}) accepted your trip and is on the way.`,
-        type: 'DRIVER',
-        metadata: {
-          tripId,
-          driverId,
-          driverName: driverDetails.fullName,
-          licensePlate: driverDetails.licensePlate,
-          vehicleModel: driverDetails.vehicleModel,
-        },
-      }).catch((err) => console.error('[TripDriverNotification Error]', err));
-    }
-
-    return { status: 'DRIVER_ASSIGNED', trip: this.getTrip(tripId), driver: driverDetails };
   }
 
   /**
@@ -727,5 +756,63 @@ export class TripService {
     return userTrips.sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
+  }
+
+  public static async triggerSos(
+    tripId: string,
+    userId: string,
+    userRole?: string,
+    reason?: string,
+    location?: { lat?: number; lng?: number }
+  ) {
+    const trip = localStore.trips.get(tripId);
+    if (!trip) throw new Error('Trip not found.');
+
+    const isParticipant =
+      trip.customer_id === userId ||
+      trip.driver_id === userId ||
+      userRole === 'admin';
+    if (!isParticipant) {
+      throw new Error('Unauthorized: only trip participants or administrators can trigger an SOS.');
+    }
+
+    const effectiveLat = location?.lat ?? (userId === trip.driver_id ? trip.pickup_lat : trip.pickup_lat);
+    const effectiveLng = location?.lng ?? (userId === trip.driver_id ? trip.pickup_lng : trip.pickup_lng);
+    const timestamp = new Date().toISOString();
+    const incidentId = `sos_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    const sosPayload = {
+      incidentId,
+      tripId,
+      triggeredByUserId: userId,
+      role: userRole || (userId === trip.driver_id ? 'driver' : 'customer'),
+      reason: reason || 'Live trip emergency SOS alert triggered',
+      location: { lat: Number(effectiveLat), lng: Number(effectiveLng) },
+      timestamp,
+      customerName: trip.customer_name,
+      customerPhone: trip.customer_phone,
+      pickupAddress: trip.pickup_address,
+      destAddress: trip.dest_address,
+    };
+
+    emitToTrip(tripId, 'trip:sos', sosPayload);
+    broadcastToFleet(sosPayload, 'emergency:sos_alert');
+
+    if (trip.customer_id) {
+      NotificationService.createNotification({
+        userId: trip.customer_id,
+        title: 'Emergency SOS Dispatched',
+        message: 'Your emergency SOS has been received. Mumwe Safaris response team and Uganda Emergency Services have been notified.',
+        type: 'ALERT',
+        metadata: sosPayload,
+      }).catch(() => {});
+    }
+
+    return {
+      success: true,
+      incidentId,
+      message: 'Emergency SOS alert dispatched to Mumwe Safaris response team.',
+      sosPayload,
+    };
   }
 }

@@ -55,8 +55,8 @@ export class DriverService {
       is_available: false,
       is_approved: isApproved,
       approval_status: approvalStatus,
-      current_lat: 0.3136,
-      current_lng: 32.5811,
+      current_lat: null,
+      current_lng: null,
       heading: 0,
       speed: 0,
       license_number: app?.license_number || 'UG-PERMIT',
@@ -363,25 +363,44 @@ export class DriverService {
     const activeEnv = (ENV.DPO_ENVIRONMENT || 'sandbox') as 'sandbox' | 'production';
     const earningsSummary = PayoutService.getBeneficiaryEarningsSummary(driverId, 'driver', activeEnv);
     const completedCount = completedTrips.filter((t) => t.status === 'TRIP_COMPLETED').length;
-    const todayEarningsUGX = earningsSummary.availableEarningsUgx;
+
+    const todayIsoDate = new Date().toISOString().slice(0, 10);
+    const completedTripsToday = completedTrips.filter(
+      (t) =>
+        t.status === 'TRIP_COMPLETED' &&
+        String(t.updated_at || t.created_at || '').slice(0, 10) === todayIsoDate
+    ).length;
+
+    const todayCompletedEarnings = completedTrips
+      .filter(
+        (t) =>
+          t.status === 'TRIP_COMPLETED' &&
+          (t.payment_environment === activeEnv || (!t.payment_environment && activeEnv === 'sandbox')) &&
+          String(t.updated_at || t.created_at || '').slice(0, 10) === todayIsoDate
+      )
+      .reduce((sum, t) => sum + Math.round((Number(t.fare_ugx || t.fareUgx || 0) + Number(t.tip_ugx || 0)) * 0.85), 0);
+    const todayEarningsUGX = todayCompletedEarnings;
+
+    const rawRating = user?.rating;
+    const resolvedRating = rawRating !== undefined && rawRating !== null && Number(rawRating) > 0 ? Number(rawRating) : null;
 
     return {
       driverId,
       name: user ? user.full_name : 'Driver',
       email: user ? user.email : '',
       phone: user ? user.phone : '',
-      rating: Number(user?.rating ?? 5.0),
+      rating: resolvedRating,
       totalTrips: Math.max(Number(user?.total_trips ?? 0), completedCount),
       completedTripsCount: completedCount,
-      completedTripsToday: completedCount,
+      completedTripsToday,
       walletBalanceUGX: FinancialService.calculateWalletBalance(driverId, activeEnv),
       earningsSummary,
       isApproved,
       approvalStatus,
       isOnline: driver ? Boolean(driver.is_online) : false,
       isAvailable: driver ? Boolean(driver.is_online && !activeTrip && driver.is_available !== false) : false,
-      currentLat: Number(driver?.current_lat ?? 0.3136),
-      currentLng: Number(driver?.current_lng ?? 32.5811),
+      currentLat: driver?.current_lat != null ? Number(driver.current_lat) : null,
+      currentLng: driver?.current_lng != null ? Number(driver.current_lng) : null,
       heading: Number(driver?.heading ?? 0),
       lastPing: driver?.updated_at || null,
       todayEarningsUGX,

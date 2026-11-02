@@ -4,6 +4,7 @@ import '../../core/network/socket_service.dart';
 import '../../core/services/device_location_service.dart';
 import '../../core/services/mapbox_service.dart';
 import '../../shared/models/location_model.dart';
+import '../authentication/session_provider.dart';
 import 'models/ride_model.dart';
 
 /// Fetches admin-configured Ride-Hailing vehicles and dynamic distance bands from `/catalogue/vehicles?service=ride_hailing`
@@ -296,7 +297,15 @@ class RideBookingNotifier extends Notifier<RideBookingState> {
     try {
       final api = ApiClient();
       final socket = RealtimeSocketService();
-      socket.connect(userId: 'customer_live', role: 'customer');
+      final currentUser = ref.read(currentUserProvider);
+      final customerUserId = currentUser.id.isNotEmpty ? currentUser.id : 'customer_user';
+
+      // Connect socket with authenticated user credentials
+      socket.connect(
+        userId: customerUserId,
+        role: 'customer',
+        authToken: api.authToken,
+      );
 
       if (state.quotationId == null) {
         await _fetchServerRideQuote();
@@ -354,8 +363,12 @@ class RideBookingNotifier extends Notifier<RideBookingState> {
           priceChangedSinceQuote: priceChanged,
         );
 
-        if (customerId.isNotEmpty) {
-          socket.connect(userId: customerId, role: 'customer');
+        if (customerId.isNotEmpty && customerId != customerUserId) {
+          socket.connect(
+            userId: customerId,
+            role: 'customer',
+            authToken: api.authToken,
+          );
         }
         if (tripId.isNotEmpty) {
           socket.joinTripRoom(tripId);

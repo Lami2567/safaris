@@ -66,6 +66,10 @@ const testSuites = [
     name: 'Maps, Uganda Gazetteer Search, Road Routing, Dynamic Pricing & Live Tracking Suite',
     file: 'maps_routing_pricing_master.test.ts',
   },
+  {
+    name: 'Driver-Customer Connection, Realtime Reliability, Driver Dashboard & Stale Data Cleanup Suite',
+    file: 'driver_customer_connection_master.test.ts',
+  },
 ];
 
 let totalPassed = 0;

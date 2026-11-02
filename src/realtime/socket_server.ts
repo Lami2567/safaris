@@ -188,7 +188,7 @@ export function initSocketServer(httpServer: HttpServer): Server {
     }
 
     // Guarded join_room with role & ownership checks
-    socket.on('join_room', (room: string) => {
+    socket.on('join_room', async (room: string) => {
       if (!room || typeof room !== 'string') return;
 
       const ALLOWED_ROOM_PREFIXES = ['admin:', 'user:', 'trip:', 'delivery:', 'safari:', 'chat:'];
@@ -218,7 +218,16 @@ export function initSocketServer(httpServer: HttpServer): Server {
       // Trip channels: only participants (customer/driver) or admin
       if (room.startsWith('trip:')) {
         const tripId = room.split(':')[1];
-        const trip = localStore.trips.get(tripId);
+        let trip = localStore.trips.get(tripId);
+        if (!trip && db.isPostgresConnected) {
+          try {
+            const dbRes = await db.query('SELECT * FROM trips WHERE id = $1', [tripId]);
+            if (dbRes && dbRes.rows && dbRes.rows.length > 0) {
+              trip = dbRes.rows[0];
+              localStore.trips.set(tripId, trip);
+            }
+          } catch (_) {}
+        }
         if (!trip) {
           socket.emit('error', { message: 'Trip not found or unauthorized.' });
           return;

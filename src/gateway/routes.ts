@@ -165,6 +165,7 @@ apiRouter.post('/trips/:tripId/location', authenticate, TripController.updateLoc
 apiRouter.put('/trips/:tripId/status', authenticate, TripController.updateStatus);
 apiRouter.post('/trips/:tripId/rate', authenticate, TripController.rateTrip);
 apiRouter.get('/users/trips', authenticate, TripController.getUserTrips);
+apiRouter.post('/trips/:tripId/sos', authenticate, TripController.triggerSos);
 
 // -------------------------------------------------------------
 // Tourism (Destinations, Packages, Bookings)

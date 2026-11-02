@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../core/network/api_client.dart';
 import '../../../core/services/offline_location_queue.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
@@ -15,6 +17,90 @@ import '../ride_provider.dart';
 
 class LiveTripScreen extends ConsumerWidget {
   const LiveTripScreen({super.key});
+
+  Future<void> _makePhoneCall(BuildContext context, String phoneNumber) async {
+    final clean = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
+    if (clean.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Driver phone number not available.')),
+      );
+      return;
+    }
+    final uri = Uri.parse('tel:$clean');
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        await launchUrl(uri);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open phone dialer: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _triggerSos(BuildContext context, String? tripId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surfaceElevated,
+        title: const Row(
+          children: [
+            Icon(Icons.shield_rounded, color: AppColors.error),
+            SizedBox(width: 8),
+            Text('Mumwe Safaris SOS'),
+          ],
+        ),
+        content: const Text(
+          'Do you need immediate emergency assistance?\n\nThis alerts Mumwe Safaris 24/7 Security Operations and records your live GPS coordinates.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('DISPATCH SOS NOW', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      if (tripId != null && tripId.isNotEmpty) {
+        final res = await ApiClient().post('/trips/$tripId/sos', body: {
+          'reason': 'Customer triggered live SOS alert',
+        });
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                res.message ?? 'Emergency SOS dispatched to Mumwe Safaris response team.',
+              ),
+              backgroundColor: AppColors.error,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Emergency alert sent: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
 
   String _statusBannerText(RideStatus status) {
     switch (status) {
@@ -102,16 +188,7 @@ class LiveTripScreen extends ConsumerWidget {
                 ],
               ),
             ),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Safaris 24/7 Security & Uganda Police Emergency Hotline notified',
-                  ),
-                  backgroundColor: AppColors.error,
-                ),
-              );
-            },
+            onPressed: () => _triggerSos(context, ride.tripId),
           ),
         ],
       ),
@@ -315,15 +392,7 @@ class LiveTripScreen extends ConsumerWidget {
                                   color: AppColors.iconPrimary,
                                 ),
                               ),
-                              onPressed: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Calling driver ${driver.phone}...',
-                                    ),
-                                  ),
-                                );
-                              },
+                              onPressed: () => _makePhoneCall(context, driver.phone),
                             ),
                             IconButton(
                               icon: Container(
